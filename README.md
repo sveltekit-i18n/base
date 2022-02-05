@@ -1,6 +1,6 @@
 
 
-[![npm version](https://badge.fury.io/js/sveltekit-i18n%2Fbase.svg)](https://badge.fury.io/js/sveltekit-i18n%2Fbase) ![](https://github.com/sveltekit-i18n/base/workflows/Tests/badge.svg)
+[![npm version](https://badge.fury.io/js/@sveltekit-i18n%2Fbase.svg)](https://badge.fury.io/js/@sveltekit-i18n%2Fbase) ![](https://github.com/sveltekit-i18n/base/workflows/Tests/badge.svg)
 
 # @sveltekit-i18n/base
 This repository contains the base functionality of [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) and provides support for external message parsers.
