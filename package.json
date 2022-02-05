@@ -18,12 +18,11 @@
     "dev": "tsup src/index.ts --watch",
     "test": "jest",
     "build": "tsup src/index.ts --dts --format cjs,esm --minify",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "rm -rf dist && npm run build",
     "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."
   },
   "files": [
-    "lib",
-    "types"
+    "dist"
   ],
   "pre-commit": [
     "lint"
