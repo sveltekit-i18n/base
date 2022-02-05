@@ -1,10 +1,10 @@
 import { derived, get, writable } from 'svelte/store';
 import { fetchTranslations, testRoute, toDotNotation, useDefault as d } from './utils';
 
-import type { Config, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
+import type { Config, Parser, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-export { Config };
+export { Config, Parser };
 
 export default class {
   constructor(config?: Config) {

@@ -31,16 +31,18 @@ export type ConfigTranslations = { [locale: string]: Record<string, any> };
 
 export type Translations = { [locale: string]: Record<string, string> };
 
+export type Parser = {
+  parse: (props: {
+    key: string;
+    payload: any;
+    translations: Translations;
+    locale: string;
+    fallbackLocale?: string;
+  }) => string;
+};
+
 export type Config = {
-  parser: {
-    parse: (props: {
-      key: string;
-      payload: any;
-      translations: Translations;
-      locale: string;
-      fallbackLocale?: string;
-    }) => string;
-  };
+  parser: Parser;
   loaders?: LoaderModule[];
   translations?: ConfigTranslations;
   initLocale?: string;
