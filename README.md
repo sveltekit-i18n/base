@@ -23,6 +23,7 @@ Setup `translations.js` in your lib folder...
 import i18n from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default'; // use your preferred parser (or create your own)
 
+/** @type {import('@sveltekit-i18n/base').Config} */
 export const config = ({
   parser: parser(),
   loaders: [
