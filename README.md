@@ -2,7 +2,7 @@
 
 [![npm version](https://badge.fury.io/js/sveltekit-i18n%2Fbase.svg)](https://badge.fury.io/js/sveltekit-i18n%2Fbase) ![](https://github.com/sveltekit-i18n/base/workflows/Tests/badge.svg)
 
-# sveltekit-i18n/base
+# @sveltekit-i18n/base
 This repository contains the base functionality of [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) and provides support for external message parsers.
 
 ## Key features
@@ -20,9 +20,11 @@ This repository contains the base functionality of [sveltekit-i18n](https://gith
 
 Setup `translations.js` in your lib folder...
 ```javascript
-import i18n from 'sveltekit-i18n';
+import i18n from '@sveltekit-i18n/base';
+import parser from '@sveltekit-i18n/parser-default'; // use your preferred parser (or create your own)
 
 export const config = ({
+  parser: parser(),
   loaders: [
     {
       locale: 'en',
