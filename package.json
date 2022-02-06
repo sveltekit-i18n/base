@@ -1,0 +1,67 @@
+{
+  "name": "@sveltekit-i18n/base",
+  "version": "1.0.0",
+  "description": "Base functionality of sveltekit-i18n library with a support for external message parsers.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "dev": "tsup src/index.ts --watch",
+    "test": "jest",
+    "build": "tsup src/index.ts --dts --format cjs,esm --minify",
+    "prepublishOnly": "rm -rf dist && npm run build",
+    "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."
+  },
+  "files": [
+    "dist"
+  ],
+  "pre-commit": [
+    "lint"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/sveltekit-i18n/base.git"
+  },
+  "keywords": [
+    "svelte",
+    "sveltekit",
+    "i18n",
+    "l10n",
+    "internationalization",
+    "localization",
+    "translation"
+  ],
+  "author": "Jarda Svoboda",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/sveltekit-i18n/lib/issues"
+  },
+  "homepage": "https://github.com/sveltekit-i18n/base#readme",
+  "peerDependencies": {
+    "svelte": "^3.44.3"
+  },
+  "devDependencies": {
+    "@types/jest": "^27.0.3",
+    "@typescript-eslint/eslint-plugin": "^5.7.0",
+    "@typescript-eslint/parser": "^5.7.0",
+    "eslint": "^8.4.1",
+    "eslint-config-airbnb-typescript": "^16.1.0",
+    "eslint-plugin-import": "^2.25.3",
+    "eslint-plugin-svelte3": "^3.2.1",
+    "jest": "^27.4.5",
+    "pre-commit": "^1.2.2",
+    "svelte": "^3.44.3",
+    "ts-jest": "^27.1.2",
+    "tsup": "^5.11.13",
+    "typescript": "^4.5.4"
+  }
+}
