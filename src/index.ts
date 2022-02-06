@@ -1,7 +1,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { fetchTranslations, testRoute, toDotNotation, useDefault as d } from './utils';
 
-import type { Config, Parser, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
+import type { Config, Parser, Parse, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
 class I18n {
@@ -233,6 +233,6 @@ class I18n {
   };
 }
 
-export { Config, Parser };
+export { Config, Parser, Parse };
 
 export default I18n;
