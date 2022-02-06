@@ -31,7 +31,7 @@ export type ConfigTranslations = { [locale: string]: Record<string, any> };
 
 export type Translations = { [locale: string]: Record<string, string> };
 
-export type Parse = <Payload = Record<any, any>>(props: {
+export type Parse<Payload = Record<any, any>> = (props: {
   key: string;
   payload?: Payload;
   translations: Translations;
