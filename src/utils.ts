@@ -1,8 +1,6 @@
 import type { ToDotNotation, FetchTranslations, Route, LoaderModule } from './types';
 
-export const useDefault = <T = any>(value: any, def:any = {}): T => value || def;
-
-export const toDotNotation: ToDotNotation = (input, parentKey) => Object.keys(useDefault(input)).reduce((acc, key) => {
+export const toDotNotation: ToDotNotation = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
   const value = input[key];
   const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
@@ -26,7 +24,7 @@ export const fetchTranslations: FetchTranslations = async (loaders) => {
 
     return data.reduce<Record<string, any>>((acc, { key, data, locale }) => data ? ({
       ...acc,
-      [locale]: toDotNotation({ ...useDefault<Record<any, any>>(acc[locale]), [key]: data }),
+      [locale]: toDotNotation({ ...(acc[locale] || {}), [key]: data }),
     }) : acc, {});
   } catch (error) {
     console.error(error);
