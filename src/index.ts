@@ -4,9 +4,7 @@ import { fetchTranslations, testRoute, toDotNotation, useDefault as d } from './
 import type { Config, Parser, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-export { Config, Parser };
-
-export default class {
+class I18n {
   constructor(config?: Config) {
     if (config) this.loadConfig(config);
 
@@ -123,13 +121,17 @@ export default class {
     await this.loading.toPromise();
   };
 
-  loadConfig = async (config: Config) => {
+  async configLoader(config: Config) {
     if (!config) throw new Error('No config!');
 
     this.config.set(config);
     const { initLocale = '', translations } = config;
     if (translations) this.addTranslations(translations);
     await this.loadTranslations(initLocale);
+  }
+
+  loadConfig = async (config: Config) => {
+    await this.configLoader(config);
   };
 
   addTranslations = (translations?: ConfigTranslations, keys?: Record<string, string[]>) => {
@@ -230,3 +232,7 @@ export default class {
     await this.loading.toPromise();
   };
 }
+
+export { Config, Parser };
+
+export default I18n;
