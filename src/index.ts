@@ -1,11 +1,11 @@
 import { derived, get, writable } from 'svelte/store';
-import { fetchTranslations, testRoute, toDotNotation, useDefault as d } from './utils';
+import { fetchTranslations, testRoute, toDotNotation } from './utils';
 
-import type { Config, Parser, Parse, ConfigTranslations, LoaderModule, LoadingStore, LocalTranslationFunction, Route, TranslationFunction, Translations, ExtendedStore } from './types';
+import type { Config, Parser, Parse, ConfigTranslations, LoadingStore, LocalTranslationFunction, TranslationFunction, Translations, ExtendedStore, Translate, ParserParamsDefault } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-class I18n {
-  constructor(config?: Config) {
+class I18n<ParserParams extends ParserParamsDefault> {
+  constructor(config?: Config<ParserParams>) {
     if (config) this.loadConfig(config);
 
     this.loaderTrigger.subscribe(() => this.translationLoader());
@@ -15,7 +15,7 @@ class I18n {
 
   private currentRoute: Writable<string> = writable();
 
-  private config: Writable<Config> = writable();
+  private config: Writable<Config<ParserParams>> = writable();
 
   private isLoading: Writable<boolean> = writable(false);
 
@@ -68,32 +68,55 @@ class I18n {
     if (translation && Object.keys(translation).length && !$loading) set(translation);
   }, {});
 
-  t: ExtendedStore<TranslationFunction, TranslationFunction> = {
+
+  private translate: Translate<ParserParams> = ({
+    parser,
+    key,
+    params,
+    translations,
+    locale,
+    fallbackLocale,
+  }) => {
+    if (!key) throw new Error('No key provided to $t()');
+    if (!locale) throw new Error('No locale set!');
+
+    let text = (translations[locale] || {})[key];
+
+    if (fallbackLocale && text === undefined) {
+      text = (translations[fallbackLocale] || {})[key];
+    }
+
+    return parser.parse(text, params, locale, key);
+  };
+
+  t: ExtendedStore<TranslationFunction<ParserParams>, TranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translation],
-      ([{ parser, fallbackLocale }]): TranslationFunction => (key, payload) => parser?.parse({
+      ([{ parser, fallbackLocale }]): TranslationFunction<ParserParams> => (key, ...params) => this.translate({
+        parser,
         key,
-        payload,
+        params,
         translations: this.translations.get(),
         locale: this.locale.get(),
         fallbackLocale,
       }),
     ),
-    get: (...props) => get(this.t)(...props),
+    get: (key, ...params) => get(this.t)(key, ...params),
   };
 
-  l: ExtendedStore<LocalTranslationFunction, LocalTranslationFunction> = {
+  l: ExtendedStore<LocalTranslationFunction<ParserParams>, LocalTranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translations],
-      ([{ parser, fallbackLocale }, translations]): LocalTranslationFunction => (locale, key, payload) => parser.parse({
+      ([{ parser, fallbackLocale }, translations]): LocalTranslationFunction<ParserParams> => (locale, key, ...params) => this.translate({
+        parser,
         key,
-        payload,
+        params,
         translations,
         locale,
         fallbackLocale,
       }),
     ),
-    get: (...props) => get(this.l)(...props),
+    get: (locale, key, ...params) => get(this.l)(locale, key, ...params),
   };
 
   private getLocale = (inputLocale?: string): string => {
@@ -121,7 +144,7 @@ class I18n {
     await this.loading.toPromise();
   };
 
-  async configLoader(config: Config) {
+  async configLoader(config: Config<ParserParams>) {
     if (!config) throw new Error('No config!');
 
     this.config.set(config);
@@ -130,20 +153,20 @@ class I18n {
     await this.loadTranslations(initLocale);
   }
 
-  loadConfig = async (config: Config) => {
+  loadConfig = async (config: Config<ParserParams>) => {
     await this.configLoader(config);
   };
 
   addTranslations = (translations?: ConfigTranslations, keys?: Record<string, string[]>) => {
     if (!translations) return;
 
-    const translationLocales = Object.keys(d(translations));
+    const translationLocales = Object.keys(translations || {});
 
     this.privateTranslations.update(($translations) => translationLocales.reduce(
       (acc, locale) => ({
         ...acc,
         [locale]: {
-          ...d(acc[locale]),
+          ...(acc[locale] || {}),
           ...toDotNotation(translations[locale]),
         },
       }),
@@ -155,8 +178,8 @@ class I18n {
       if (keys) localeKeys = keys[$locale];
 
       this.loadedKeys[$locale] = Array.from(new Set([
-        ...d(this.loadedKeys[$locale], []),
-        ...d(localeKeys, []),
+        ...(this.loadedKeys[$locale] || []),
+        ...(localeKeys || []),
       ]));
     });
   };
@@ -168,7 +191,7 @@ class I18n {
 
     const $translations = this.translations.get();
 
-    const { loaders, fallbackLocale = '' } = d<Config>($config);
+    const { loaders, fallbackLocale = '' } = $config || {};
 
     const lowerLocale = `${$locale}`.toLowerCase();
     const lowerFallbackLocale = fallbackLocale && `${fallbackLocale}`.toLowerCase();
@@ -176,15 +199,15 @@ class I18n {
     const translationForLocale = $translations[lowerLocale];
     const translationForFallbackLocale = $translations[lowerFallbackLocale];
 
-    const filteredLoaders = d<LoaderModule[]>(loaders, [])
+    const filteredLoaders = (loaders || [])
       .map(({ locale, ...rest }) => ({ ...rest, locale: `${locale}`.toLowerCase() }))
-      .filter(({ routes }) => !routes || d<Route[]>(routes, []).some(testRoute($route)))
+      .filter(({ routes }) => !routes || (routes || []).some(testRoute($route)))
       .filter(({ key, locale }) => locale === lowerLocale && (
-        !translationForLocale || !d(this.loadedKeys[lowerLocale], []).includes(key)
+        !translationForLocale || !(this.loadedKeys[lowerLocale] || []).includes(key)
       ) || (
         fallbackLocale && locale === lowerFallbackLocale && (
           !translationForFallbackLocale ||
-            !d(this.loadedKeys[lowerFallbackLocale], []).includes(key)
+            !(this.loadedKeys[lowerFallbackLocale] || []).includes(key)
         )),
       );
 
@@ -200,7 +223,7 @@ class I18n {
       );
 
       const keys = filteredLoaders
-        .filter(({ key, locale }) => d<string[]>(loadedKeys[locale], []).some(
+        .filter(({ key, locale }) => (loadedKeys[locale] || []).some(
           (loadedKey) => `${loadedKey}`.startsWith(key),
         ))
         .reduce<Record<string, any>>((acc, { key, locale }) => ({

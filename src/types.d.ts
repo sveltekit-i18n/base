@@ -13,17 +13,21 @@ export type LoaderModule = {
   loader: Loader;
 };
 
+export type ParserParamsDefault = any[] | [];
+
 export type DotNotationInput = Record<string, any> | null | undefined | any;
 
 export type DotNotationOutput = Record<string, any>;
 
 export type ToDotNotation = (input: DotNotationInput, parentKey?: string) => DotNotationOutput;
 
-export type FetchTranslations = (loaders: LoaderModule[]) => Promise<Record<string, DotNotationOutput>>;
+export type DotNotatedTranslations = Record<string, DotNotationOutput>;
 
-export type TranslationFunction = (key: string, vars?: Record<any, any>) => string;
+export type FetchTranslations = (loaders: LoaderModule[]) => Promise<DotNotatedTranslations>;
 
-export type LocalTranslationFunction = (locale: string, key: string, vars?: Record<any, any>) => string;
+export type TranslationFunction<ParserParams extends ParserParamsDefault> = (key: string, ...restParams: ParserParams) => string;
+
+export type LocalTranslationFunction<ParserParams extends ParserParamsDefault> = (locale: string, key: string, ...restParams: ParserParams) => string;
 
 export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get: Get };
 
@@ -31,22 +35,30 @@ export type ConfigTranslations = { [locale: string]: Record<string, any> };
 
 export type Translations = { [locale: string]: Record<string, string> };
 
-export type Parse<Payload = Record<any, any>> = (props: {
+export type Translate<ParserParams = ParserParamsDefault> = (props: {
+  parser: Parser<ParserParams>;
   key: string;
-  payload?: Payload;
-  translations: Translations;
+  params: ParserParams;
+  translations: DotNotatedTranslations;
   locale: string;
   fallbackLocale?: string;
 }) => string;
 
-export type Parser = {
-  parse: Parse;
+export type Parse<ParserParams = ParserParamsDefault> = (
+  text: string | undefined,
+  params: ParserParams,
+  locale: string,
+  key: string,
+) => string;
+
+export type Parser<ParserParams = ParserParamsDefault> = {
+  parse: Parse<ParserParams>;
 };
 
-export type Config = {
-  parser: Parser;
+export type Config<ParserParams = ParserParamsDefault> = {
   loaders?: LoaderModule[];
   translations?: ConfigTranslations;
   initLocale?: string;
   fallbackLocale?: string;
+  parser: Parser<ParserParams>;
 };
