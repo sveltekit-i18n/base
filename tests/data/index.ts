@@ -4,7 +4,7 @@ export { default as TRANSLATIONS } from './translations';
 export const CONFIG: Config = {
   initLocale: 'en',
   parser: {
-    parse: ({ key }) => key,
+    parse: (_text, _params, _locale, key) => key,
   },
   loaders: [
     {
