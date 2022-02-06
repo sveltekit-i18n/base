@@ -68,7 +68,6 @@ class I18n<ParserParams extends ParserParamsDefault> {
     if (translation && Object.keys(translation).length && !$loading) set(translation);
   }, {});
 
-
   private translate: Translate<ParserParams> = ({
     parser,
     key,
