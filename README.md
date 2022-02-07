@@ -116,6 +116,6 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
 ```
 
 ## More info
-[Docs](https://github.com/sveltekit-i18n/lib/tree/master/docs/README.md)\
-[Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples)\
-[Changelog](https://github.com/sveltekit-i18n/lib/releases)
+[Docs](https://github.com/sveltekit-i18n/base/tree/master/docs/README.md)\
+[Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#parsers)\
+[Changelog](https://github.com/sveltekit-i18n/base/releases)
