@@ -1,7 +1,7 @@
 # API Docs
 
 [Config](#config)\
-[Properties and methods](#instance-methods-and-properties)\
+[Properties and methods](#instance-methods-and-properties)
 
 
 ## Config
