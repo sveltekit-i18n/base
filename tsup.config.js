@@ -7,7 +7,7 @@ export default defineConfig((options) => {
     dts: true,
     format: ['cjs', 'esm'],
     entry: ['src/index.ts'],
-    watch: ['src/*'],
+    watch: options.watch && ['src/*'],
     minify: !options.watch,
     sourcemap: options.watch,
   };
