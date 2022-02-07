@@ -1,7 +1,7 @@
 import { derived, get, writable } from 'svelte/store';
 import { fetchTranslations, testRoute, toDotNotation } from './utils';
 
-import type { IConfig, IParser, LoadingStore, ITranslations, ExtendedStore } from './types';
+import type { IConfig, ILoader, IParser, ITranslations, LoadingStore, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
 class I18n<ParserParams extends IParser.Params> {
@@ -255,6 +255,4 @@ class I18n<ParserParams extends IParser.Params> {
   };
 }
 
-export { IConfig, IParser };
-
-export default I18n;
+export { IConfig, ILoader, IParser, ITranslations, I18n as default };
