@@ -9,10 +9,10 @@ This repository contains a base functionality of [sveltekit-i18n](https://github
 
 ✅ SvelteKit ready\
 ✅ SSR support\
+✅ Custom parsers – you can use any message syntax you need\
 ✅ Custom data sources – no matter if you are using local files or remote API to get your translations\
 ✅ Module-based – your translations are loaded for visited pages only (and only once!)\
 ✅ Component-scoped translations – you can create multiple instances with custom definitions\
-✅ Custom parsers – you can use any message syntax you need\
 ✅ TS support\
 ✅ No external dependencies
 
@@ -23,7 +23,7 @@ Setup `translations.js` in your lib folder...
 import i18n from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default'; // use your preferred parser (or create your own)
 
-/** @type {import('@sveltekit-i18n/base').Config} */
+/** @namespace {import('@sveltekit-i18n/base').IConfig.Config} */
 const config = ({
   parser: parser({}),
   loaders: [
