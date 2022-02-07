@@ -1,6 +1,6 @@
-import type { ToDotNotation, FetchTranslations, Route, LoaderModule } from './types';
+import type { IDotNotation, ITranslations, ILoader } from './types';
 
-export const toDotNotation: ToDotNotation = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
+export const toDotNotation: IDotNotation.Function = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
   const value = input[key];
   const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
@@ -9,9 +9,9 @@ export const toDotNotation: ToDotNotation = (input, parentKey) => Object.keys(in
   return ({ ...acc, [outputKey]: value });
 }, {});
 
-export const fetchTranslations: FetchTranslations = async (loaders) => {
+export const fetchTranslations: ITranslations.FetchTranslations = async (loaders) => {
   try {
-    const data = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<LoaderModule & { data: any }>(async (res) => {
+    const data = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<ILoader.LoaderModule & { data: any }>(async (res) => {
       let data;
       try {
         data = await loader();
@@ -33,7 +33,7 @@ export const fetchTranslations: FetchTranslations = async (loaders) => {
   return {};
 };
 
-export const testRoute = (route: string) => (input: Route) => {
+export const testRoute = (route: string) => (input: ILoader.Route) => {
   try {
     if (typeof input === 'string') return input === route;
     if (typeof input === 'object') return input.test(route);

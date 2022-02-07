@@ -3,7 +3,7 @@ import i18n from '../../src/index';
 import { CONFIG, TRANSLATIONS  } from '../data';
 import { filterTranslationKeys } from '../utils';
 
-const { initLocale = '', loaders, parser } = CONFIG;
+const { initLocale = '', loaders = [], parser } = CONFIG;
 
 describe('i18n instance', () => {
   it('exports all properties and methods', () => {
@@ -123,7 +123,7 @@ describe('i18n instance', () => {
     const [translations = {}] = await getTranslationProps(initLocale);
     const $initialized = get(initialized);
 
-    const keys = (loaders || []).filter(({ routes }) => !routes).map(({ key }) => key);
+    const keys = loaders.filter(({ routes }) => !routes).map(({ key }) => key);
 
     expect(translations[initLocale]).toEqual(
       expect.objectContaining(filterTranslationKeys(TRANSLATIONS[initLocale], keys)),
@@ -214,7 +214,7 @@ describe('i18n instance', () => {
   });
   it('includes both `translations` when using `fallbackLocale`', async () => {
     const { translations, locales, loadConfig } = new i18n();
-    const fallbackLocale = CONFIG.loaders?.find(({ locale }) => locale.toLowerCase() !== CONFIG.initLocale?.toLowerCase())?.locale;
+    const fallbackLocale = loaders.find(({ locale }) => locale.toLowerCase() !== initLocale?.toLowerCase())?.locale;
 
     await loadConfig({ ...CONFIG, fallbackLocale });
     const $translations = translations.get();
