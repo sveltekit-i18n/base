@@ -1,11 +1,11 @@
 import { derived, get, writable } from 'svelte/store';
 import { fetchTranslations, testRoute, toDotNotation } from './utils';
 
-import type { IConfig, ILoader, IParser, ITranslations, LoadingStore, ExtendedStore } from './types';
+import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-class I18n<ParserParams extends IParser.Params> {
-  constructor(config?: IConfig.Config<ParserParams>) {
+class I18n<ParserParams extends Parser.Params = any> {
+  constructor(config?: Config.T<ParserParams>) {
     if (config) this.loadConfig(config);
 
     this.loaderTrigger.subscribe(() => this.translationLoader());
@@ -15,7 +15,7 @@ class I18n<ParserParams extends IParser.Params> {
 
   private currentRoute: Writable<string> = writable();
 
-  private config: Writable<IConfig.Config<ParserParams>> = writable();
+  private config: Writable<Config.T<ParserParams>> = writable();
 
   private isLoading: Writable<boolean> = writable(false);
 
@@ -23,9 +23,9 @@ class I18n<ParserParams extends IParser.Params> {
 
   loading: LoadingStore = { subscribe: this.isLoading.subscribe, toPromise: () => Promise.all(this.promises), get: () => get(this.isLoading) };
 
-  private privateTranslations: Writable<ITranslations.SerializedTranslations> = writable({});
+  private privateTranslations: Writable<Translations.SerializedTranslations> = writable({});
 
-  translations: ExtendedStore<ITranslations.SerializedTranslations> = { subscribe: this.privateTranslations.subscribe, get: () => get(this.translations) };
+  translations: ExtendedStore<Translations.SerializedTranslations> = { subscribe: this.privateTranslations.subscribe, get: () => get(this.translations) };
 
   locales: ExtendedStore<string[]> = {
     ...derived([this.config, this.privateTranslations], ([$config, $translations]) => {
@@ -68,7 +68,7 @@ class I18n<ParserParams extends IParser.Params> {
     if (translation && Object.keys(translation).length && !$loading) set(translation);
   }, {});
 
-  private translate: ITranslations.Translate<ParserParams> = ({
+  private translate: Translations.Translate<ParserParams> = ({
     parser,
     key,
     params,
@@ -88,10 +88,10 @@ class I18n<ParserParams extends IParser.Params> {
     return parser.parse(text, params, locale, key);
   };
 
-  t: ExtendedStore<ITranslations.TranslationFunction<ParserParams>, ITranslations.TranslationFunction<ParserParams>> = {
+  t: ExtendedStore<Translations.TranslationFunction<ParserParams>, Translations.TranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translation],
-      ([{ parser, fallbackLocale }]): ITranslations.TranslationFunction<ParserParams> => (key, ...params) => this.translate({
+      ([{ parser, fallbackLocale }]): Translations.TranslationFunction<ParserParams> => (key, ...params) => this.translate({
         parser,
         key,
         params,
@@ -103,10 +103,10 @@ class I18n<ParserParams extends IParser.Params> {
     get: (key, ...params) => get(this.t)(key, ...params),
   };
 
-  l: ExtendedStore<ITranslations.LocalTranslationFunction<ParserParams>, ITranslations.LocalTranslationFunction<ParserParams>> = {
+  l: ExtendedStore<Translations.LocalTranslationFunction<ParserParams>, Translations.LocalTranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translations],
-      ([{ parser, fallbackLocale }, translations]): ITranslations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => this.translate({
+      ([{ parser, fallbackLocale }, translations]): Translations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => this.translate({
         parser,
         key,
         params,
@@ -143,7 +143,7 @@ class I18n<ParserParams extends IParser.Params> {
     await this.loading.toPromise();
   };
 
-  async configLoader(config: IConfig.Config<ParserParams>) {
+  async configLoader(config: Config.T<ParserParams>) {
     if (!config) throw new Error('No config!');
 
     this.config.set(config);
@@ -152,11 +152,11 @@ class I18n<ParserParams extends IParser.Params> {
     await this.loadTranslations(initLocale);
   }
 
-  loadConfig = async (config: IConfig.Config<ParserParams>) => {
+  loadConfig = async (config: Config.T<ParserParams>) => {
     await this.configLoader(config);
   };
 
-  addTranslations = (translations?: IConfig.Translations, keys?: Record<string, string[]>) => {
+  addTranslations = (translations?: Config.Translations, keys?: Record<string, string[]>) => {
     if (!translations) return;
 
     const translationLocales = Object.keys(translations || {});
@@ -183,7 +183,7 @@ class I18n<ParserParams extends IParser.Params> {
     });
   };
 
-  getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[IConfig.Translations, Record<string, string[]>] | []> => {
+  getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Config.Translations, Record<string, string[]>] | []> => {
     const $config = get(this.config);
 
     if (!$config || !$locale) return [];
@@ -255,4 +255,4 @@ class I18n<ParserParams extends IParser.Params> {
   };
 }
 
-export { IConfig, ILoader, IParser, ITranslations, I18n as default };
+export { Config, Loader, Parser, Translations, I18n as default };
