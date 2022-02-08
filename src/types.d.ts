@@ -81,7 +81,6 @@ export namespace IParser {
 
   export type Key = ILoader.Key;
 
-
   export type Parse<T = Params> = (
     text: Text,
     params: T,
