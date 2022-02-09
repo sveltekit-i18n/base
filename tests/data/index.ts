@@ -1,7 +1,7 @@
-import type { IConfig } from '../../src';
+import type { Config } from '../../src';
 export { default as TRANSLATIONS } from './translations';
 
-export const CONFIG: IConfig.Config = {
+export const CONFIG: Config.T = {
   initLocale: 'en',
   parser: {
     parse: (_text, _params, _locale, key) => key,
