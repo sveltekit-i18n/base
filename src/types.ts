@@ -67,7 +67,7 @@ export module Parser {
     key: Key,
   ) => Output;
 
-  export type ParserFactory<Options = any, P extends Parser.Params = any> = (options: Options) => Parser.T<P>;
+  export type ParserFactory<ParserConfig = any, P extends Parser.Params = any> = (config?: ParserConfig) => Parser.T<P>;
 
   export type T<P extends Parser.Params = any> = {
     parse: Parse<P>;
