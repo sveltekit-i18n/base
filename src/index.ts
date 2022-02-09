@@ -4,7 +4,9 @@ import { fetchTranslations, testRoute, toDotNotation } from './utils';
 import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-class I18n<ParserParams extends Parser.Params = any> {
+export type { Config, Loader, Parser, Translations };
+
+export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
     if (config) this.loadConfig(config);
 
@@ -254,5 +256,3 @@ class I18n<ParserParams extends Parser.Params = any> {
     await this.loading.toPromise();
   };
 }
-
-export { Config, Loader, Parser, Translations, I18n as default };
