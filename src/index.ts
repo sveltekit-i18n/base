@@ -1,5 +1,5 @@
 import { derived, get, writable } from 'svelte/store';
-import { fetchTranslations, testRoute, toDotNotation } from './utils';
+import { fetchTranslations, sanitizeLocales, testRoute, toDotNotation } from './utils';
 
 import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore } from './types';
 import type { Readable, Writable } from 'svelte/store';
@@ -35,10 +35,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       const { loaders = [] } = $config;
 
-      const loaderLocales = loaders.map(({ locale }) => `${locale}`.toLowerCase());
-      const translationLocales = Object.keys($translations).map((l) => `${l}`.toLowerCase());
+      const loaderLocales = loaders.map(({ locale }) => sanitizeLocales(locale)[0]);
+      const translationLocales = Object.keys($translations).map((locale) => sanitizeLocales(locale)[0]);
 
-      return ([...new Set([...loaderLocales, ...translationLocales])]);
+      return [...new Set([...loaderLocales, ...translationLocales])];
     }, []),
     get: () => get(this.locales),
   };
@@ -49,8 +49,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     set: this.internalLocale.set,
     update: this.internalLocale.update,
     ...derived(this.internalLocale, ($locale, set) => {
-      const inputLocale = $locale && `${$locale}`.toLowerCase();
-      const outputLocale = this.getLocale(inputLocale);
+      const outputLocale = this.getLocale($locale);
 
       if (outputLocale && outputLocale !== this.locale.get()) set(outputLocale);
     }),
@@ -78,8 +77,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     locale,
     fallbackLocale,
   }) => {
-    if (!key) throw new Error('No key provided to $t()');
-    if (!locale) throw new Error('No locale set!');
+    if (!(key && locale)) {
+      console.warn('No translation key or locale provided. Skipping translation...');
+      return '';
+    }
 
     let text = (translations[locale] || {})[key];
 
@@ -126,16 +127,16 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     const $locales = this.locales.get();
 
     const outputLocale = $locales.find(
-      (l) => `${l}`.toLowerCase() === `${inputLocale}`.toLowerCase(),
+      (l) => `${sanitizeLocales(l)}` === `${sanitizeLocales(inputLocale)}`,
     ) || '';
 
-    return `${outputLocale}`.toLowerCase();
+    return `${sanitizeLocales(outputLocale)}`;
   };
 
   setLocale = async (locale?:string) => {
     if (!locale) return;
 
-    this.internalLocale.set(locale);
+    this.internalLocale.set(`${sanitizeLocales(locale)}`);
 
     await this.loading.toPromise();
   };

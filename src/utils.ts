@@ -43,3 +43,24 @@ export const testRoute = (route: string) => (input: Loader.Route) => {
 
   return false;
 };
+
+export const sanitizeLocales = (locales: string[] | string) => {
+  let outputLocales = locales;
+
+  if (!Array.isArray(locales)) {
+    outputLocales = [locales];
+  } else {
+    outputLocales = locales;
+  }
+
+  outputLocales = outputLocales.map((locale) => {
+    let current = `${locale}`.toLowerCase();
+    try {
+      [current] = Intl.Collator.supportedLocalesOf(locale);
+    } catch (error) {console.warn('Unstandard locale provided! Check your `translations` and `loaders` in config...');}
+
+    return current;
+  });
+
+  return outputLocales;
+};
