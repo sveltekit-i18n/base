@@ -29,7 +29,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   translations: ExtendedStore<Translations.SerializedTranslations> = { subscribe: this.privateTranslations.subscribe, get: () => get(this.translations) };
 
-  locales: ExtendedStore<string[]> = {
+  locales: ExtendedStore<Config.Locale[]> = {
     ...derived([this.config, this.privateTranslations], ([$config, $translations]) => {
       if (!$config) return [];
 
@@ -43,9 +43,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     get: () => get(this.locales),
   };
 
-  private internalLocale: Writable<string> = writable();
+  private internalLocale: Writable<Config.Locale> = writable();
 
-  locale: ExtendedStore<string, () => string, Writable<string>> = {
+  locale: ExtendedStore<Config.Locale, () => Config.Locale, Writable<string>> = {
     set: this.internalLocale.set,
     update: this.internalLocale.update,
     ...derived(this.internalLocale, ($locale, set) => {
@@ -147,10 +147,19 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   async configLoader(config: Config.T<ParserParams>) {
-    if (!config) throw new Error('No config!');
+    if (!config) throw new Error('No config provided!');
 
-    this.config.set(config);
-    const { initLocale = '', translations } = config;
+    let { initLocale, fallbackLocale, translations, ...rest } = config;
+    initLocale = sanitizeLocales(initLocale)[0];
+    fallbackLocale = sanitizeLocales(fallbackLocale)[0];
+
+    this.config.set({
+      initLocale,
+      fallbackLocale,
+      translations,
+      ...rest,
+    });
+
     if (translations) this.addTranslations(translations);
     await this.loadTranslations(initLocale);
   }
@@ -248,7 +257,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     await this.loading.toPromise();
   };
 
-  loadTranslations = async (locale: string, route = get(this.currentRoute) || '') => {
+  loadTranslations = async (locale: Config.Locale, route = get(this.currentRoute) || '') => {
     if (!locale) return;
 
     this.setRoute(route);

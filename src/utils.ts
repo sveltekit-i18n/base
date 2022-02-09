@@ -1,4 +1,23 @@
-import type { DotNotation, Translations, Loader } from './types';
+import type { DotNotation, Translations, Loader, Config } from './types';
+
+export const sanitizeLocales = (locales?: string[] | string): Config.Locale[] => {
+  if (!locales) return [];
+
+  let outputLocales = locales;
+
+  if (!Array.isArray(outputLocales)) {
+    outputLocales = [outputLocales];
+  }
+
+  return outputLocales.map((locale) => {
+    let current = `${locale}`.toLowerCase();
+    try {
+      [current] = Intl.Collator.supportedLocalesOf(locale);
+    } catch (error) {console.warn('Unstandard locale provided! Check your `translations` and `loaders` in config...');}
+
+    return current;
+  });
+};
 
 export const toDotNotation: DotNotation.T = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
   const value = (input as any)[key];
@@ -22,10 +41,16 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
       res({ loader, ...rest, data });
     })));
 
-    return response.reduce((acc, { key, data, locale }) => data ? ({
-      ...acc,
-      [locale]: toDotNotation({ ...(acc[locale] || {}), [key]: data }),
-    }) : acc, {} as DotNotation.Input);
+    return response.reduce((acc, { key, data, locale }) => {
+      if (!data) return acc;
+
+      const validLocale = sanitizeLocales(locale)[0];
+
+      return ({
+        ...acc,
+        [validLocale]: toDotNotation({ ...(acc[validLocale] || {}), [key]: data }),
+      });
+    }, {} as DotNotation.Input);
   } catch (error) {
     console.error(error);
   }
@@ -42,25 +67,4 @@ export const testRoute = (route: string) => (input: Loader.Route) => {
   }
 
   return false;
-};
-
-export const sanitizeLocales = (locales: string[] | string) => {
-  let outputLocales = locales;
-
-  if (!Array.isArray(locales)) {
-    outputLocales = [locales];
-  } else {
-    outputLocales = locales;
-  }
-
-  outputLocales = outputLocales.map((locale) => {
-    let current = `${locale}`.toLowerCase();
-    try {
-      [current] = Intl.Collator.supportedLocalesOf(locale);
-    } catch (error) {console.warn('Unstandard locale provided! Check your `translations` and `loaders` in config...');}
-
-    return current;
-  });
-
-  return outputLocales;
 };
