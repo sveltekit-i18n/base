@@ -23,7 +23,7 @@ export module Config {
 
   export type FallbackLocale = Locale | undefined;
 
-  export type T<P extends Parser.Params = any> = {
+  export type T<P extends Parser.Params = Parser.Params> = {
     loaders?: Loaders;
     translations?: Translations;
     initLocale?: InitLocale;
@@ -60,7 +60,7 @@ export module Parser {
 
   export type Output = any;
 
-  export type Parse<P extends Parser.Params = any> = (
+  export type Parse<P extends Parser.Params = Parser.Params> = (
     value: Value,
     params: P,
     locale: Locale,
@@ -69,7 +69,7 @@ export module Parser {
 
   export type ParserFactory<ParserConfig = any, P extends Parser.Params = any> = (config?: ParserConfig) => Parser.T<P>;
 
-  export type T<P extends Parser.Params = any> = {
+  export type T<P extends Parser.Params = Parser.Params> = {
     parse: Parse<P>;
   };
 }
@@ -79,11 +79,11 @@ export module Translations {
 
   export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
 
-  export type TranslationFunction<P extends Parser.Params = any> = (key: string, ...restParams: P) => string;
+  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => string;
 
-  export type LocalTranslationFunction<P extends Parser.Params = any> = (locale: string, key: string, ...restParams: P) => string;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: string, key: string, ...restParams: P) => string;
 
-  export type Translate<P extends Parser.Params = any> = (props: {
+  export type Translate<P extends Parser.Params = Parser.Params> = (props: {
     parser: Parser.T<P>;
     key: string;
     params: P;
@@ -92,5 +92,5 @@ export module Translations {
     fallbackLocale?: string;
   }) => string;
 
-  export type T<T = any> = { [locale: string]: Record<string, T> };
+  export type T<V = any> = { [locale: string]: Record<string, V> };
 }
