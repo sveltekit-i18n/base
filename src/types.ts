@@ -94,7 +94,7 @@ export module Translations {
     fallbackLocale?: string;
   }) => string;
 
-  export type Input<V = any> = { [key: string]: Input<V> | V };
+  export type Input<V = any> ={ [K in any]: Input<V> | V };
 
   export type LocaleIndexed<V> = { [locale in Locales[number]]: V };
 
