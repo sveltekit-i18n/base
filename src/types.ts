@@ -5,27 +5,27 @@ export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get
 export type LoadingStore = Readable<boolean> & { toPromise: () => Promise<void[]>, get: () => boolean };
 
 export module DotNotation {
-  export type Input = any;
+  export type Input = Translations.Input;
 
-  export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] } | null;
+  export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] };
 
   export type T = <I = Input>(input: I, parentKey?: string) => Output<I>;
 }
 
 export module Config {
-  export type Loaders = Loader.LoaderModule[] | undefined;
+  export type Loader = Loader.LoaderModule;
 
-  export type Translations = Translations.T | undefined;
+  export type Translations = Translations.T;
 
-  export type Locale = string;
+  export type Locale = Translations.Locales[number];
 
   export type InitLocale = Locale | undefined;
 
   export type FallbackLocale = Locale | undefined;
 
   export type T<P extends Parser.Params = Parser.Params> = {
-    loaders?: Loaders;
-    translations?: Translations;
+    loaders?: Loader[];
+    translations?: Translations.T;
     initLocale?: InitLocale;
     fallbackLocale?: FallbackLocale;
     parser: Parser.T<P>;
@@ -39,6 +39,8 @@ export module Loader {
 
   export type Route = string | RegExp;
 
+  export type IndexedKeys = Translations.LocaleIndexed<Key[]>;
+
   export type LoaderModule = {
     key: Key;
     locale: Locale;
@@ -46,7 +48,7 @@ export module Loader {
     loader: T;
   };
 
-  export type T = () => Promise<Record<any, any>>;
+  export type T = () => Promise<Translations.Input>;
 }
 
 export module Parser {
@@ -67,30 +69,34 @@ export module Parser {
     key: Key,
   ) => Output;
 
-  export type ParserFactory<ParserConfig = any, P extends Parser.Params = any> = (config?: ParserConfig) => Parser.T<P>;
-
   export type T<P extends Parser.Params = Parser.Params> = {
     parse: Parse<P>;
   };
 }
 
 export module Translations {
-  export type SerializedTranslations = T<DotNotation.Output>;
+  export type Locales = string[];
+
+  export type SerializedTranslations = LocaleIndexed<DotNotation.Output>;
 
   export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
 
-  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => string;
+  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => any;
 
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: string, key: string, ...restParams: P) => string;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: Config.Locale, key: string, ...restParams: P) => any;
 
   export type Translate<P extends Parser.Params = Parser.Params> = (props: {
     parser: Parser.T<P>;
     key: string;
     params: P;
     translations: SerializedTranslations;
-    locale: string;
+    locale: Locales[number];
     fallbackLocale?: string;
   }) => string;
 
-  export type T<V = any> = { [locale: string]: Record<string, V> };
+  export type Input<V = any> = { [key: string]: Input<V> | V };
+
+  export type LocaleIndexed<V> = { [locale in Locales[number]]: V };
+
+  export type T<V = any> = LocaleIndexed<Input<V>>;
 }

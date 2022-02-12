@@ -23,9 +23,9 @@ export const toDotNotation: DotNotation.T = (input, parentKey) => Object.keys(in
   const value = (input as any)[key];
   const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
-  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation<typeof value>(value, outputKey) });
+  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, outputKey) });
 
-  return ({ ...acc, [outputKey as keyof typeof outputKey]: value as typeof value });
+  return ({ ...acc, [outputKey]: value });
 }, {});
 
 export const fetchTranslations: Translations.FetchTranslations = async (loaders) => {

@@ -13,7 +13,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     this.loaderTrigger.subscribe(() => this.translationLoader());
   }
 
-  private loadedKeys: Record<string, string[]> = {};
+  private loadedKeys: Loader.IndexedKeys = {};
 
   private currentRoute: Writable<string> = writable();
 
@@ -168,7 +168,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     await this.configLoader(config);
   };
 
-  addTranslations = (translations?: Config.Translations, keys?: Record<string, string[]>) => {
+  addTranslations = (translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys) => {
     if (!translations) return;
 
     const translationLocales = Object.keys(translations || {});
@@ -195,7 +195,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     });
   };
 
-  getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Config.Translations, Record<string, string[]>] | []> => {
+  getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> => {
     const $config = get(this.config);
 
     if (!$config || !$locale) return [];
@@ -229,8 +229,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       this.isLoading.set(false);
 
-      const loadedKeys = Object.keys(translations).reduce<Record<string, string[]>>(
-        (acc, locale) => ({ ...acc, [locale]: Object.keys(translations[locale]) }), {},
+      const loadedKeys = Object.keys(translations).reduce(
+        (acc, locale) => ({ ...acc, [locale]: Object.keys(translations[locale]) }), {} as Loader.IndexedKeys,
       );
 
       const keys = filteredLoaders
@@ -247,7 +247,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     return [];
   };
 
-  private translationLoader = async (locale?: string) => {
+  private translationLoader = async (locale?: Config.Locale) => {
     this.promises.push(new Promise(async (res) => {
       const props = await this.getTranslationProps(locale);
       if (props.length) this.addTranslations(...props);
