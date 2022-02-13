@@ -6,12 +6,16 @@ import type { Readable, Writable } from 'svelte/store';
 
 export type { Config, Loader, Parser, Translations };
 
+const defaultCache = 1000 * 60 * 60 * 24;
+
 export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
     if (config) this.loadConfig(config);
 
     this.loaderTrigger.subscribe(() => this.translationLoader());
   }
+
+  private cachedAt = 0;
 
   private loadedKeys: Loader.IndexedKeys = {};
 
@@ -168,33 +172,6 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     await this.configLoader(config);
   };
 
-  addTranslations = (translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys) => {
-    if (!translations) return;
-
-    const translationLocales = Object.keys(translations || {});
-
-    this.privateTranslations.update(($translations) => translationLocales.reduce(
-      (acc, locale) => ({
-        ...acc,
-        [locale]: {
-          ...(acc[locale] || {}),
-          ...toDotNotation(translations[locale]),
-        },
-      }),
-      $translations,
-    ));
-
-    translationLocales.forEach(($locale) => {
-      let localeKeys = Object.keys(translations[$locale]).map((k) => `${k}`.split('.')[0]);
-      if (keys) localeKeys = keys[$locale];
-
-      this.loadedKeys[$locale] = Array.from(new Set([
-        ...(this.loadedKeys[$locale] || []),
-        ...(localeKeys || []),
-      ]));
-    });
-  };
-
   getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> => {
     const $config = get(this.config);
 
@@ -202,23 +179,32 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     const $translations = this.translations.get();
 
-    const { loaders, fallbackLocale = '' } = $config || {};
+    const { loaders, fallbackLocale = '', cache = defaultCache } = $config || {};
 
-    const lowerLocale = `${$locale}`.toLowerCase();
-    const lowerFallbackLocale = fallbackLocale && `${fallbackLocale}`.toLowerCase();
+    const cacheValue = Number.isNaN(+cache) ? defaultCache : +cache;
 
-    const translationForLocale = $translations[lowerLocale];
-    const translationForFallbackLocale = $translations[lowerFallbackLocale];
+    if (!this.cachedAt) {
+      this.cachedAt = Date.now();
+    } else if (Date.now() > cacheValue + this.cachedAt) {
+      this.privateTranslations.set({});
+      this.loadedKeys = {};
+      this.cachedAt = 0;
+    }
+
+    const [sanitizedLocale, sanitizedFallbackLocale] = sanitizeLocales([$locale, fallbackLocale]);
+
+    const translationForLocale = $translations[sanitizedLocale];
+    const translationForFallbackLocale = $translations[sanitizedFallbackLocale];
 
     const filteredLoaders = (loaders || [])
-      .map(({ locale, ...rest }) => ({ ...rest, locale: `${locale}`.toLowerCase() }))
+      .map(({ locale, ...rest }) => ({ ...rest, locale: sanitizeLocales(locale)[0] }))
       .filter(({ routes }) => !routes || (routes || []).some(testRoute($route)))
-      .filter(({ key, locale }) => locale === lowerLocale && (
-        !translationForLocale || !(this.loadedKeys[lowerLocale] || []).includes(key)
+      .filter(({ key, locale }) => locale === sanitizedLocale && (
+        !translationForLocale || !(this.loadedKeys[sanitizedLocale] || []).includes(key)
       ) || (
-        fallbackLocale && locale === lowerFallbackLocale && (
+        fallbackLocale && locale === sanitizedFallbackLocale && (
           !translationForFallbackLocale ||
-            !(this.loadedKeys[lowerFallbackLocale] || []).includes(key)
+            !(this.loadedKeys[sanitizedFallbackLocale] || []).includes(key)
         )),
       );
 
@@ -245,6 +231,33 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       return [translations, keys];
     }
     return [];
+  };
+
+  addTranslations = (translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys) => {
+    if (!translations) return;
+
+    const translationLocales = Object.keys(translations || {});
+
+    this.privateTranslations.update(($translations) => translationLocales.reduce(
+      (acc, locale) => ({
+        ...acc,
+        [locale]: {
+          ...(acc[locale] || {}),
+          ...toDotNotation(translations[locale]),
+        },
+      }),
+      $translations,
+    ));
+
+    translationLocales.forEach(($locale) => {
+      let localeKeys = Object.keys(translations[$locale]).map((k) => `${k}`.split('.')[0]);
+      if (keys) localeKeys = keys[$locale];
+
+      this.loadedKeys[$locale] = Array.from(new Set([
+        ...(this.loadedKeys[$locale] || []),
+        ...(localeKeys || []),
+      ]));
+    });
   };
 
   private translationLoader = async (locale?: Config.Locale) => {

@@ -29,6 +29,7 @@ export module Config {
     initLocale?: InitLocale;
     fallbackLocale?: FallbackLocale;
     parser: Parser.T<P>;
+    cache?: number;
   };
 }
 
