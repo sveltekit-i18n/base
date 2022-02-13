@@ -183,10 +183,11 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     const cacheValue = Number.isNaN(+cache) ? defaultCache : +cache;
 
+    const now = Date.now();
+
     if (!this.cachedAt) {
-      this.cachedAt = Date.now();
-    } else if (Date.now() > cacheValue + this.cachedAt) {
-      this.privateTranslations.set({});
+      this.cachedAt = now;
+    } else if (now > cacheValue + this.cachedAt) {
       this.loadedKeys = {};
       this.cachedAt = 0;
     }
