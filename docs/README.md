@@ -31,6 +31,11 @@ If you set this parameter, translations are automatically loaded not for current
 
 Note that it's not recommended to use this parameter if you don't really need it. It may affect your data load.
 
+### `cache`?: __number__
+When you are running your app on Node.js server, translations are loaded only once during the SSR. This parameter allows you to setup a refresh period in milliseconds when your translations are refetched on the server. The default value is `86400000` (24 hours).
+
+Tip: You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
+
 
 ## Instance methods and properties
 
