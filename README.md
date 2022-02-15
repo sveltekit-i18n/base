@@ -23,11 +23,13 @@ __IMPORTANT: THIS PACKAGE IS STILL UNDER DEVELOPMENT - API MAY VARY UNTIL 1.0.0_
 Setup `translations.js` in your lib folder...
 ```javascript
 import i18n from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-default'; // use your preferred parser (or create your own)
+// use your preferred parser (or create your own)
+import parser from '@sveltekit-i18n/parser-default';
+// import parser from '@sveltekit-i18n/parser-icu';
 
 /** @namespace {import('@sveltekit-i18n/parser-default').Config} */
 const config = ({
-  parser: parser({}),
+  parser: parser({/* Parser options */}),
   loaders: [
     {
       locale: 'en',
@@ -113,7 +115,6 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
 </script>
 
 <div>
-  <!-- you can use `placeholders` and `modifiers` in your definitions (see docs) -->
   <h2>{$t('common.page', { pageName })}</h2>
   <p>{$t('home.content')}</p>
 </div>
@@ -121,6 +122,7 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
 
 
 ## More info
+[Parsers](https://github.com/sveltekit-i18n/parsers)\
 [Docs](https://github.com/sveltekit-i18n/base/tree/master/docs/README.md)\
 [Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#parsers)\
 [Changelog](https://github.com/sveltekit-i18n/base/releases)
