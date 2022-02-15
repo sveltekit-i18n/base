@@ -27,7 +27,7 @@ import i18n from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 // import parser from '@sveltekit-i18n/parser-icu';
 
-/** @namespace {import('@sveltekit-i18n/parser-default').Config} */
+/** @type {import('@sveltekit-i18n/parser-default').Config} */
 const config = ({
   parser: parser({/* Parser options */}),
   loaders: [
