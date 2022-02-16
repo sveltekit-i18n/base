@@ -134,13 +134,13 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       (locale) => locale === sanitizeLocales(inputLocale)[0],
     ) || '';
 
-    return `${sanitizeLocales(outputLocale)[0]}`;
+    return sanitizeLocales(outputLocale)[0] || '';
   };
 
   setLocale = async (locale?:string) => {
     if (!locale) return;
 
-    this.internalLocale.set(`${sanitizeLocales(locale)[0]}`);
+    this.internalLocale.set(sanitizeLocales(locale)[0]);
 
     await this.loading.toPromise();
   };
