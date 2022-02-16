@@ -12,7 +12,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
     if (config) this.loadConfig(config);
 
-    this.loaderTrigger.subscribe(() => this.translationLoader());
+    this.loaderTrigger.subscribe(([$locale]) => this.translationLoader($locale));
   }
 
   private cachedAt = 0;
@@ -131,16 +131,16 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     const $locales = this.locales.get();
 
     const outputLocale = $locales.find(
-      (l) => `${sanitizeLocales(l)}` === `${sanitizeLocales(inputLocale)}`,
+      (locale) => locale === sanitizeLocales(inputLocale)[0],
     ) || '';
 
-    return `${sanitizeLocales(outputLocale)}`;
+    return `${sanitizeLocales(outputLocale)[0]}`;
   };
 
   setLocale = async (locale?:string) => {
     if (!locale) return;
 
-    this.internalLocale.set(`${sanitizeLocales(locale)}`);
+    this.internalLocale.set(`${sanitizeLocales(locale)[0]}`);
 
     await this.loading.toPromise();
   };

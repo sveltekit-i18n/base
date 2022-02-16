@@ -96,9 +96,7 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
     
     const initLocale = locale.get() || defaultLocale; // set default if no locale already set
 
-    await loadTranslations(initLocale, pathname);
-
-    locale.set(initLocale); // keep this just before the `return`
+    await loadTranslations(initLocale, pathname); // keep this just before the `return`
 
     return {};
   }

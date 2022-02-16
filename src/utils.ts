@@ -1,7 +1,7 @@
 import type { DotNotation, Translations, Loader, Config } from './types';
 
 export const sanitizeLocales = (locales?: string[] | string): Config.Locale[] => {
-  if (!locales) return [];
+  if (!locales || !locales.length) return [];
 
   let outputLocales = locales;
 
@@ -9,11 +9,11 @@ export const sanitizeLocales = (locales?: string[] | string): Config.Locale[] =>
     outputLocales = [outputLocales];
   }
 
-  return outputLocales.map((locale) => {
+  return outputLocales.filter((locale) => !!locale).map((locale) => {
     let current = `${locale}`.toLowerCase();
     try {
       [current] = Intl.Collator.supportedLocalesOf(locale);
-    } catch (error) {console.warn('Unstandard locale provided! Check your `translations` and `loaders` in config...');}
+    } catch (error) {console.warn(`Non-standard locale provided: '${locales}' => '${outputLocales}'. Check your 'translations' and 'loaders' in i18n config...`);}
 
     return current;
   });
