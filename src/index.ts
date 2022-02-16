@@ -27,7 +27,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   private promises: Promise<void>[] = [];
 
-  loading: LoadingStore = { subscribe: this.isLoading.subscribe, toPromise: () => Promise.all(this.promises), get: () => get(this.isLoading) };
+  loading: LoadingStore = {
+    subscribe: this.isLoading.subscribe,
+    toPromise: (id) => {
+      if (id) return this.promises[id];
+      return Promise.all(this.promises);
+    },
+    get: () => get(this.isLoading),
+  };
 
   private privateTranslations: Writable<Translations.SerializedTranslations> = writable({});
 
@@ -139,15 +146,17 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   setLocale = async (locale?:string) => {
     if (!locale) return;
-
+    const id = this.promises.length;
     this.internalLocale.set(sanitizeLocales(locale)[0]);
 
-    await this.loading.toPromise();
+    await this.loading.toPromise(id);
   };
 
   setRoute = async (route: string) => {
+    const id = this.promises.length;
     if (route !== get(this.currentRoute)) this.currentRoute.set(route);
-    await this.loading.toPromise();
+
+    await this.loading.toPromise(id);
   };
 
   async configLoader(config: Config.T<ParserParams>) {
@@ -260,21 +269,26 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   private translationLoader = async (locale?: Config.Locale) => {
+    const id = this.promises.length;
+
     this.promises.push(new Promise(async (res) => {
       const props = await this.getTranslationProps(locale);
       if (props.length) this.addTranslations(...props);
+
+      this.setLocale(locale);
       res();
     }));
 
-    await this.loading.toPromise();
+    await this.loading.toPromise(id);
   };
 
   loadTranslations = async (locale: Config.Locale, route = get(this.currentRoute) || '') => {
     if (!locale) return;
+    const id = this.promises.length;
 
     this.setRoute(route);
     this.setLocale(locale);
 
-    await this.loading.toPromise();
+    await this.loading.toPromise(id);
   };
 }

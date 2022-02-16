@@ -2,7 +2,7 @@ import { Readable } from 'svelte/store';
 
 export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get: Get };
 
-export type LoadingStore = Readable<boolean> & { toPromise: () => Promise<void[]>, get: () => boolean };
+export type LoadingStore = Readable<boolean> & { toPromise: (id?:number) => Promise<void[] | void>, get: () => boolean };
 
 export module DotNotation {
   export type Input = Translations.Input;
