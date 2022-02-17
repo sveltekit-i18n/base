@@ -5,7 +5,6 @@
 # @sveltekit-i18n/base
 This repository contains the base functionality of [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) and provides support for external message parsers.
 
-__IMPORTANT: THIS PACKAGE IS STILL UNDER DEVELOPMENT - API MAY VARY UNTIL 1.0.0__
 
 ## Key features
 
