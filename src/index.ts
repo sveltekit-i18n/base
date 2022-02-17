@@ -13,6 +13,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     if (config) this.loadConfig(config);
 
     this.loaderTrigger.subscribe(([$locale]) => this.translationLoader($locale));
+
+    // purge resolved promises
+    this.isLoading.subscribe(async ($loading) => {
+      if ($loading) {
+        await this.loading.toPromise();
+        this.promises = [];
+      }
+    });
   }
 
   private cachedAt = 0;
