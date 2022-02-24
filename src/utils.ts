@@ -9,7 +9,7 @@ export const translate: Translations.Translate = ({
   fallbackLocale,
 }) => {
   if (!(key && locale)) {
-    console.warn('No translation key or locale provided. Skipping translation...');
+    console.warn('[i18n]: No translation key or locale provided. Skipping translation...');
     return '';
   }
 
@@ -30,7 +30,7 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
     let current = `${locale}`.toLowerCase();
     try {
       [current] = Intl.Collator.supportedLocalesOf(locale);
-    } catch (error) {console.warn(`Non-standard locale provided: '${locales}'. Check your 'translations' and 'loaders' in i18n config...`);}
+    } catch (error) {console.warn(`[i18n]: Non-standard locale provided: '${locales}'. Check your 'translations' and 'loaders' in i18n config...`);}
 
     return current;
   });
@@ -52,7 +52,7 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
       try {
         data = await loader();
       } catch (error) {
-        console.error(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
+        console.error(`[i18n]: Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
         console.error(error);
       }
       res({ loader, ...rest, data });
@@ -80,7 +80,7 @@ export const testRoute = (route: string) => (input: Loader.Route) => {
     if (typeof input === 'string') return input === route;
     if (typeof input === 'object') return input.test(route);
   } catch (error) {
-    throw new Error('Invalid route config!');
+    throw new Error('[i18n]: Invalid route config!');
   }
 
   return false;
@@ -97,6 +97,5 @@ export const checkProps = (props: any, object: any) => {
     );
   } catch (error) {}
 
-  console.log(out, props);
   return out;
 };

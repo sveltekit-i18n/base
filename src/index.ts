@@ -20,7 +20,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         await this.loading.toPromise();
         this.promises.clear();
 
-        console.debug('Promises has been purged.');
+        console.info('[i18n]: Promises has been purged.');
       }
     });
   }
@@ -159,7 +159,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   async configLoader(config: Config.T<ParserParams>) {
-    if (!config) throw new Error('No config provided!');
+    if (!config) throw new Error('[i18n]: No config provided!');
 
     let { initLocale, fallbackLocale, translations, ...rest } = config;
     initLocale = sanitizeLocales(initLocale)[0];
