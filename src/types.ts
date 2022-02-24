@@ -2,7 +2,7 @@ import { Readable } from 'svelte/store';
 
 export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get: Get };
 
-export type LoadingStore = Readable<boolean> & { toPromise: (id?:number) => Promise<void[] | void>, get: () => boolean };
+export type LoadingStore = Readable<boolean> & { toPromise: (locale?:Config.Locale, route?: string) => Promise<void[] | void>, get: () => boolean };
 
 export module DotNotation {
   export type Input = Translations.Input;
@@ -86,7 +86,7 @@ export module Translations {
 
   export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: Config.Locale, key: string, ...restParams: P) => any;
 
-  export type Translate<P extends Parser.Params = Parser.Params> = (props: {
+  export type Translate = <P extends Parser.Params = Parser.Params>(props: {
     parser: Parser.T<P>;
     key: string;
     params: P;
