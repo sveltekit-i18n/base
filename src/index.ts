@@ -8,8 +8,6 @@ export type { Config, Loader, Parser, Translations };
 
 const defaultCache = 1000 * 60 * 60 * 24;
 
-const { subscribe, set } = writable<Config.Locale>();
-
 export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
     if (config) this.loadConfig(config);
@@ -75,9 +73,11 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     if ($internalLocale !== undefined && $currentRoute !== undefined && ($internalLocale !== get(this.loaderTrigger)?.[0] || $currentRoute !== get(this.loaderTrigger)?.[1])) set([$internalLocale, $currentRoute]);
   }, [] as string[]);
 
+  private localeHelper = writable<Config.Locale>();
+
   locale: ExtendedStore<Config.Locale, () => Config.Locale, Writable<string>> & { forceSet: any } = {
-    subscribe,
-    forceSet: set,
+    subscribe: this.localeHelper.subscribe,
+    forceSet: this.localeHelper.set,
     set: this.internalLocale.set,
     update: this.internalLocale.update,
     get: () => get(this.locale),

@@ -96,6 +96,7 @@ export const checkProps = (props: any, object: any) => {
       (key) => props[key] === object[key],
     );
   } catch (error) {}
+
   console.log(out, props);
   return out;
 };
