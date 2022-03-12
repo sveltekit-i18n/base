@@ -36,6 +36,8 @@ When you are running your app on Node.js server, translations are loaded only on
 
 Tip: You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
 
+### `debug`?: __boolean__
+This parameter enables debug logs (default: `false`).
 
 ## Instance methods and properties
 

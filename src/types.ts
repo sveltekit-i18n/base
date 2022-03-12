@@ -30,6 +30,7 @@ export module Config {
     fallbackLocale?: FallbackLocale;
     parser: Parser.T<P>;
     cache?: number;
+    debug?: boolean;
   };
 }
 
