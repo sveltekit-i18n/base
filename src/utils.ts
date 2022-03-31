@@ -31,7 +31,7 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
     try {
       [current] = Intl.Collator.supportedLocalesOf(locale);
     } catch (error) {
-      console.warn(`[i18n]: Non-standard locale provided: '${locales}'. Check your 'translations' and 'loaders' in i18n config...`);
+      console.warn(`[i18n]: Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
     }
 
     return current;
