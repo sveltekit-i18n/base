@@ -169,8 +169,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     if (!config) throw new Error('[i18n]: No config provided!');
 
     let { initLocale, fallbackLocale, translations, debug, ...rest } = config;
-    initLocale = sanitizeLocales(initLocale)[0];
-    fallbackLocale = sanitizeLocales(fallbackLocale)[0];
+    [initLocale] = sanitizeLocales(initLocale);
+    [fallbackLocale] = sanitizeLocales(fallbackLocale);
 
     if (debug) console.debug('[i18n]: Setting config.');
 
