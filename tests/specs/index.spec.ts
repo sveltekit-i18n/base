@@ -117,6 +117,26 @@ describe('i18n instance', () => {
     const $locale = locale.get();
     expect($locale).toBe(initLocale.toLocaleLowerCase());
   });
+  it('`locale` can be non-standard', async () => {
+    const nonStandardLocale = 'ku';
+    const { loading, locale, locales, setRoute, initialized } = new i18n({ loaders: [{ key: 'common', locale: `${nonStandardLocale}`.toUpperCase(), loader: () => import('../data/translations/en/common.json') }], parser });
+    await setRoute('');
+    locale.set(nonStandardLocale);
+
+    const $loading = loading.get();
+    expect($loading).toBe(true);
+
+    await loading.toPromise();
+
+    const $initialized = get(initialized);
+    expect($initialized).toBe(true);
+
+    const $locale = locale.get();
+    expect($locale).toBe(nonStandardLocale);
+
+    const $locales = locales.get();
+    expect($locales).toContainEqual(nonStandardLocale);
+  });
   it('`getTranslationProps` method works', async () => {
     const { initialized, getTranslationProps } = new i18n({ loaders, parser });
 
