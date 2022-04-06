@@ -30,6 +30,8 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
     let current = `${locale}`.toLowerCase();
     try {
       [current] = Intl.Collator.supportedLocalesOf(locale);
+
+      if (!current) throw new Error(`[i18n]: '${locale}' is non-standard.`);
     } catch (error) {
       console.warn(`[i18n]: Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
     }

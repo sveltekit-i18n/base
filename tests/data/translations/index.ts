@@ -3,7 +3,8 @@ import type { Translations } from '../../../src/types';
 
 import * as common from './en/common.json';
 import * as route from './en/route.json';
-import * as common_cs from './cs/common.json';
+import * as common_ku from './ku/common.json';
+import * as common_zhHans from './zh-Hans/common.json';
 
 export default ({
   en: toDotNotation({
@@ -11,7 +12,10 @@ export default ({
     route1: route,
     route2: route,
   }),
-  cs: toDotNotation({
-    common: common_cs,
+  'zh-Hans': toDotNotation({
+    common: common_zhHans,
+  }),
+  ku: toDotNotation({
+    common: common_ku,
   }),
 }) as Translations.T;
