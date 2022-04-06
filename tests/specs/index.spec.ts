@@ -119,7 +119,7 @@ describe('i18n instance', () => {
   });
   it('`locale` can be non-standard', async () => {
     const nonStandardLocale = 'ku';
-    const { loading, locale, locales, setRoute, initialized } = new i18n({ loaders: [{ key: 'common', locale: `${nonStandardLocale}`.toUpperCase(), loader: () => import('../data/translations/en/common.json') }], parser });
+    const { loading, locale, locales, setRoute, initialized, translations } = new i18n({ loaders: [{ key: 'common', locale: `${nonStandardLocale}`.toUpperCase(), loader: () => import(`../data/translations/${nonStandardLocale}/common.json`) }], parser });
     await setRoute('');
     locale.set(nonStandardLocale);
 
@@ -136,6 +136,11 @@ describe('i18n instance', () => {
 
     const $locales = locales.get();
     expect($locales).toContainEqual(nonStandardLocale);
+
+    const $translations = translations.get();
+    expect($translations[nonStandardLocale]).toEqual(
+      expect.objectContaining(filterTranslationKeys(TRANSLATIONS[nonStandardLocale], ['common'])),
+    );
   });
   it('`getTranslationProps` method works', async () => {
     const { initialized, getTranslationProps } = new i18n({ loaders, parser });
