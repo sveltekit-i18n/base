@@ -29,9 +29,11 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
   return locales.filter((locale) => !!locale).map((locale) => {
     let current = `${locale}`.toLowerCase();
     try {
-      [current] = Intl.Collator.supportedLocalesOf(locale);
+      const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
 
-      if (!current) throw new Error(`[i18n]: '${locale}' is non-standard.`);
+      if (!sanitized) throw new Error(`[i18n]: '${locale}' is non-standard.`);
+
+      current = sanitized;
     } catch (error) {
       console.warn(`[i18n]: Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
     }
