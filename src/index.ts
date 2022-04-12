@@ -70,7 +70,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   private internalLocale: Writable<Config.Locale> = writable();
 
   private loaderTrigger = derived([this.internalLocale, this.currentRoute], ([$internalLocale, $currentRoute], set) => {
-    if ($internalLocale !== undefined && $currentRoute !== undefined && ($internalLocale !== get(this.loaderTrigger)?.[0] || $currentRoute !== get(this.loaderTrigger)?.[1])){
+    if ($internalLocale !== undefined && $currentRoute !== undefined && ($internalLocale !== get(this.loaderTrigger)?.[0] || $currentRoute !== get(this.loaderTrigger)?.[1])) {
       if (get(this.config)?.debug) console.debug('[i18n]: Triggering translation load...');
 
       set([$internalLocale, $currentRoute]);
