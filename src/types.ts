@@ -12,6 +12,21 @@ export module DotNotation {
   export type T = <I = Input>(input: I, parentKey?: string) => Output<I>;
 }
 
+export module Logger {
+  export type Level = 'error' | 'warn' | 'debug';
+
+  export type Prefix = string;
+
+  export type T = {
+    [key in Logger.Level]: (value: any) => void;
+  };
+
+  export type FactoryProps = {
+    logger?: Logger.T;
+    level?: Logger.Level;
+    prefix?: Logger.Prefix;
+  };
+}
 export module Config {
   export type Loader = Loader.LoaderModule;
 
@@ -30,7 +45,11 @@ export module Config {
     fallbackLocale?: FallbackLocale;
     parser: Parser.T<P>;
     cache?: number;
-    debug?: boolean;
+    log?: {
+      level?: Logger.Level;
+      logger?: Logger.T;
+      prefix?: Logger.Prefix;
+    };
   };
 }
 

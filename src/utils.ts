@@ -1,4 +1,5 @@
 import type { DotNotation, Translations, Loader } from './types';
+import { logger } from './logger';
 
 export const translate: Translations.Translate = ({
   parser,
@@ -9,7 +10,7 @@ export const translate: Translations.Translate = ({
   fallbackLocale,
 }) => {
   if (!(key && locale)) {
-    console.warn('[i18n]: No translation key or locale provided. Skipping translation...');
+    logger.warn('No translation key or locale provided. Skipping translation...');
     return '';
   }
 
@@ -21,7 +22,6 @@ export const translate: Translations.Translate = ({
 
   return parser.parse(text, params, locale, key);
 };
-
 
 export const sanitizeLocales = (...locales: any[]): string[] | [] => {
   if (!locales.length) return [];
@@ -35,7 +35,7 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
 
       current = sanitized;
     } catch (error) {
-      console.warn(`[i18n]: Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
+      logger.warn(`Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
     }
 
     return current;
@@ -58,8 +58,8 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
       try {
         data = await loader();
       } catch (error) {
-        console.error(`[i18n]: Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
-        console.error(error);
+        logger.error(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
+        logger.error(error);
       }
       res({ loader, ...rest, data });
     })));
@@ -75,7 +75,7 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
       });
     }, {} as DotNotation.Input);
   } catch (error) {
-    console.error(error);
+    logger.error(error);
   }
 
   return {};

@@ -1,10 +1,11 @@
 import { derived, get, writable } from 'svelte/store';
 import { checkProps, fetchTranslations, sanitizeLocales, testRoute, toDotNotation, translate } from './utils';
+import { logger, loggerFactory, setLogger } from './logger';
 
-import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore } from './types';
+import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore, Logger } from './types';
 import type { Readable, Writable } from 'svelte/store';
 
-export type { Config, Loader, Parser, Translations };
+export type { Config, Loader, Parser, Translations, Logger };
 
 const defaultCache = 1000 * 60 * 60 * 24;
 
@@ -20,7 +21,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         await this.loading.toPromise();
         this.promises.clear();
 
-        if (get(this.config)?.debug) console.debug('[i18n]: Loader promises have been purged.');
+        logger.debug('Loader promises have been purged.');
       }
     });
   }
@@ -71,7 +72,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   private loaderTrigger = derived([this.internalLocale, this.currentRoute], ([$internalLocale, $currentRoute], set) => {
     if ($internalLocale !== undefined && $currentRoute !== undefined && ($internalLocale !== get(this.loaderTrigger)?.[0] || $currentRoute !== get(this.loaderTrigger)?.[1])) {
-      if (get(this.config)?.debug) console.debug('[i18n]: Triggering translation load...');
+      logger.debug('Triggering translation load...');
 
       set([$internalLocale, $currentRoute]);
     }
@@ -143,7 +144,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     const [sanitizedLocale] = sanitizeLocales(locale);
 
     if (sanitizedLocale !== get(this.internalLocale)) {
-      if (get(this.config)?.debug) console.debug(`[i18n]: Setting '${sanitizedLocale}' locale.`);
+      logger.debug(`Setting '${sanitizedLocale}' locale.`);
 
       this.internalLocale.set(sanitizedLocale);
 
@@ -155,7 +156,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   setRoute = (route: string) => {
     if (route !== get(this.currentRoute)) {
-      if (get(this.config)?.debug) console.debug(`[i18n]: Setting '${route}' route.`);
+      logger.debug(`Setting '${route}' route.`);
       this.currentRoute.set(route);
       const locale = get(this.internalLocale);
 
@@ -168,17 +169,19 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   async configLoader(config: Config.T<ParserParams>) {
     if (!config) throw new Error('[i18n]: No config provided!');
 
-    let { initLocale, fallbackLocale, translations, debug, ...rest } = config;
+    let { initLocale, fallbackLocale, translations, log, ...rest } = config;
+
+    if (log) setLogger(loggerFactory(log));
+
     [initLocale] = sanitizeLocales(initLocale);
     [fallbackLocale] = sanitizeLocales(fallbackLocale);
 
-    if (debug) console.debug('[i18n]: Setting config.');
+    logger.debug('Setting config.');
 
     this.config.set({
       initLocale,
       fallbackLocale,
       translations,
-      debug,
       ...rest,
     });
 
@@ -202,10 +205,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     const cacheValue = Number.isNaN(+cache) ? defaultCache : +cache;
 
     if (!this.cachedAt) {
-      if ($config?.debug) console.debug('[i18n]: Setting cache timestamp.');
+      logger.debug('Setting cache timestamp.');
       this.cachedAt = Date.now();
     } else if (Date.now() > cacheValue + this.cachedAt) {
-      if ($config?.debug) console.debug('[i18n]: Refreshing cache.');
+      logger.debug('Refreshing cache.');
       this.loadedKeys = {};
       this.cachedAt = 0;
     }
@@ -230,7 +233,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     if (filteredLoaders.length) {
       this.isLoading.set(true);
 
-      if ($config?.debug) console.debug('[i18n]: Fetching translations...');
+      logger.debug('Fetching translations...');
 
       const translations = await fetchTranslations(filteredLoaders);
 
@@ -257,7 +260,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   addTranslations = (translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys) => {
     if (!translations) return;
 
-    if (get(this.config)?.debug) console.debug('[i18n]: Adding translations...');
+    logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(translations || {});
 
@@ -284,7 +287,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   private loader = async ([locale, route]: string[]) => {
-    if (get(this.config)?.debug) console.debug('[i18n]: Adding loader promise.');
+    logger.debug('Adding loader promise.');
 
     const promise = (async () => {
       const props = await this.getTranslationProps(locale, route);
