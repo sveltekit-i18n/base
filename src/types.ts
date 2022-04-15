@@ -27,6 +27,7 @@ export module Logger {
     prefix?: Logger.Prefix;
   };
 }
+
 export module Config {
   export type Loader = Loader.LoaderModule;
 
