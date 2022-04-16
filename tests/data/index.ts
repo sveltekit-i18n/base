@@ -6,6 +6,9 @@ export const CONFIG: Config.T = {
   parser: {
     parse: (_text, _params, _locale, key) => key,
   },
+  log: {
+    level: 'error',
+  },
   loaders: [
     {
       key: 'common',
