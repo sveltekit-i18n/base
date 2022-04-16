@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
-import { CONFIG, TRANSLATIONS  } from '../data';
+import { CONFIG, TRANSLATIONS } from '../data';
 import { filterTranslationKeys } from '../utils';
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
@@ -288,5 +288,24 @@ describe('i18n instance', () => {
     expect(get(translations)[initLocale]).toEqual(
       expect.objectContaining(TRANSLATIONS[initLocale]),
     );
+  });
+  it('logger works as expected', async () => {
+    const debug = jest.spyOn(console, 'debug');
+    const warn = jest.spyOn(console, 'warn');
+
+    const { loading } = new i18n({
+      ...CONFIG,
+      initLocale: 'unknown',
+      log: {
+        level: 'debug',
+        logger: console,
+        prefix: '[PREFIX] ',
+      },
+    });
+
+    await loading.toPromise();
+
+    expect(debug).toHaveBeenCalledWith('[PREFIX] Setting config.');
+    expect(warn).toHaveBeenCalledWith("[PREFIX] Non-standard locale provided: 'unknown'. Check your 'translations' and 'loaders' in i18n config...");
   });
 });
