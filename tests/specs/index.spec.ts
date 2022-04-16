@@ -280,12 +280,12 @@ describe('i18n instance', () => {
     const keys = (loaders || []).filter(({ routes }) => routes?.includes(url)).map(({ key }) => key);
 
     await loadTranslations(initLocale, '/');
-    expect(get(translations)[initLocale]).toEqual(
+    expect(translations.get()[initLocale]).toEqual(
       expect.not.objectContaining(filterTranslationKeys(TRANSLATIONS[initLocale], keys)),
     );
 
     await loadTranslations(initLocale, url);
-    expect(get(translations)[initLocale]).toEqual(
+    expect(translations.get()[initLocale]).toEqual(
       expect.objectContaining(TRANSLATIONS[initLocale]),
     );
   });
@@ -317,14 +317,15 @@ describe('i18n instance', () => {
 
     expect($t('unknown.key')).toBe(fallbackValue);
   });
-  it('returns translations key when `fallbackValue` is not present', async () => {
+  it('returns translation key when `fallbackValue` is not present', async () => {
     const { loading, t } = new i18n(CONFIG);
 
     await loading.toPromise();
 
     const $t = t.get;
+    const key = 'unknown.key';
 
-    expect($t('unknown.key')).toBe('unknown.key');
+    expect($t(key)).toBe(key);
   });
   it('logger works as expected', async () => {
     const debug = jest.spyOn(console, 'debug');
