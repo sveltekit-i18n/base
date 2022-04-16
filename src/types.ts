@@ -39,11 +39,14 @@ export module Config {
 
   export type FallbackLocale = Locale | undefined;
 
+  export type FallbackValue = any;
+
   export type T<P extends Parser.Params = Parser.Params> = {
     loaders?: Loader[];
     translations?: Translations.T;
     initLocale?: InitLocale;
     fallbackLocale?: FallbackLocale;
+    fallbackValue?: FallbackValue;
     parser: Parser.T<P>;
     cache?: number;
     log?: {
@@ -113,7 +116,8 @@ export module Translations {
     params: P;
     translations: SerializedTranslations;
     locale: Locales[number];
-    fallbackLocale?: string;
+    fallbackLocale?: Config.FallbackLocale;
+    fallbackValue?: Config.FallbackValue;
   }) => string;
 
   export type Input<V = any> ={ [K in any]: Input<V> | V };

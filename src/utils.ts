@@ -8,6 +8,7 @@ export const translate: Translations.Translate = ({
   translations,
   locale,
   fallbackLocale,
+  ...rest
 }) => {
   if (!(key && locale)) {
     logger.warn('No translation key or locale provided. Skipping translation...');
@@ -18,6 +19,10 @@ export const translate: Translations.Translate = ({
 
   if (fallbackLocale && text === undefined) {
     text = (translations[fallbackLocale] || {})[key];
+  }
+
+  if (rest.hasOwnProperty('fallbackValue') && text === undefined) {
+    return rest.fallbackValue;
   }
 
   return parser.parse(text, params, locale, key);
@@ -31,7 +36,7 @@ export const sanitizeLocales = (...locales: any[]): string[] | [] => {
     try {
       const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
 
-      if (!sanitized) throw new Error(`[i18n]: '${locale}' is non-standard.`);
+      if (!sanitized) throw new Error(`'${locale}' is non-standard.`);
 
       current = sanitized;
     } catch (error) {
@@ -86,7 +91,7 @@ export const testRoute = (route: string) => (input: Loader.Route) => {
     if (typeof input === 'string') return input === route;
     if (typeof input === 'object') return input.test(route);
   } catch (error) {
-    throw new Error('[i18n]: Invalid route config!');
+    logger.error('Invalid route config!');
   }
 
   return false;
