@@ -289,6 +289,43 @@ describe('i18n instance', () => {
       expect.objectContaining(TRANSLATIONS[initLocale]),
     );
   });
+  it('`fallbackValue` works with `string` value', async () => {
+    const fallbackValue = 'CUSTOM_FALLBACK_VALUE';
+
+    const { loading, t } = new i18n({
+      ...CONFIG,
+      fallbackValue,
+    });
+
+    await loading.toPromise();
+
+    const $t = t.get;
+
+    expect($t('unknown.key')).toBe(fallbackValue);
+  });
+  it('`fallbackValue` works with `undefined` value', async () => {
+    const fallbackValue = undefined;
+
+    const { loading, t } = new i18n({
+      ...CONFIG,
+      fallbackValue,
+    });
+
+    await loading.toPromise();
+
+    const $t = t.get;
+
+    expect($t('unknown.key')).toBe(fallbackValue);
+  });
+  it('returns translations key when `fallbackValue` is not present', async () => {
+    const { loading, t } = new i18n(CONFIG);
+
+    await loading.toPromise();
+
+    const $t = t.get;
+
+    expect($t('unknown.key')).toBe('unknown.key');
+  });
   it('logger works as expected', async () => {
     const debug = jest.spyOn(console, 'debug');
     const warn = jest.spyOn(console, 'warn');

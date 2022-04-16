@@ -100,13 +100,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   t: ExtendedStore<Translations.TranslationFunction<ParserParams>, Translations.TranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translation],
-      ([{ parser, fallbackLocale }]): Translations.TranslationFunction<ParserParams> => (key, ...params) => translate<ParserParams>({
+      ([{ parser, fallbackLocale, ...rest }]): Translations.TranslationFunction<ParserParams> => (key, ...params) => translate<ParserParams>({
         parser,
         key,
         params,
         translations: this.translations.get(),
         locale: this.locale.get(),
         fallbackLocale,
+        ...(rest.hasOwnProperty('fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
       }),
     ),
     get: (key, ...params) => get(this.t)(key, ...params),
@@ -115,13 +116,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   l: ExtendedStore<Translations.LocalTranslationFunction<ParserParams>, Translations.LocalTranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translations],
-      ([{ parser, fallbackLocale }, translations]): Translations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => translate<ParserParams>({
+      ([{ parser, fallbackLocale, ...rest }, translations]): Translations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => translate<ParserParams>({
         parser,
         key,
         params,
         translations,
         locale,
         fallbackLocale,
+        ...(rest.hasOwnProperty('fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
       }),
     ),
     get: (locale, key, ...params) => get(this.l)(locale, key, ...params),
@@ -167,7 +169,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   async configLoader(config: Config.T<ParserParams>) {
-    if (!config) throw new Error('[i18n]: No config provided!');
+    if (!config) return logger.error('No config provided!');
 
     let { initLocale, fallbackLocale, translations, log, ...rest } = config;
 
