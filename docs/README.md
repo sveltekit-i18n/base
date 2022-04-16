@@ -6,10 +6,10 @@
 
 ## Config
 ### `parser`: __Parser.T__
-This parameter defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
+This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
 
 ### `translations`?: __{ [locale: string]: Record<string, any> }__
-This parameter defines translations, which should be in place before `loaders` will trigger. It's useful for synchronous translations (e.g. locally defined language names which are same for all language mutations).
+This property defines translations, which should be in place before `loaders` will trigger. It's useful for synchronous translations (e.g. locally defined language names which are same for all language mutations).
 
 ### `loaders`?: __Array<{ locale: string; key: string; loader: () => Promise<Record<any, any>> }>__
 You can use `loaders` to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.\
@@ -24,20 +24,28 @@ Each loader can include:
 `routes`?: __Array<string | RegExp>__ – can define routes this loader should be triggered for. You can use Regular expressions too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
 
 ### `initLocale`?: __string__
-If you set this parameter, translations will be initialized immediately using this locale.
+If you set this property, translations will be initialized immediately using this locale.
 
 ### `fallbackLocale`?: __string__
-If you set this parameter, translations are automatically loaded not for current `$locale` only, but for this locale as well. In case there is no translation for current `$locale`, fallback locale translation is used instead of translation key placeholder.
+If you set this property, translations are automatically loaded not for current `$locale` only, but for this locale as well. In case there is no translation for current `$locale`, fallback locale translation is used instead of translation key placeholder.
 
-Note that it's not recommended to use this parameter if you don't really need it. It may affect your data load.
+Note that it's not recommended to use this property if you don't really need it. It may affect your data load.
+
+### `fallbackValue`?: __any__
+By default, translation key is returned in case to translation is found for given translation key. For example, `$t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
 
 ### `cache`?: __number__
-When you are running your app on Node.js server, translations are loaded only once during the SSR. This parameter allows you to setup a refresh period in milliseconds when your translations are refetched on the server. The default value is `86400000` (24 hours).
+When you are running your app on Node.js server, translations are loaded only once during the SSR. This property allows you to setup a refresh period in milliseconds when your translations are refetched on the server. The default value is `86400000` (24 hours).
 
 Tip: You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
 
-### `debug`?: __boolean__
-This parameter enables debug logs (default: `false`).
+### `log.level`?: __'error' | 'warn' | 'danger'__
+You can manage log level using this property (default: `'warn'`).
+
+### `log.prefix`?: __string__
+You can prefix output logs using this property (default: `'[i18n]: '`).
+### `log.logger`?: __Logger.T__
+You can setup your custom logger using this property (default: `console`).
 
 ## Instance methods and properties
 
