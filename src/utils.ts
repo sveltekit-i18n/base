@@ -28,7 +28,7 @@ export const translate: Translations.Translate = ({
   return parser.parse(text, params, locale, key);
 };
 
-export const sanitizeLocales = (...locales: any[]): string[] | [] => {
+export const sanitizeLocales = (...locales: any[]): string[] => {
   if (!locales.length) return [];
 
   return locales.filter((locale) => !!locale).map((locale) => {
