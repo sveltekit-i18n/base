@@ -3,7 +3,7 @@ import i18n from '../../src/index';
 import { CONFIG, TRANSLATIONS } from '../data';
 import { filterTranslationKeys } from '../utils';
 
-const { initLocale = '', loaders = [], parser, log } = CONFIG;
+const { initLocale = '', loaders = [], parser, log  } = CONFIG;
 
 describe('i18n instance', () => {
   it('exports all properties and methods', () => {
@@ -252,6 +252,17 @@ describe('i18n instance', () => {
         expect.objectContaining(filterTranslationKeys(TRANSLATIONS[locale], keys)),
       );
     });
+  });
+  it('`fallbackLocale` is used instead of unknown locale.', async () => {
+    const fallbackLocale = loaders.find(({ locale }) => locale.toLowerCase() !== initLocale?.toLowerCase())?.locale;
+
+    const { locale, loadTranslations } = new i18n({ loaders, parser, fallbackLocale });
+
+    await loadTranslations('de', '');
+
+    const $locale = locale.get();
+
+    expect($locale).toBe(fallbackLocale);
   });
   it('includes `translations` only for loaders without routes', async () => {
     const { translations, loadConfig } = new i18n();
