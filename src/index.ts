@@ -11,8 +11,6 @@ const defaultCache = 1000 * 60 * 60 * 24;
 
 export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
-    if (config) this.loadConfig(config);
-
     this.loaderTrigger.subscribe(this.loader);
 
     // purge resolved promises
@@ -24,6 +22,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         logger.debug('Loader promises have been purged.');
       }
     });
+
+    if (config) this.loadConfig(config);
   }
 
   private cachedAt = 0;
@@ -60,10 +60,13 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       const { loaders = [] } = $config;
 
-      const loaderLocales = loaders.map(({ locale }) => sanitizeLocales(locale)[0]);
-      const translationLocales = Object.keys($translations).map((locale) => sanitizeLocales(locale)[0]);
+      const loaderLocales = loaders.map(({ locale }) => locale);
+      const translationLocales = Object.keys($translations).map((locale) => locale);
 
-      return Array.from(new Set([...loaderLocales, ...translationLocales]));
+      return Array.from(new Set([
+        ...sanitizeLocales(...loaderLocales),
+        ...sanitizeLocales(...translationLocales),
+      ]));
     }, []),
     get: () => get(this.locales),
   };
@@ -71,7 +74,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   private internalLocale: Writable<Config.Locale> = writable();
 
   private loaderTrigger = derived([this.internalLocale, this.currentRoute], ([$internalLocale, $currentRoute], set) => {
-    if ($internalLocale !== undefined && $currentRoute !== undefined && ($internalLocale !== get(this.loaderTrigger)?.[0] || $currentRoute !== get(this.loaderTrigger)?.[1])) {
+    if ($internalLocale !== undefined && $currentRoute !== undefined && !(
+      $internalLocale === get(this.loaderTrigger)?.[0] && $currentRoute === get(this.loaderTrigger)?.[1]
+    )) {
       logger.debug('Triggering translation load...');
 
       set([$internalLocale, $currentRoute]);
@@ -130,25 +135,27 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   private getLocale = (inputLocale?: string): string => {
-    if (!inputLocale) return '';
+    const { fallbackLocale = '' } = get(this.config) || {};
+
+    let locale = inputLocale || fallbackLocale;
+
+    if (!locale) return '';
 
     const $locales = this.locales.get();
 
-    const outputLocale = $locales.find(
-      (locale) => locale === sanitizeLocales(inputLocale)[0],
-    ) || '';
+    const outputLocale = $locales.find((l) => sanitizeLocales(locale).includes(l)) || $locales.find((l) => sanitizeLocales(fallbackLocale).includes(l));
 
-    return sanitizeLocales(outputLocale)[0] || '';
+    return outputLocale || '';
   };
 
   setLocale = (locale?:string) => {
+
     if (!locale) return;
-    const [sanitizedLocale] = sanitizeLocales(locale);
 
-    if (sanitizedLocale !== get(this.internalLocale)) {
-      logger.debug(`Setting '${sanitizedLocale}' locale.`);
+    if (locale !== get(this.internalLocale)) {
+      logger.debug(`Setting '${locale}' locale.`);
 
-      this.internalLocale.set(sanitizedLocale);
+      this.internalLocale.set(locale);
 
       return this.loading.toPromise(locale, get(this.currentRoute));
     }
@@ -288,8 +295,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     });
   };
 
-  private loader = async ([locale, route]: string[]) => {
-    logger.debug('Adding loader promise.');
+  private loader = async ([inputLocale, route]: string[]) => {
+    const locale = this.getLocale(inputLocale);
+
+    logger.debug(`Adding loader promise for '${locale}' locale and '${route}' route.`);
 
     const promise = (async () => {
       const props = await this.getTranslationProps(locale, route);
@@ -303,17 +312,18 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     });
 
     promise.then(() => {
-      const outputLocale = this.getLocale(locale);
-      if (outputLocale && this.locale.get() !== outputLocale) this.locale.forceSet(outputLocale);
+      if (locale && this.locale.get() !== locale) this.locale.forceSet(locale);
     });
   };
 
   loadTranslations = (locale: Config.Locale, route = get(this.currentRoute) || '') => {
-    if (!locale) return;
+    const normalizedLocale = this.getLocale(locale);
+
+    if (!normalizedLocale) return;
 
     this.setRoute(route);
-    this.setLocale(locale);
+    this.setLocale(normalizedLocale);
 
-    return this.loading.toPromise(locale, route);
+    return this.loading.toPromise(normalizedLocale, route);
   };
 }
