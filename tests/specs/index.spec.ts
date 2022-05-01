@@ -3,7 +3,7 @@ import i18n from '../../src/index';
 import { CONFIG, TRANSLATIONS } from '../data';
 import { filterTranslationKeys } from '../utils';
 
-const { initLocale = '', loaders = [], parser, log  } = CONFIG;
+const { initLocale = '', loaders = [], parser, log } = CONFIG;
 
 describe('i18n instance', () => {
   it('exports all properties and methods', () => {
