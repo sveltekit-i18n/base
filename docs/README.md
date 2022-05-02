@@ -5,13 +5,13 @@
 
 
 ## Config
-### `parser`: __Parser.T__
+### `parser`: __[Parser.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L97-L99)__
 This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
 
-### `translations`?: __{ [locale: string]: Record<string, any> }__
+### `translations`?: __[Translations.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L127)__
 This property defines translations, which should be in place before `loaders` will trigger. It's useful for synchronous translations (e.g. locally defined language names which are same for all language mutations).
 
-### `loaders`?: __Array<{ locale: string; key: string; loader: () => Promise<Record<any, any>> }>__
+### `loaders`?: __[Loader.LoaderModule[]](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L69-L74)__
 You can use `loaders` to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.\
 Each loader can include:
 
@@ -44,7 +44,7 @@ You can manage log level using this property (default: `'warn'`).
 
 ### `log.prefix`?: __string__
 You can prefix output logs using this property (default: `'[i18n]: '`).
-### `log.logger`?: __Logger.T__
+### `log.logger`?: __[Logger.T](https://github.com/sveltekit-i18n/base/blob/b488f34b2c160b62943968929c9e6e1ee642c5e8/src/types.ts#L20-L22)__
 You can setup your custom logger using this property (default: `console`).
 
 ## Instance methods and properties
