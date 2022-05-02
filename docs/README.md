@@ -44,6 +44,7 @@ You can manage log level using this property (default: `'warn'`).
 
 ### `log.prefix`?: __string__
 You can prefix output logs using this property (default: `'[i18n]: '`).
+
 ### `log.logger`?: __[Logger.T](https://github.com/sveltekit-i18n/base/blob/b488f34b2c160b62943968929c9e6e1ee642c5e8/src/types.ts#L20-L22)__
 You can setup your custom logger using this property (default: `console`).
 
