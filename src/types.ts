@@ -120,7 +120,7 @@ export module Translations {
     fallbackValue?: Config.FallbackValue;
   }) => string;
 
-  export type Input<V = any> ={ [K in any]: Input<V> | V };
+  export type Input<V = any> = { [K in any]: Input<V> | V };
 
   export type LocaleIndexed<V> = { [locale in Locales[number]]: V };
 
