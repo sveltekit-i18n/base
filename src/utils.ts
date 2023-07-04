@@ -28,7 +28,7 @@ export const translate: Translations.Translate = ({
   return parser.parse(text, params, locale, key);
 };
 
-export const sanitizeLocales = (...locales: any[]): string[] => {
+export const sanitizeLocales = (...locales: any[]) => {
   if (!locales.length) return [];
 
   return locales.filter((locale) => !!locale).map((locale) => {
@@ -47,16 +47,18 @@ export const sanitizeLocales = (...locales: any[]): string[] => {
   });
 };
 
-export const toDotNotation: DotNotation.T = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
+export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
   const value = (input as any)[key];
   const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
-  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, outputKey) });
+  if (preserveArrays && Array.isArray(value)) return ({ ...acc, [outputKey]: value.map(v => toDotNotation(v, preserveArrays)) });
+
+  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
 
   return ({ ...acc, [outputKey]: value });
 }, {});
 
-export const fetchTranslations: Translations.FetchTranslations = async (loaders) => {
+export const fetchTranslations: Translations.FetchTranslations = async (loaders, preprocess) => {
   try {
     const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Loader.LoaderModule & { data: any }>(async (res) => {
       let data;
@@ -74,9 +76,21 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
 
       const [validLocale] = sanitizeLocales(locale);
 
+      let input = data;
+      let dotnotate = true;
+
+      if (typeof preprocess === 'function') {
+        input = preprocess(input);
+        dotnotate = false;
+      }
+
+      if (preprocess === 'none') dotnotate = false;
+
+      const output = { ...(acc[validLocale] || {}), [key]: input };
+
       return ({
         ...acc,
-        [validLocale]: toDotNotation({ ...(acc[validLocale] || {}), [key]: data }),
+        [validLocale]: dotnotate ? toDotNotation(output, preprocess === 'preserveArrays') : output,
       });
     }, {} as DotNotation.Input);
   } catch (error) {
@@ -106,7 +120,7 @@ export const checkProps = (props: any, object: any) => {
     ).every(
       (key) => props[key] === object[key],
     );
-  } catch (error) {}
+  } catch (error) { }
 
   return out;
 };

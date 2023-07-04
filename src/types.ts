@@ -2,14 +2,14 @@ import { Readable } from 'svelte/store';
 
 export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get: Get };
 
-export type LoadingStore = Readable<boolean> & { toPromise: (locale?:Config.Locale, route?: string) => Promise<void[] | void>, get: () => boolean };
+export type LoadingStore = Readable<boolean> & { toPromise: (locale?: Config.Locale, route?: string) => Promise<void[] | void>, get: () => boolean };
 
 export module DotNotation {
   export type Input = Translations.Input;
 
   export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] };
 
-  export type T = <I = Input>(input: I, parentKey?: string) => Output<I>;
+  export type T = <I = Input>(input: I, preserveArrays?: boolean, parentKey?: string) => Output<I>;
 }
 
 export module Logger {
@@ -47,6 +47,20 @@ export module Config {
     initLocale?: InitLocale;
     fallbackLocale?: FallbackLocale;
     fallbackValue?: FallbackValue;
+    /**
+     * Preprocessor strategy or a custom function.
+     * @default 'full'
+     *
+     * @example 'preserveArrays'
+     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a.b: [{c.d: 1}, {c.d: 2}]}
+     *
+     * @example 'full'
+     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a.b.0.c.d: 1, a.b.1.c.d: 2}
+     *
+     * @example 'none'
+     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}}
+     */
+    preprocess?: 'full' | 'preserveArrays' | 'none' | ((input: Translations.Input) => any);
     parser: Parser.T<P>;
     cache?: number;
     log?: {
@@ -100,11 +114,11 @@ export module Parser {
 }
 
 export module Translations {
-  export type Locales = string[];
+  export type Locales<T = string> = T[];
 
   export type SerializedTranslations = LocaleIndexed<DotNotation.Output>;
 
-  export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
+  export type FetchTranslations = (loaders: Loader.LoaderModule[], preprocess?: Config.T['preprocess']) => Promise<SerializedTranslations>;
 
   export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => any;
 
@@ -120,9 +134,9 @@ export module Translations {
     fallbackValue?: Config.FallbackValue;
   }) => string;
 
-  export type Input<V = any> ={ [K in any]: Input<V> | V };
+  export type Input<V = any> = { [K in any]: Input<V> | V };
 
-  export type LocaleIndexed<V> = { [locale in Locales[number]]: V };
+  export type LocaleIndexed<V, L extends string = string> = { [locale in Locales<L>[number]]: V };
 
-  export type T<V = any> = LocaleIndexed<Input<V>>;
+  export type T<V = any, L extends string = string> = LocaleIndexed<Input<V>, L>;
 }
