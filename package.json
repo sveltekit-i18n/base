@@ -16,7 +16,7 @@
   },
   "scripts": {
     "dev": "tsup --watch",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test": "npx cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "build": "tsup",
     "prepublishOnly": "npm run build",
     "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."
