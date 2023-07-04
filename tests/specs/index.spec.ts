@@ -21,6 +21,8 @@ describe('i18n instance', () => {
     toHaveProperty('loadConfig');
     toHaveProperty('loadTranslations');
     toHaveProperty('addTranslations');
+    toHaveProperty('setLocale');
+    toHaveProperty('setRoute');
   });
   it('`setRoute` method does not trigger loading if locale is not set', async () => {
     const { initialized, setRoute, loading, locale } = new i18n({ loaders, parser, log });
@@ -42,25 +44,40 @@ describe('i18n instance', () => {
     const $loading = loading.get();
     expect($loading).toBe(true);
 
-    const $initialized = get(initialized);
+    let $initialized = get(initialized);
     expect($initialized).toBe(false);
+
+    await loading.toPromise();
+
+    $initialized = get(initialized);
+    expect($initialized).toBe(true);
   });
   it('`setLocale` method does not trigger loading when route is not set', async () => {
-    const { setLocale, loading } = new i18n({ loaders, parser, log });
+    const { setLocale, loading, translations } = new i18n({ loaders, parser, log });
 
     setLocale(initLocale);
 
     const $loading = loading.get();
     expect($loading).toBe(false);
+
+    await loading.toPromise();
+
+    const $translations = translations.get();
+    expect(Object.keys($translations).length).toBe(0);
   });
   it('`setLocale` method triggers loading when route is set', async () => {
-    const { setLocale, setRoute, loading } = new i18n({ loaders, parser, log });
+    const { setLocale, setRoute, loading, translations } = new i18n({ loaders, parser, log });
 
     await setRoute('');
     setLocale(initLocale);
 
     const $loading = loading.get();
     expect($loading).toBe(true);
+
+    await loading.toPromise();
+
+    const $translations = translations.get();
+    expect(Object.keys($translations).length).toBeGreaterThan(0);
   });
   it('`setLocale` does not set `unknown` locale', async () => {
     const { setLocale, loading, locale } = new i18n({ loaders, parser, log });
@@ -339,8 +356,8 @@ describe('i18n instance', () => {
     expect($t(key)).toBe(key);
   });
   it('logger works as expected', async () => {
-    const debug = jest.spyOn(console, 'debug');
-    const warn = jest.spyOn(console, 'warn');
+    const debug = import.meta.jest.spyOn(console, 'debug');
+    const warn = import.meta.jest.spyOn(console, 'warn');
 
     const { loading } = new i18n({
       ...CONFIG,
