@@ -158,13 +158,28 @@ export module Parser {
   export type Output = any;
 
   export type Parse<P extends Parser.Params = Parser.Params> = (
+    /**
+     * Translation value from the definitions.
+    */
     value: Value,
+    /**
+     * Array of rest parameters given by user (e.g. payload variables etc...)
+     */
     params: P,
+    /**
+     * Locale of translated message.
+     */
     locale: Locale,
+    /**
+     * This key is serialized path to translation (e.g., `home.content.title`)
+     */
     key: Key,
   ) => Output;
 
   export type T<P extends Parser.Params = Parser.Params> = {
+    /**
+     * Parse function deals with interpolation of user payload and returns interpolated message.
+    */
     parse: Parse<P>;
   };
 }
