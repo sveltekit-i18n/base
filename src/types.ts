@@ -22,8 +22,23 @@ export module Logger {
   };
 
   export type FactoryProps = {
+    /**
+     * You can setup your custom logger using this property.
+     *
+     * @default console
+     */
     logger?: Logger.T;
+    /**
+     * You can manage log level using this property.
+     *
+     * @default 'warn'
+     */
     level?: Logger.Level;
+    /**
+     * You can prefix output logs using this property.
+     *
+     * @default '[i18n]: '
+     */
     prefix?: Logger.Prefix;
   };
 }
@@ -42,32 +57,60 @@ export module Config {
   export type FallbackValue = any;
 
   export type T<P extends Parser.Params = Parser.Params> = {
+    /**
+     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.
+     */
     loaders?: Loader[];
+    /**
+     * Locale-indexed translations, which should be in place before loaders will trigger. It's useful for static pages and synchronous translations – for example locally defined language names which are the same for all of the language mutations.
+     *
+     * @example {
+     *  "en": {"lang": {"en": "English", "cs": "Česky"}}
+     *  "cs": {"lang": {"en": "English", "cs": "Česky"}}
+     * }
+     */
     translations?: Translations.T;
+    /**
+     * If you set this property, translations will be initialized immediately using this locale.
+     */
     initLocale?: InitLocale;
+    /**
+     * If you set this property, translations are automatically loaded not for current `$locale` only, but for this locale as well. In case there is no translation for current `$locale`, fallback locale translation is used instead of translation key placeholder. This is also used as a fallback when unknown locale is set.
+     */
     fallbackLocale?: FallbackLocale;
+    /**
+     * By default, translation key is returned in case no translation is found for given translation key. For example, `$t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
+     */
     fallbackValue?: FallbackValue;
     /**
      * Preprocessor strategy or a custom function.
      * @default 'full'
      *
-     * @example 'preserveArrays'
-     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a.b: [{c.d: 1}, {c.d: 2}]}
-     *
      * @example 'full'
-     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a.b.0.c.d: 1, a.b.1.c.d: 2}
+     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {"a.b.0.c.d": 1, "a.b.1.c.d": 2}
      *
+     * @example 'preserveArrays'
+     * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {"a.b": [{"c.d": 1}, {"c.d": 2}]}
      * @example 'none'
      * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}}
      */
     preprocess?: 'full' | 'preserveArrays' | 'none' | ((input: Translations.Input) => any);
+    /**
+     * This property defines translation syntax you want to use.
+     */
     parser: Parser.T<P>;
+    /**
+     * When you are running your app on Node.js server, translations are loaded only once during the SSR. This property allows you to setup a refresh period in milliseconds when your translations are refetched on the server.
+     *
+     * @default 86400000 // 24 hours
+     *
+     * @tip You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
+     */
     cache?: number;
-    log?: {
-      level?: Logger.Level;
-      logger?: Logger.T;
-      prefix?: Logger.Prefix;
-    };
+    /**
+     * Custom logger configuration.
+     */
+    log?: Logger.FactoryProps;
   };
 }
 
@@ -81,10 +124,22 @@ export module Loader {
   export type IndexedKeys = Translations.LocaleIndexed<Key[]>;
 
   export type LoaderModule = {
+    /**
+     * Represents the translation namespace. This key is used as a translation prefix so it should be module-unique. You can access your translation later using `$t('key.yourTranslation')`. It shouldn't include `.` (dot) character.
+     */
     key: Key;
+    /**
+     * Locale (e.g. `en`, `de`) which is this loader for.
+     */
     locale: Locale;
-    routes?: Route[];
+    /**
+     * Function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
+    */
     loader: T;
+    /**
+    * Define routes this loader should be triggered for. You can use Regular expressions too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    */
+    routes?: Route[];
   };
 
   export type T = () => Promise<Translations.Input>;
