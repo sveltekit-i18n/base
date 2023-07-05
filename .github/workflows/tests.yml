@@ -1,10 +1,9 @@
 name: Tests
 
 on:
-  push:
   workflow_dispatch:
   pull_request:
-    types: [opened, reopened, edited]
+    types: [synchronize]
 
 jobs:
   Tests:
