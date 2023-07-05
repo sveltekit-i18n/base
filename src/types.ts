@@ -83,7 +83,7 @@ export module Config {
      */
     fallbackValue?: FallbackValue;
     /**
-     * Preprocessor strategy or a custom function.
+     * Preprocessor strategy or a custom function. Defines, how to transform the translation data immediately after the load.
      * @default 'full'
      *
      * @example 'full'
@@ -91,6 +91,7 @@ export module Config {
      *
      * @example 'preserveArrays'
      * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {"a.b": [{"c.d": 1}, {"c.d": 2}]}
+     *
      * @example 'none'
      * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}}
      */
