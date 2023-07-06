@@ -187,9 +187,11 @@ export module Parser {
 export module Translations {
   export type Locales<T = string> = T[];
 
-  export type SerializedTranslations = LocaleIndexed<DotNotation.Output>;
+  export type SerializedTranslations = LocaleIndexed<DotNotation.Input>;
 
-  export type FetchTranslations = (loaders: Loader.LoaderModule[], preprocess?: Config.T['preprocess']) => Promise<SerializedTranslations>;
+  export type TranslationData<T = any> = Loader.LoaderModule & { data: T };
+
+  export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
 
   export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => any;
 

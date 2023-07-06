@@ -58,9 +58,24 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
   return ({ ...acc, [outputKey]: value });
 }, {});
 
-export const fetchTranslations: Translations.FetchTranslations = async (loaders, preprocess) => {
+export const serialize = (input: Translations.TranslationData[]) => {
+  return input.reduce((acc, { key, data, locale }) => {
+    if (!data) return acc;
+
+    const [validLocale] = sanitizeLocales(locale);
+
+    const output = { ...(acc[validLocale] || {}), [key]: data };
+
+    return ({
+      ...acc,
+      [validLocale]: output,
+    });
+  }, {} as Translations.SerializedTranslations);
+};
+
+export const fetchTranslations: Translations.FetchTranslations = async (loaders) => {
   try {
-    const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Loader.LoaderModule & { data: any }>(async (res) => {
+    const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Translations.TranslationData>(async (res) => {
       let data;
       try {
         data = await loader();
@@ -71,28 +86,7 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders,
       res({ loader, ...rest, data });
     })));
 
-    return response.reduce((acc, { key, data, locale }) => {
-      if (!data) return acc;
-
-      const [validLocale] = sanitizeLocales(locale);
-
-      let input = data;
-      let dotnotate = true;
-
-      if (typeof preprocess === 'function') {
-        input = preprocess(input);
-        dotnotate = false;
-      }
-
-      if (preprocess === 'none') dotnotate = false;
-
-      const output = { ...(acc[validLocale] || {}), [key]: input };
-
-      return ({
-        ...acc,
-        [validLocale]: dotnotate ? toDotNotation(output, preprocess === 'preserveArrays') : output,
-      });
-    }, {} as DotNotation.Input);
+    return serialize(response);
   } catch (error) {
     logger.error(error);
   }

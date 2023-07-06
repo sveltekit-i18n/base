@@ -209,7 +209,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     const $translations = this.translations.get();
 
-    const { loaders, fallbackLocale = '', cache = defaultCache, preprocess } = $config || {};
+    const { loaders, fallbackLocale = '', cache = defaultCache } = $config || {};
 
     const cacheValue = Number.isNaN(+cache) ? defaultCache : +cache;
 
@@ -244,12 +244,12 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       logger.debug('Fetching translations...');
 
-      const translations = await fetchTranslations(filteredLoaders, preprocess);
+      const rawTranslations = await fetchTranslations(filteredLoaders);
 
       this.isLoading.set(false);
 
-      const loadedKeys = Object.keys(translations).reduce(
-        (acc, locale) => ({ ...acc, [locale]: Object.keys(translations[locale]) }), {} as Loader.IndexedKeys,
+      const loadedKeys = Object.keys(rawTranslations).reduce(
+        (acc, locale) => ({ ...acc, [locale]: Object.keys(rawTranslations[locale]) }), {} as Loader.IndexedKeys,
       );
 
       const keys = filteredLoaders
@@ -261,7 +261,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         [locale]: [...(acc[locale] || []), key],
       }), {});
 
-      return [translations, keys];
+      return [rawTranslations, keys];
     }
     return [];
   };
@@ -279,8 +279,12 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     this.privateTranslations.update(($translations) => translationLocales.reduce(
       (acc, locale) => {
-        const input = translations[locale];
         let dotnotate = true;
+        let input = translations[locale];
+
+        if (typeof preprocess === 'function') {
+          input = preprocess(input);
+        }
 
         if (typeof preprocess === 'function' || preprocess === 'none') {
           dotnotate = false;
