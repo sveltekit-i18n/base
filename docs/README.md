@@ -50,7 +50,6 @@ Custom preprocess function `(input) => JSON.parse(JSON.stringify(input).replace(
 {"a": {"b": [{"c": {"d": "🦄"}}, {"c": {"d": 2}}]}}
 ```
 
-
 ### `parser`: __[Parser.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
 This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
 
