@@ -96,7 +96,7 @@ export const load = async ({ url }) => {
 
   await loadTranslations(initLocale, pathname); // keep this just before the `return`
 
-    return {};
+  return {};
 }
 ```
 
