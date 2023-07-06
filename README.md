@@ -85,19 +85,19 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
 ...load your translations in `+layout.js`...
 
 ```js
-  import { locale, loadTranslations } from '$lib/translations';
+import { locale, loadTranslations } from '$lib/translations';
 
-  export const load = async ({ url }) => {
-    const { pathname } = url;
+export const load = async ({ url }) => {
+  const { pathname } = url;
 
-    const defaultLocale = 'en'; // get from cookie, user session, ...
+  const defaultLocale = 'en'; // get from cookie, user session, ...
     
-    const initLocale = locale.get() || defaultLocale; // set default if no locale already set
+  const initLocale = locale.get() || defaultLocale; // set default if no locale already set
 
-    await loadTranslations(initLocale, pathname); // keep this just before the `return`
+  await loadTranslations(initLocale, pathname); // keep this just before the `return`
 
     return {};
-  }
+}
 ```
 
 ...and include your translations within pages and components.
