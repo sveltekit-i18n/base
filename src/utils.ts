@@ -28,7 +28,7 @@ export const translate: Translations.Translate = ({
   return parser.parse(text, params, locale, key);
 };
 
-export const sanitizeLocales = (...locales: any[]): string[] => {
+export const sanitizeLocales = (...locales: any[]) => {
   if (!locales.length) return [];
 
   return locales.filter((locale) => !!locale).map((locale) => {
@@ -47,18 +47,35 @@ export const sanitizeLocales = (...locales: any[]): string[] => {
   });
 };
 
-export const toDotNotation: DotNotation.T = (input, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
+export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
   const value = (input as any)[key];
   const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
-  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, outputKey) });
+  if (preserveArrays && Array.isArray(value)) return ({ ...acc, [outputKey]: value.map(v => toDotNotation(v, preserveArrays)) });
+
+  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
 
   return ({ ...acc, [outputKey]: value });
 }, {});
 
+export const serialize = (input: Translations.TranslationData[]) => {
+  return input.reduce((acc, { key, data, locale }) => {
+    if (!data) return acc;
+
+    const [validLocale] = sanitizeLocales(locale);
+
+    const output = { ...(acc[validLocale] || {}), [key]: data };
+
+    return ({
+      ...acc,
+      [validLocale]: output,
+    });
+  }, {} as Translations.SerializedTranslations);
+};
+
 export const fetchTranslations: Translations.FetchTranslations = async (loaders) => {
   try {
-    const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Loader.LoaderModule & { data: any }>(async (res) => {
+    const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Translations.TranslationData>(async (res) => {
       let data;
       try {
         data = await loader();
@@ -69,16 +86,7 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
       res({ loader, ...rest, data });
     })));
 
-    return response.reduce((acc, { key, data, locale }) => {
-      if (!data) return acc;
-
-      const [validLocale] = sanitizeLocales(locale);
-
-      return ({
-        ...acc,
-        [validLocale]: toDotNotation({ ...(acc[validLocale] || {}), [key]: data }),
-      });
-    }, {} as DotNotation.Input);
+    return serialize(response);
   } catch (error) {
     logger.error(error);
   }
@@ -106,7 +114,7 @@ export const checkProps = (props: any, object: any) => {
     ).every(
       (key) => props[key] === object[key],
     );
-  } catch (error) {}
+  } catch (error) { }
 
   return out;
 };

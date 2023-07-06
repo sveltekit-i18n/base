@@ -1,7 +1,9 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
-import { CONFIG, TRANSLATIONS } from '../data';
+import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
+
+const TRANSLATIONS = getTranslations();
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
 
@@ -21,6 +23,8 @@ describe('i18n instance', () => {
     toHaveProperty('loadConfig');
     toHaveProperty('loadTranslations');
     toHaveProperty('addTranslations');
+    toHaveProperty('setLocale');
+    toHaveProperty('setRoute');
   });
   it('`setRoute` method does not trigger loading if locale is not set', async () => {
     const { initialized, setRoute, loading, locale } = new i18n({ loaders, parser, log });
@@ -42,25 +46,40 @@ describe('i18n instance', () => {
     const $loading = loading.get();
     expect($loading).toBe(true);
 
-    const $initialized = get(initialized);
+    let $initialized = get(initialized);
     expect($initialized).toBe(false);
+
+    await loading.toPromise();
+
+    $initialized = get(initialized);
+    expect($initialized).toBe(true);
   });
   it('`setLocale` method does not trigger loading when route is not set', async () => {
-    const { setLocale, loading } = new i18n({ loaders, parser, log });
+    const { setLocale, loading, translations } = new i18n({ loaders, parser, log });
 
     setLocale(initLocale);
 
     const $loading = loading.get();
     expect($loading).toBe(false);
+
+    await loading.toPromise();
+
+    const $translations = translations.get();
+    expect(Object.keys($translations).length).toBe(0);
   });
   it('`setLocale` method triggers loading when route is set', async () => {
-    const { setLocale, setRoute, loading } = new i18n({ loaders, parser, log });
+    const { setLocale, setRoute, loading, translations } = new i18n({ loaders, parser, log });
 
     await setRoute('');
     setLocale(initLocale);
 
     const $loading = loading.get();
     expect($loading).toBe(true);
+
+    await loading.toPromise();
+
+    const $translations = translations.get();
+    expect(Object.keys($translations).length).toBeGreaterThan(0);
   });
   it('`setLocale` does not set `unknown` locale', async () => {
     const { setLocale, loading, locale } = new i18n({ loaders, parser, log });
@@ -119,7 +138,7 @@ describe('i18n instance', () => {
   });
   it('`locale` can be non-standard', async () => {
     const nonStandardLocale = 'ku';
-    const { loading, locale, locales, setRoute, initialized, translations } = new i18n({ loaders: [{ key: 'common', locale: `${nonStandardLocale}`.toUpperCase(), loader: () => import(`../data/translations/${nonStandardLocale}/common.json`) }], parser, log });
+    const { loading, locale, locales, setRoute, initialized, translations } = new i18n({ loaders: [{ key: 'common', locale: `${nonStandardLocale}`.toUpperCase(), loader: async () => (await import(`../data/translations/${nonStandardLocale}/common.json`)).default }], parser, log });
     await setRoute('');
     locale.set(nonStandardLocale);
 
@@ -151,7 +170,7 @@ describe('i18n instance', () => {
     const keys = loaders.filter(({ routes }) => !routes).map(({ key }) => key);
 
     expect(translations[initLocale]).toEqual(
-      expect.objectContaining(filterTranslationKeys(TRANSLATIONS[initLocale], keys)),
+      expect.objectContaining(filterTranslationKeys(getTranslations('none')[initLocale], keys)),
     );
 
     expect($initialized).toBe(false);
@@ -166,13 +185,40 @@ describe('i18n instance', () => {
       expect.objectContaining(TRANSLATIONS),
     );
   });
-  it('`addTranslations` prevents duplicit `loading`', async () => {
+  it('`addTranslations` prevents duplicit load', async () => {
     const { addTranslations, loadTranslations, loading } = new i18n({ loaders, parser, log });
 
     addTranslations(TRANSLATIONS);
     loadTranslations(initLocale);
 
     expect(loading.get()).toBe(false);
+  });
+  it('`preprocess` works when set to `full`', async () => {
+    const { loadTranslations, translations } = new i18n({ loaders, parser, log, preprocess: 'full' });
+
+    await loadTranslations(initLocale);
+
+    const $translations = translations.get();
+
+    expect($translations[initLocale]['common.preprocess.0.test']).toBe('passed');
+  });
+  it('`preprocess` works when set to `preserveArrays`', async () => {
+    const { loadTranslations, translations } = new i18n({ loaders, parser, log, preprocess: 'preserveArrays' });
+
+    await loadTranslations(initLocale);
+
+    const $translations = translations.get();
+
+    expect($translations[initLocale]['common.preprocess'][0].test).toBe('passed');
+  });
+  it('`preprocess` works when set to `none`', async () => {
+    const { loadTranslations, translations } = new i18n({ loaders, parser, log, preprocess: 'none' });
+
+    await loadTranslations(initLocale);
+
+    const $translations = translations.get();
+
+    expect($translations[initLocale].common.preprocess[0].test).toBe('passed');
   });
   it('initializes properly with `initLocale`', async () => {
     const { initialized, loadConfig } = new i18n();
@@ -339,8 +385,8 @@ describe('i18n instance', () => {
     expect($t(key)).toBe(key);
   });
   it('logger works as expected', async () => {
-    const debug = jest.spyOn(console, 'debug');
-    const warn = jest.spyOn(console, 'warn');
+    const debug = import.meta.jest.spyOn(console, 'debug');
+    const warn = import.meta.jest.spyOn(console, 'warn');
 
     const { loading } = new i18n({
       ...CONFIG,

@@ -5,13 +5,11 @@
 
 
 ## Config
-### `parser`: __[Parser.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L97-L99)__
-This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
 
-### `translations`?: __[Translations.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L127)__
+### `translations`?: __[Translations.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
 This property defines translations, which should be in place before `loaders` will trigger. It's useful for synchronous translations (e.g. locally defined language names which are same for all language mutations).
 
-### `loaders`?: __[Loader.LoaderModule[]](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts#L69-L74)__
+### `loaders`?: __[Loader.LoaderModule[]](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
 You can use `loaders` to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.\
 Each loader can include:
 
@@ -22,6 +20,38 @@ Each loader can include:
 `loader`:__() => Promise<Record<any, any>>__ – is a function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
 
 `routes`?: __Array<string | RegExp>__ – can define routes this loader should be triggered for. You can use Regular expressions too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+
+### `preprocess`?: __'full' | 'preserveArrays' | 'none' | (input: Translations.Input) => any__
+Defines a preprocess strategy or a custom preprocess function. Preprocessor runs immediately after the translation data load. This is set to `'full'` by default.
+
+Examples for input:
+```json
+{"a": {"b": [{"c": {"d": 1}}, {"c": {"d": 2}}]}}
+```
+
+`'full'` (default) setting will result in:
+```json
+{"a.b.0.c.d": 1, "a.b.1.c.d": 2}
+```
+
+`'preserveArrays'` in:
+```json
+{"a.b": [{"c.d": 1}, {"c.d": 2}]}
+```
+
+`'none'` (nothing's changed):
+```json
+{"a": {"b": [{"c": {"d": 1}}, {"c": {"d": 2}}]}}
+```
+
+Custom preprocess function `(input) => JSON.parse(JSON.stringify(input).replace('1', '"🦄"'))` will output:
+
+```json
+{"a": {"b": [{"c": {"d": "🦄"}}, {"c": {"d": 2}}]}}
+```
+
+### `parser`: __[Parser.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
+This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
 
 ### `initLocale`?: __string__
 If you set this property, translations will be initialized immediately using this locale.
@@ -45,7 +75,7 @@ You can manage log level using this property (default: `'warn'`).
 ### `log.prefix`?: __string__
 You can prefix output logs using this property (default: `'[i18n]: '`).
 
-### `log.logger`?: __[Logger.T](https://github.com/sveltekit-i18n/base/blob/b488f34b2c160b62943968929c9e6e1ee642c5e8/src/types.ts#L20-L22)__
+### `log.logger`?: __[Logger.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
 You can setup your custom logger using this property (default: `console`).
 
 ## Instance methods and properties

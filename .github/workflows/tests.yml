@@ -1,13 +1,16 @@
 name: Tests
 
-on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [synchronize]
 
 jobs:
   Tests:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node-version: [16]
+        node-version: [18]
         os: [ubuntu-latest, windows-latest, macOS-latest]
 
     steps:

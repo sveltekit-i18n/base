@@ -82,10 +82,9 @@ const config = ({
 export const { t, locale, locales, loading, loadTranslations } = new i18n(config);
 ```
 
-...load your translations in `__layout.svelte`...
+...load your translations in `+layout.js`...
 
-```svelte
-<script context="module">
+```js
   import { locale, loadTranslations } from '$lib/translations';
 
   export const load = async ({ url }) => {
@@ -99,7 +98,6 @@ export const { t, locale, locales, loading, loadTranslations } = new i18n(config
 
     return {};
   }
-</script>
 ```
 
 ...and include your translations within pages and components.

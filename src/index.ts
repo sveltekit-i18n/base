@@ -36,7 +36,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   private isLoading: Writable<boolean> = writable(false);
 
-  private promises: Set<{ locale: Config.Locale; route: string; promise: Promise<void>; }> = new Set();
+  private promises: Set<{ locale?: Config.Locale; route?: Loader.Route; promise: Promise<void>; }> = new Set();
 
   loading: LoadingStore = {
     subscribe: this.isLoading.subscribe,
@@ -148,7 +148,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     return outputLocale || '';
   };
 
-  setLocale = (locale?:string) => {
+  setLocale = (locale?: string) => {
 
     if (!locale) return;
 
@@ -244,12 +244,12 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       logger.debug('Fetching translations...');
 
-      const translations = await fetchTranslations(filteredLoaders);
+      const rawTranslations = await fetchTranslations(filteredLoaders);
 
       this.isLoading.set(false);
 
-      const loadedKeys = Object.keys(translations).reduce(
-        (acc, locale) => ({ ...acc, [locale]: Object.keys(translations[locale]) }), {} as Loader.IndexedKeys,
+      const loadedKeys = Object.keys(rawTranslations).reduce(
+        (acc, locale) => ({ ...acc, [locale]: Object.keys(rawTranslations[locale]) }), {} as Loader.IndexedKeys,
       );
 
       const keys = filteredLoaders
@@ -261,7 +261,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         [locale]: [...(acc[locale] || []), key],
       }), {});
 
-      return [translations, keys];
+      return [rawTranslations, keys];
     }
     return [];
   };
@@ -269,18 +269,35 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   addTranslations = (translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys) => {
     if (!translations) return;
 
+    const $config = get(this.config);
+
+    const { preprocess } = $config || {};
+
     logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(translations || {});
 
     this.privateTranslations.update(($translations) => translationLocales.reduce(
-      (acc, locale) => ({
-        ...acc,
-        [locale]: {
-          ...(acc[locale] || {}),
-          ...toDotNotation(translations[locale]),
-        },
-      }),
+      (acc, locale) => {
+        let dotnotate = true;
+        let input = translations[locale];
+
+        if (typeof preprocess === 'function') {
+          input = preprocess(input);
+        }
+
+        if (typeof preprocess === 'function' || preprocess === 'none') {
+          dotnotate = false;
+        }
+
+        return ({
+          ...acc,
+          [locale]: {
+            ...(acc[locale] || {}),
+            ...dotnotate ? toDotNotation(input, preprocess === 'preserveArrays') : input,
+          },
+        });
+      },
       $translations,
     ));
 
@@ -296,7 +313,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   private loader = async ([inputLocale, route]: string[]) => {
-    const locale = this.getLocale(inputLocale);
+    const locale = this.getLocale(inputLocale) || undefined;
 
     logger.debug(`Adding loader promise for '${locale}' locale and '${route}' route.`);
 
