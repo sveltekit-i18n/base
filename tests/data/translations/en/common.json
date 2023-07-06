@@ -13,5 +13,10 @@
   "modifier_date": "{{value:date;}}",
   "modifier_ago": "{{value:ago;}}",
   "modifier_custom": "{{data:test;}}",
-  "modifier_escaped": "{{va\\:lue; option\\:1:VA\\;\\{\\{LUE\\}\\}\\:1; option\\:2:VA\\;\\{\\{LUE\\}\\}\\:2; default:DEFAULT \\{\\{VALUE\\}\\}\\;}}"
+  "modifier_escaped": "{{va\\:lue; option\\:1:VA\\;\\{\\{LUE\\}\\}\\:1; option\\:2:VA\\;\\{\\{LUE\\}\\}\\:2; default:DEFAULT \\{\\{VALUE\\}\\}\\;}}",
+  "preprocess": [
+    {
+      "test": "passed"
+    }
+  ]
 }

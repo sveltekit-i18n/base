@@ -50,7 +50,7 @@
     "svelte": ">=3.49.0"
   },
   "optionalDependencies": {
-    "@sveltekit-i18n/parser-default": "^1.x"
+    "@sveltekit-i18n/parser-default": ">=1.0.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.2",
