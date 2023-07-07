@@ -94,14 +94,17 @@ You can obtain and set current locale using this writable store.
 ### `locales`: __Readable<string[]>__
 Readable store, containing all instance locales.
 
+### `rawTranslations`: __Readable\<{ [locale: string]: { [key: string]: string; } }> & { get: () => string; }__
+Readable store, containing all loaded translations before it gets preprocessed.
+
 ### `translations`: __Readable\<{ [locale: string]: { [key: string]: string; } }> & { get: () => string; }__
-Readable store, containing all loaded translations in dot-notation format.
+Readable store, containing all preprocessed translations.
 
 ### `t`: __Readable<(key: string, vars?: Record<any, any>) => string> & { get: (key: string; vars?: Record<any, any>) => string; }__
-This readable store returns a function you can use to obtain your (previously loaded) translations for given translation key and interpolation variables (you can use it like `$t('my.key', { variable: 'value' })` in Svelte files). You can also use `t.get` method to get the translation (e.g. `t.get('my.key', { variable: 'value' })`), which is handy in `.js` (or `.ts`) files.
+This readable store returns a function you can use to obtain your (previously loaded) translations for given translation key and interpolation variables (you can use it like `$t('my.key', { variable: 'value' })` in Svelte files). You can also use `t.get` method to get the translation (e.g. `t.get('my.key', { variable: 'value' })`), which is useful in `.js` (or `.ts`) files.
 
 ### `l`: __Readable<(locale: string, key: string, vars?: Record<any, any>) => string> & { get: (locale: string, key: string, vars?: Record<any, any>) => string; }__
-This readable store returns a function you can use to obtain your (previously loaded) translations for given locale, translation key and interpolation variables (you can use it like `$l('en', 'my.key', { variable: 'value' })` in Svelte files). You can also use `l.get` method to get the translation (e.g. `l.get('en', 'my.key', { variable: 'value' })`), which is handy in `.js` (or `.ts`) files.
+This readable store returns a function you can use to obtain your (previously loaded) translations for given locale, translation key and interpolation variables (you can use it like `$l('en', 'my.key', { variable: 'value' })` in Svelte files). You can also use `l.get` method to get the translation (e.g. `l.get('en', 'my.key', { variable: 'value' })`), which is useful in `.js` (or `.ts`) files.
 
 ### `loadConfig`: __(config: Config) => Promise\<void>__
 You can load a new `config` using this method.
