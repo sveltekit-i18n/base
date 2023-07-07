@@ -49,9 +49,6 @@
   "peerDependencies": {
     "svelte": ">=3.49.0"
   },
-  "optionalDependencies": {
-    "@sveltekit-i18n/parser-default": ">=1.0.0"
-  },
   "devDependencies": {
     "@types/jest": "^29.5.2",
     "@typescript-eslint/eslint-plugin": "^5.7.0",
