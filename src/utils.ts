@@ -36,11 +36,11 @@ export const sanitizeLocales = (...locales: any[]) => {
     try {
       const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
 
-      if (!sanitized) throw new Error(`'${locale}' is non-standard.`);
+      if (!sanitized) throw new Error();
 
       current = sanitized;
     } catch (error) {
-      logger.warn(`Non-standard locale provided: '${locale}'. Check your 'translations' and 'loaders' in i18n config...`);
+      logger.warn(`'${locale}' locale is non-standard.`);
     }
 
     return current;

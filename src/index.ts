@@ -50,6 +50,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     get: () => get(this.isLoading),
   };
 
+  private privateRawTranslations: Writable<Translations.SerializedTranslations> = writable({});
+
+  rawTranslations: ExtendedStore<Translations.SerializedTranslations> = { subscribe: this.privateRawTranslations.subscribe, get: () => get(this.rawTranslations) };
+
   private privateTranslations: Writable<Translations.SerializedTranslations> = writable({});
 
   translations: ExtendedStore<Translations.SerializedTranslations> = { subscribe: this.privateTranslations.subscribe, get: () => get(this.translations) };
@@ -235,7 +239,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       ) || (
         fallbackLocale && locale === sanitizedFallbackLocale && (
           !translationForFallbackLocale ||
-            !(this.loadedKeys[sanitizedFallbackLocale] || []).includes(key)
+          !(this.loadedKeys[sanitizedFallbackLocale] || []).includes(key)
         )),
       );
 
@@ -276,6 +280,17 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(translations || {});
+
+    this.privateRawTranslations.update(($rawTranslations) => translationLocales.reduce(
+      (acc, locale) => ({
+        ...acc,
+        [locale]: {
+          ...(acc[locale] || {}),
+          ...translations[locale],
+        },
+      }),
+      $rawTranslations,
+    ));
 
     this.privateTranslations.update(($translations) => translationLocales.reduce(
       (acc, locale) => {
