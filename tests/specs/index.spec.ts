@@ -18,6 +18,7 @@ describe('i18n instance', () => {
     toHaveProperty('locale');
     toHaveProperty('locales');
     toHaveProperty('translations');
+    toHaveProperty('rawTranslations');
     toHaveProperty('t');
     toHaveProperty('l');
     toHaveProperty('loadConfig');
@@ -175,15 +176,25 @@ describe('i18n instance', () => {
 
     expect($initialized).toBe(false);
   });
-  it('`addTranslations` method works', async () => {
+  it('`addTranslations` method adds raw translations', async () => {
+    const { addTranslations, rawTranslations } = new i18n();
+
+    const translations = getTranslations('none');
+
+    addTranslations(translations);
+
+    const $rawTranslations = rawTranslations.get();
+
+    expect($rawTranslations).toStrictEqual(translations);
+  });
+  it('`addTranslations` method adds preprocessed translations', async () => {
     const { addTranslations, translations } = new i18n();
 
-    addTranslations(TRANSLATIONS);
+    addTranslations(getTranslations('none'));
+
     const $translations = translations.get();
 
-    expect($translations).toEqual(
-      expect.objectContaining(TRANSLATIONS),
-    );
+    expect($translations).toStrictEqual(TRANSLATIONS);
   });
   it('`addTranslations` prevents duplicit load', async () => {
     const { addTranslations, loadTranslations, loading } = new i18n({ loaders, parser, log });
@@ -212,12 +223,14 @@ describe('i18n instance', () => {
     expect($translations[initLocale]['common.preprocess'][0].test).toBe('passed');
   });
   it('`preprocess` works when set to `none`', async () => {
-    const { loadTranslations, translations } = new i18n({ loaders, parser, log, preprocess: 'none' });
+    const { loadTranslations, translations, rawTranslations } = new i18n({ loaders, parser, log, preprocess: 'none' });
 
     await loadTranslations(initLocale);
 
     const $translations = translations.get();
+    const $rawTranslations = rawTranslations.get();
 
+    expect($translations).toStrictEqual($rawTranslations);
     expect($translations[initLocale].common.preprocess[0].test).toBe('passed');
   });
   it('initializes properly with `initLocale`', async () => {
@@ -401,6 +414,6 @@ describe('i18n instance', () => {
     await loading.toPromise();
 
     expect(debug).toHaveBeenCalledWith('[PREFIX] Setting config.');
-    expect(warn).toHaveBeenCalledWith("[PREFIX] Non-standard locale provided: 'unknown'. Check your 'translations' and 'loaders' in i18n config...");
+    expect(warn).toHaveBeenCalledWith("[PREFIX] 'unknown' locale is non-standard.");
   });
 });
