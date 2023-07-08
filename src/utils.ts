@@ -10,8 +10,13 @@ export const translate: Translations.Translate = ({
   fallbackLocale,
   ...rest
 }) => {
-  if (!(key && locale)) {
-    logger.warn('No translation key or locale provided. Skipping translation...');
+  if (!key) {
+    logger.warn(`No translation key provided ('${locale}' locale). Skipping translation...`);
+    return '';
+  }
+
+  if (!locale) {
+    logger.warn(`No locale provided for '${key}' key. Skipping translation...`);
     return '';
   }
 
