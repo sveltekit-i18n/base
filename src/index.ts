@@ -41,8 +41,15 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   loading: LoadingStore = {
     subscribe: this.isLoading.subscribe,
     toPromise: (locale, route) => {
+      const { fallbackLocale } = get(this.config);
+
       const promises = Array.from(this.promises).filter(
-        (promise) => checkProps({ locale: sanitizeLocales(locale)[0], route }, promise),
+        (promise) => {
+          let output = checkProps({ locale: sanitizeLocales(locale)[0], route }, promise);
+          if (fallbackLocale) output = output || checkProps({ locale: sanitizeLocales(fallbackLocale)[0], route }, promise);
+
+          return output;
+        },
       ).map(({ promise }) => promise);
 
       return Promise.all(promises);
@@ -138,22 +145,21 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     get: (locale, key, ...params) => get(this.l)(locale, key, ...params),
   };
 
-  private getLocale = (inputLocale?: string): string => {
-    const { fallbackLocale = '' } = get(this.config) || {};
+  private getLocale = (inputLocale?: string) => {
+    const { fallbackLocale } = get(this.config) || {};
 
     let locale = inputLocale || fallbackLocale;
 
-    if (!locale) return '';
+    if (!locale) return;
 
     const $locales = this.locales.get();
 
     const outputLocale = $locales.find((l) => sanitizeLocales(locale).includes(l)) || $locales.find((l) => sanitizeLocales(fallbackLocale).includes(l));
 
-    return outputLocale || '';
+    return outputLocale;
   };
 
   setLocale = (locale?: string) => {
-
     if (!locale) return;
 
     if (locale !== get(this.internalLocale)) {
@@ -199,7 +205,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     });
 
     if (translations) this.addTranslations(translations);
-    await this.loadTranslations(initLocale);
+    if (initLocale) await this.loadTranslations(initLocale);
   }
 
   loadConfig = async (config: Config.T<ParserParams>) => {
