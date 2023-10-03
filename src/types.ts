@@ -5,9 +5,9 @@ export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get
 export type LoadingStore = Readable<boolean> & { toPromise: (locale?: Config.Locale, route?: string) => Promise<void[] | void>, get: () => boolean };
 
 export module DotNotation {
-  export type Input = Translations.Input;
+  export type Input = any;
 
-  export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] };
+  export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] } | null | V;
 
   export type T = <I = Input>(input: I, preserveArrays?: boolean, parentKey?: string) => Output<I>;
 }
