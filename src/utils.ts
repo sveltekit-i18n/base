@@ -52,16 +52,32 @@ export const sanitizeLocales = (...locales: any[]) => {
   });
 };
 
-export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => Object.keys(input || {}).reduce((acc, key) => {
-  const value = (input as any)[key];
-  const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
+export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
+  if (preserveArrays && Array.isArray(input)) {
+    return input.map((v) => toDotNotation(v, preserveArrays));
+  }
 
-  if (preserveArrays && Array.isArray(value)) return ({ ...acc, [outputKey]: value.map(v => toDotNotation(v, preserveArrays)) });
+  if (input && typeof input === 'object') {
+    const output = Object.keys(input).reduce((acc, key) => {
+      const value = (input as any)[key];
+      const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
 
-  if (value && typeof value === 'object') return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
+      if (value && typeof value === 'object' && !(preserveArrays && Array.isArray(value))) {
+        return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
+      }
 
-  return ({ ...acc, [outputKey]: value });
-}, {});
+      return ({ ...acc, [outputKey]: toDotNotation(value, preserveArrays) });
+    }, {});
+
+    if (Object.keys(output).length) {
+      return output;
+    }
+
+    return null;
+  }
+
+  return input;
+};
 
 export const serialize = (input: Translations.TranslationData[]) => {
   return input.reduce((acc, { key, data, locale }) => {
