@@ -32,6 +32,7 @@ export const translate: Translations.Translate = ({
     if (rest.hasOwnProperty('fallbackValue')  ) {
       return rest.fallbackValue;
     }
+    logger.warn(`No translation nor fallback found for '${key}' .`);
   }
 
   return parser.parse(text, params, locale, key);
