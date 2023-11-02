@@ -23,12 +23,12 @@ export const translate: Translations.Translate = ({
   let text = (translations[locale] || {})[key];
 
   if (fallbackLocale && text === undefined) {
-    logger.warn(`No translation provided for '${key}' key in locale '${locale}'. Trying fallback '${fallbackLocale}'`);
+    logger.debug(`No translation provided for '${key}' key in locale '${locale}'. Trying fallback '${fallbackLocale}'`);
     text = (translations[fallbackLocale] || {})[key];
   }
 
   if (text === undefined) {
-    logger.warn(`No translation provided for '${key}' key in fallback '${fallbackLocale}'.`);
+    logger.debug(`No translation provided for '${key}' key in fallback '${fallbackLocale}'.`);
     if (rest.hasOwnProperty('fallbackValue')  ) {
       return rest.fallbackValue;
     }
