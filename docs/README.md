@@ -1,160 +1,1144 @@
-# API Docs
+# @sveltekit-i18n/base API Documentation
 
-[Config](#config)\
-[Properties and methods](#instance-methods-and-properties)
+Complete API reference for `@sveltekit-i18n/base`. This package provides core i18n functionality with support for custom parsers.
 
+## Table of Contents
 
-## Config
+- [Configuration](#configuration)
+- [Instance Properties and Methods](#instance-properties-and-methods)
+- [TypeScript](#typescript)
+- [See Also](#see-also)
 
-### `translations`?: __[Translations.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
-This property defines translations, which should be in place before `loaders` will trigger. It's useful for synchronous translations (e.g. locally defined language names which are same for all language mutations).
+## Configuration
 
-### `loaders`?: __[Loader.LoaderModule[]](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
-You can use `loaders` to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.\
-Each loader can include:
+When creating an i18n instance, you can configure it with these options:
 
-`locale`: __string__ – locale (e.g. `en`, `de`) which is this loader for.
+```typescript
+import i18n from '@sveltekit-i18n/base';
+import parser from '@sveltekit-i18n/parser-default';
 
-`key`: __string__ – represents the translation namespace. This key is used as a translation prefix so it should be module-unique. You can access your translation later using `$t('key.yourTranslation')`. It shouldn't include `.` (dot) character.
+const config = {
+  parser: parser(),
+  loaders: [/* ... */],
+  // ... other options
+};
 
-`loader`:__() => Promise<Record<any, any>>__ – is a function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
-
-`routes`?: __Array<string | RegExp>__ – can define routes this loader should be triggered for. You can use Regular expressions too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
-
-### `preprocess`?: __'full' | 'preserveArrays' | 'none' | (input: Translations.Input) => any__
-Defines a preprocess strategy or a custom preprocess function. Preprocessor runs immediately after the translation data load. This is set to `'full'` by default.
-
-Examples for input:
-```json
-{"a": {"b": [{"c": {"d": 1}}, {"c": {"d": 2}}]}}
+const { t, locale, loadTranslations } = new i18n(config);
 ```
 
-`'full'` (default) setting will result in:
-```json
-{"a.b.0.c.d": 1, "a.b.1.c.d": 2}
+---
+
+### `parser` (required)
+
+**Type:** `Parser.T`
+
+Message parser instance that handles interpolation of variables into translation strings.
+
+**Example:**
+
+```javascript
+import parser from '@sveltekit-i18n/parser-default';
+
+const config = {
+  parser: parser({
+    // parser-specific options
+  }),
+};
 ```
 
-`'preserveArrays'` in:
-```json
-{"a.b": [{"c.d": 1}, {"c.d": 2}]}
-```
+**See:** [Parsers documentation](https://github.com/sveltekit-i18n/parsers)
 
-`'none'` (nothing's changed):
-```json
-{"a": {"b": [{"c": {"d": 1}}, {"c": {"d": 2}}]}}
-```
+---
 
-Custom preprocess function `(input) => JSON.parse(JSON.stringify(input).replace('1', '"🦄"'))` will output:
+### `loaders`
 
-```json
-{"a": {"b": [{"c": {"d": "🦄"}}, {"c": {"d": 2}}]}}
-```
+**Type:** `Loader.LoaderModule[]` (optional)
 
-### `parser`: __[Parser.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
-This property defines translation syntax you want to use. For more, see [Parsers](https://github.com/sveltekit-i18n/parsers#readme).
+Array of loader configurations that define how and when translations should be loaded.
 
-### `initLocale`?: __string__
-If you set this property, translations will be initialized immediately using this locale.
+#### Loader Properties
 
-### `fallbackLocale`?: __string__
-If you set this property, translations are automatically loaded not for current `$locale` only, but for this locale as well. In case there is no translation for current `$locale`, fallback locale translation is used instead of translation key placeholder. This is also used as a fallback when unknown locale is set.
+Each loader object can have:
 
-Note that it's not recommended to use this property if you don't really need it. It may affect your data load.
+##### `locale` (required)
 
-### `fallbackValue`?: __any__
-By default, translation key is returned in case no translation is found for given translation key. For example, `$t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
+**Type:** `string`
 
-### `cache`?: __number__
-When you are serving your app, translations are loaded only once on server. This property allows you to setup a refresh period in milliseconds when your translations are refetched on the server. The default value is `86400000` (24 hours).
+The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`).
 
-Tip: You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
+**Example:**
 
-### `log.level`?: __'error' | 'warn' | 'debug'__
-You can manage log level using this property (default: `'warn'`).
-
-### `log.prefix`?: __string__
-You can prefix output logs using this property (default: `'[i18n]: '`).
-
-### `log.logger`?: __[Logger.T](https://github.com/sveltekit-i18n/base/blob/master/src/types.ts)__
-You can setup your custom logger using this property (default: `console`).
-
-## Instance methods and properties
-
-Each `sveltekit-i18n` instance includes these properties and methods:
-
-### `loading`: __Readable\<boolean> & { toPromise: () => Promise<void[]>; get: () => boolean; }__ 
-This readable store indicates wheter translations are loading or not. It can be converted to promise using `.toPromise()` method.
-
-### `initialized`: __Readable\<boolean>__
-This readable store returns `true` after first translation successfully initialized.
-
-### `locale`: __Writable\<string> & { get: () => string }__
-You can obtain and set current locale using this writable store.
-
-### `locales`: __Readable<string[]>__
-Readable store, containing all instance locales.
-
-### `rawTranslations`: __Readable\<{ [locale: string]: { [key: string]: string; } }> & { get: () => string; }__
-Readable store, containing all loaded translations before it gets preprocessed.
-
-### `translations`: __Readable\<{ [locale: string]: { [key: string]: string; } }> & { get: () => string; }__
-Readable store, containing all preprocessed translations.
-
-### `t`: __Readable<(key: string, vars?: Record<any, any>) => string> & { get: (key: string; vars?: Record<any, any>) => string; }__
-This readable store returns a function you can use to obtain your (previously loaded) translations for given translation key and interpolation variables (you can use it like `$t('my.key', { variable: 'value' })` in Svelte files). You can also use `t.get` method to get the translation (e.g. `t.get('my.key', { variable: 'value' })`), which is useful in `.js` (or `.ts`) files.
-
-### `l`: __Readable<(locale: string, key: string, vars?: Record<any, any>) => string> & { get: (locale: string, key: string, vars?: Record<any, any>) => string; }__
-This readable store returns a function you can use to obtain your (previously loaded) translations for given locale, translation key and interpolation variables (you can use it like `$l('en', 'my.key', { variable: 'value' })` in Svelte files). You can also use `l.get` method to get the translation (e.g. `l.get('en', 'my.key', { variable: 'value' })`), which is useful in `.js` (or `.ts`) files.
-
-### `loadConfig`: __(config: Config) => Promise\<void>__
-You can load a new `config` using this method.
-
-### `setLocale`: __(locale: string) => Promise<void>__
-This method sets a locale safely. It prevents uppercase characters and doesn't set it in case the locale does not exist in `loaders` config or `translations` store.
-
-### `setRoute`: __(route: string) => Promise<void>__
-Sets a new route value, if given value is not equal to current value.
-
-### `getTranslationProps`: __(locale: string, route?: string) => Promise\<Array<{ [locale: string]: Record<string, string>; }, Record<string, string[]>>>__
-According to input props (`locale` and `route`), this method triggers `loaders`, which haven't been already triggered, and returns appropriate `translations` and `keys`. This output can be used later as input parameters of `addTranslations` method.
-
-### `addTranslations`: __(translations?: { [locale: string]: Record<string, any>; }, keys?: Record<string, string[]> | undefined) => void__
-This method allows you to store loaded translations in `translations` readable.
-
-`translations` – this parameter should contain an object, containing translations objects for locales you want to add.
-
-For example: 
-```jsonc
+```javascript
 {
-  "en": {
-    "common": {
-      "title": "text"
+  locale: 'en',
+  // ...
+}
+```
+
+##### `key` (required)
+
+**Type:** `string`
+
+Translation namespace identifier. This acts as a prefix for translation keys.
+
+**Rules:**
+- Should be unique within a locale
+- Cannot contain dots (`.`)
+- Use descriptive names (`common`, `home`, `auth`, etc.)
+
+**Example:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'common',
+  // Translations will be accessible as $t('common.greeting')
+}
+```
+
+**⚠️ Common Pitfall:** Using dots in the `key` will cause lookup issues:
+
+```javascript
+// ❌ Bad
+{ key: 'pages.home' }
+
+// ✅ Good
+{ key: 'home' }
+```
+
+##### `loader` (required)
+
+**Type:** `() => Promise<Record<any, any>>`
+
+Async function that returns translation data.
+
+**Loading from local files:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'common',
+  loader: async () => (await import('./en/common.json')).default,
+}
+```
+
+**Loading from API:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'common',
+  loader: async () => {
+    const response = await fetch('/api/translations/en/common');
+    return await response.json();
+  },
+}
+```
+
+**Loading from database (server-side):**
+
+```javascript
+{
+  locale: 'en',
+  key: 'common',
+  loader: async () => {
+    const translations = await db.translations.findOne({ locale: 'en', key: 'common' });
+    return translations.data;
+  },
+}
+```
+
+**Conditional loading:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'admin',
+  loader: async () => {
+    // Only load admin translations if user is admin
+    if (userIsAdmin) {
+      return (await import('./en/admin.json')).default;
+    }
+    return {};
+  },
+}
+```
+
+##### `routes` (optional)
+
+**Type:** `Array<string | RegExp>`
+
+Array of route patterns. Loader will only execute if current route matches one of these patterns.
+
+**Exact string match:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'home',
+  routes: ['/'],
+  loader: async () => (await import('./en/home.json')).default,
+}
+```
+
+**Multiple routes:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'products',
+  routes: ['/products', '/shop'],
+  loader: async () => (await import('./en/products.json')).default,
+}
+```
+
+**Regular expressions:**
+
+```javascript
+{
+  locale: 'en',
+  key: 'products',
+  routes: [/^\/products/, /^\/shop/],
+  loader: async () => (await import('./en/products.json')).default,
+}
+```
+
+This will match:
+- `/products`
+- `/products/123`
+- `/products/category/electronics`
+- `/shop`
+- `/shop/cart`
+
+**No routes (global):**
+
+```javascript
+{
+  locale: 'en',
+  key: 'common',
+  // No routes specified → loads on every page
+  loader: async () => (await import('./en/common.json')).default,
+}
+```
+
+**Use Cases:**
+
+- **Common translations:** Omit `routes` for navigation, errors, etc.
+- **Page-specific:** Use exact routes for specific pages
+- **Section-specific:** Use regex for groups of pages
+
+**💡 Tip:** Keep common translations small and use route-based loading for page-specific content to optimize performance.
+
+#### Complete Loaders Example
+
+```javascript
+const config = {
+  parser: parser(),
+  loaders: [
+    // Common translations (all pages)
+    {
+      locale: 'en',
+      key: 'common',
+      loader: async () => (await import('./en/common.json')).default,
+    },
+    {
+      locale: 'cs',
+      key: 'common',
+      loader: async () => (await import('./cs/common.json')).default,
+    },
+    
+    // Homepage only
+    {
+      locale: 'en',
+      key: 'home',
+      routes: ['/'],
+      loader: async () => (await import('./en/home.json')).default,
+    },
+    
+    // All product pages
+    {
+      locale: 'en',
+      key: 'products',
+      routes: [/^\/products/],
+      loader: async () => (await import('./en/products.json')).default,
+    },
+    
+    // Dynamic API loading
+    {
+      locale: 'en',
+      key: 'dynamic',
+      loader: async () => {
+        const res = await fetch('/api/translations/en/dynamic');
+        return await res.json();
+      },
+    },
+  ],
+};
+```
+
+---
+
+### `translations`
+
+**Type:** `Translations.T` (optional)
+
+Synchronous translations that are available immediately, before any loaders execute.
+
+**Use Cases:**
+- Language names (same across all locales)
+- Configuration values
+- Critical translations needed immediately
+
+**Example:**
+
+```javascript
+const config = {
+  translations: {
+    en: {
+      'languages.en': 'English',
+      'languages.cs': 'Czech',
+      'languages.de': 'German',
+    },
+    cs: {
+      'languages.en': 'Angličtina',
+      'languages.cs': 'Čeština',
+      'languages.de': 'Němčina',
+    },
+  },
+  loaders: [/* async translations */],
+};
+```
+
+**Benefits:**
+- No loading delay
+- Perfect for language switcher
+- Available during SSR
+
+---
+
+### `preprocess`
+
+**Type:** `'full' | 'preserveArrays' | 'none' | (input: Translations.Input) => any`  
+**Default:** `'full'`
+
+Defines how to transform loaded translation data.
+
+#### `'full'` (default)
+
+Flattens all nested objects and arrays to dot notation.
+
+**Input:**
+
+```json
+{
+  "user": {
+    "profile": {
+      "name": "Name",
+      "settings": ["Option 1", "Option 2"]
     }
   }
 }
 ```
 
-or with dot notation:
+**Output:**
+
 ```json
 {
-  "en": {
-    "common.text": "Enghlish text"
-  },
-  "es": {
-    "common.text": "Spanish text"
+  "user.profile.name": "Name",
+  "user.profile.settings.0": "Option 1",
+  "user.profile.settings.1": "Option 2"
+}
+```
+
+**Usage:**
+
+```javascript
+$t('user.profile.name')
+$t('user.profile.settings.0')
+```
+
+#### `'preserveArrays'`
+
+Flattens objects but keeps arrays intact.
+
+**Input:**
+
+```json
+{
+  "user": {
+    "profile": {
+      "name": "Name",
+      "settings": ["Option 1", "Option 2"]
+    }
   }
 }
 ```
 
-`keys` – this parameter should contain corresponding keys from your `loaders` config, so the translation is not loaded duplicitly in future. If `keys` are not provided, translation keys are taken automatically from the `translations` parameter as the first key (or value before the first dot in dot notation) under every locale.
+**Output:**
 
-For example, for the previous case it would be:
 ```json
 {
-  "en": ["common"],
-  "es": ["common"]
+  "user.profile.name": "Name",
+  "user.profile.settings": ["Option 1", "Option 2"]
 }
 ```
 
-### `loadTranslations`: __(locale: string, route?: string) => Promise\<void>__
-This method encapsulates `setLocale` and `setRoute` methods. According on changes, `getTranslationProps` and `addTranslations` methods are called and new translations are stored in `translations` readable.
+**Usage:**
+
+```javascript
+$t('user.profile.name')
+$t('user.profile.settings')[0]  // Access array directly
+```
+
+**Use Case:** When you need to iterate over arrays in your components.
+
+#### `'none'`
+
+No preprocessing – keep original structure.
+
+**Input/Output:** Same structure
+
+**Usage:**
+
+```javascript
+// Must match your JSON structure exactly
+$t('user')           // Returns entire user object
+$t('user.profile')   // Returns profile object
+```
+
+**Use Case:** When working with complex nested structures or when your parser handles nested objects.
+
+#### Custom Function
+
+Create your own preprocessing logic:
+
+**Example 1: Add prefixes**
+
+```javascript
+const config = {
+  preprocess: (input) => {
+    const output = {};
+    Object.keys(input).forEach(key => {
+      output[`app.${key}`] = input[key];
+    });
+    return output;
+  },
+};
+
+// All keys will have 'app.' prefix
+$t('app.greeting')
+```
+
+**Example 2: Transform values**
+
+```javascript
+const config = {
+  preprocess: (input) => {
+    return JSON.parse(
+      JSON.stringify(input).toUpperCase()
+    );
+  },
+};
+
+// All translations will be uppercase
+```
+
+**Example 3: Merge with defaults**
+
+```javascript
+const defaults = { 'common.error': 'An error occurred' };
+
+const config = {
+  preprocess: (input) => {
+    return { ...defaults, ...input };
+  },
+};
+```
+
+---
+
+### `initLocale`
+
+**Type:** `string` (optional)
+
+Initialize translations immediately with this locale.
+
+**Example:**
+
+```javascript
+const config = {
+  initLocale: 'en',
+  loaders: [/* ... */],
+};
+```
+
+**Use Cases:**
+- Server-side rendering with known locale
+- Default language for your app
+- Preloading before user interaction
+
+**⚠️ Note:** Translations will load immediately on instance creation. Make sure loaders are ready.
+
+---
+
+### `fallbackLocale`
+
+**Type:** `string` (optional)
+
+Fallback locale when translation is missing in current locale.
+
+**Example:**
+
+```javascript
+const config = {
+  fallbackLocale: 'en',
+  loaders: [/* ... */],
+};
+```
+
+**Behavior:**
+
+```javascript
+// Current locale: 'cs'
+// Translation exists in 'cs': returns Czech translation
+$t('greeting')  // → "Ahoj"
+
+// Translation missing in 'cs' but exists in 'en': returns English translation
+$t('new.feature')  // → "New Feature" (from 'en')
+
+// Translation missing in both: returns fallbackValue or key
+$t('nonexistent')  // → "nonexistent"
+```
+
+**⚠️ Performance Impact:** Both current locale and fallback locale translations are loaded, doubling network/memory usage. Use only if necessary.
+
+**Use Cases:**
+- Gradual translation rollout (new features in English, translate later)
+- Incomplete translations
+- Development/testing
+
+---
+
+### `fallbackValue`
+
+**Type:** `any` (optional)  
+**Default:** Translation key itself
+
+Value returned when translation key is not found.
+
+**Default behavior:**
+
+```javascript
+$t('unknown.key')  // → "unknown.key"
+```
+
+**Custom fallback:**
+
+```javascript
+const config = {
+  fallbackValue: '...',
+};
+
+$t('unknown.key')  // → "..."
+```
+
+**Dynamic fallback:**
+
+```javascript
+const config = {
+  fallbackValue: '',  // Return empty string
+};
+
+$t('unknown.key')  // → ""
+```
+
+**Use Cases:**
+- Hide missing translations in production
+- Show consistent placeholder
+- Debugging (default behavior shows missing keys)
+
+---
+
+### `cache`
+
+**Type:** `number` (milliseconds)  
+**Default:** `86400000` (24 hours)
+
+Server-side cache refresh period.
+
+**Default (24 hours):**
+
+```javascript
+const config = {
+  cache: 86400000,  // Refresh every 24 hours
+};
+```
+
+**Disable caching:**
+
+```javascript
+const config = {
+  cache: Number.POSITIVE_INFINITY,  // Never refresh
+};
+```
+
+**Short cache (development):**
+
+```javascript
+const config = {
+  cache: 60000,  // Refresh every minute
+};
+```
+
+**How it works:**
+
+```
+Server starts
+   ↓
+Translations load
+   ↓
+Cache for X milliseconds
+   ↓
+After X milliseconds → reload from source
+```
+
+**⚠️ Note:** Only affects server-side. Client-side cache persists for the session.
+
+**Use Cases:**
+- **Production:** Long cache (hours/days) for performance
+- **Development:** Short cache or infinity for consistency
+- **CMS integration:** Short cache to reflect content updates
+
+---
+
+### `log.level`
+
+**Type:** `'error' | 'warn' | 'debug'`  
+**Default:** `'warn'`
+
+Controls logging verbosity.
+
+**Options:**
+
+```javascript
+const config = {
+  log: {
+    level: 'error',   // Only errors
+    // level: 'warn',  // Errors and warnings (default)
+    // level: 'debug', // Everything (verbose)
+  },
+};
+```
+
+**What gets logged:**
+
+- `'error'`: Critical failures (loader errors, parser errors)
+- `'warn'`: Missing translations, locale issues
+- `'debug'`: All operations (loading, caching, lookups)
+
+**Use Cases:**
+- **Production:** `'error'` or `'warn'`
+- **Development:** `'debug'` for troubleshooting
+- **Testing:** `'error'` to reduce noise
+
+---
+
+### `log.prefix`
+
+**Type:** `string`  
+**Default:** `'[i18n]: '`
+
+Prefix for all log messages.
+
+**Example:**
+
+```javascript
+const config = {
+  log: {
+    prefix: '[MyApp i18n]: ',
+  },
+};
+
+// Logs will appear as:
+// [MyApp i18n]: Translation loaded...
+```
+
+---
+
+### `log.logger`
+
+**Type:** `Logger.T`  
+**Default:** `console`
+
+Custom logger instance.
+
+**Custom logger:**
+
+```javascript
+const customLogger = {
+  log: (...args) => console.log('LOG:', ...args),
+  warn: (...args) => console.warn('WARN:', ...args),
+  error: (...args) => console.error('ERROR:', ...args),
+};
+
+const config = {
+  log: {
+    logger: customLogger,
+  },
+};
+```
+
+**External logging service:**
+
+```javascript
+import * as Sentry from '@sentry/browser';
+
+const config = {
+  log: {
+    logger: {
+      log: console.log,
+      warn: console.warn,
+      error: (message) => {
+        console.error(message);
+        Sentry.captureException(new Error(message));
+      },
+    },
+  },
+};
+```
+
+---
+
+## Instance Properties and Methods
+
+After creating an i18n instance, you have access to these stores and methods:
+
+```javascript
+const { t, locale, locales, loading, initialized, translations, loadTranslations } = new i18n(config);
+```
+
+---
+
+### `t`
+
+**Type:** `Readable<(key: string, vars?: Record<any, any>) => string> & { get: (key: string, vars?: Record<any, any>) => string }`
+
+Translation function store.
+
+**In Svelte components:**
+
+```svelte
+<script>
+  import { t } from '$lib/translations';
+</script>
+
+<h1>{$t('home.title')}</h1>
+<p>{$t('greeting', { name: 'Alice' })}</p>
+```
+
+**In JavaScript/TypeScript files:**
+
+```javascript
+import { t } from '$lib/translations';
+
+const message = t.get('home.title');
+const greeting = t.get('greeting', { name: 'Alice' });
+```
+
+**Parameters:**
+
+- `key` – Translation key (dot notation)
+- `vars` – Variables for interpolation (optional)
+- Additional parameters passed to parser
+
+**Returns:** Translated string
+
+---
+
+### `l`
+
+**Type:** `Readable<(locale: string, key: string, vars?: Record<any, any>) => string> & { get: (locale: string, key: string, vars?: Record<any, any>) => string }`
+
+Locale-specific translation function. Get translation for a specific locale regardless of current locale.
+
+**Usage:**
+
+```svelte
+<script>
+  import { l } from '$lib/translations';
+</script>
+
+<!-- Always show English version -->
+<p>{$l('en', 'home.title')}</p>
+
+<!-- Always show Czech version -->
+<p>{$l('cs', 'home.title')}</p>
+
+<!-- With variables -->
+<p>{$l('en', 'greeting', { name: 'Bob' })}</p>
+```
+
+**Use Cases:**
+- Showing multiple languages simultaneously
+- Language comparison tools
+- Admin interfaces
+
+---
+
+### `locale`
+
+**Type:** `Writable<string> & { get: () => string }`
+
+Current locale store.
+
+**Read current locale:**
+
+```svelte
+<script>
+  import { locale } from '$lib/translations';
+</script>
+
+<p>Current language: {$locale}</p>
+```
+
+**Change locale:**
+
+```svelte
+<script>
+  import { locale } from '$lib/translations';
+  
+  function switchToEnglish() {
+    locale.set('en');
+  }
+</script>
+
+<button on:click={switchToEnglish}>English</button>
+```
+
+**In JS files:**
+
+```javascript
+import { locale } from '$lib/translations';
+
+const currentLocale = locale.get();
+locale.set('cs');
+```
+
+---
+
+### `locales`
+
+**Type:** `Readable<string[]>`
+
+Array of all available locales (from loaders).
+
+**Usage:**
+
+```svelte
+<script>
+  import { locale, locales } from '$lib/translations';
+</script>
+
+<select bind:value={$locale}>
+  {#each $locales as loc}
+    <option value={loc}>{loc}</option>
+  {/each}
+</select>
+```
+
+**Returns:** `['en', 'cs', 'de', ...]`
+
+---
+
+### `loading`
+
+**Type:** `Readable<boolean> & { toPromise: () => Promise<void[]>, get: () => boolean }`
+
+Loading state indicator.
+
+**Show loading state:**
+
+```svelte
+<script>
+  import { loading, t } from '$lib/translations';
+</script>
+
+{#if $loading}
+  <p>Loading translations...</p>
+{:else}
+  <p>{$t('home.title')}</p>
+{/if}
+```
+
+**Wait for loading:**
+
+```javascript
+import { loading } from '$lib/translations';
+
+await loading.toPromise();
+// Translations are now loaded
+```
+
+**Check loading state:**
+
+```javascript
+if (loading.get()) {
+  console.log('Still loading...');
+}
+```
+
+---
+
+### `initialized`
+
+**Type:** `Readable<boolean>`
+
+Initialization state.
+
+**Usage:**
+
+```svelte
+<script>
+  import { initialized } from '$lib/translations';
+</script>
+
+{#if $initialized}
+  <p>App is ready!</p>
+{/if}
+```
+
+**Use Case:** Show app content only after first translation loads.
+
+---
+
+### `translations`
+
+**Type:** `Readable<{ [locale: string]: { [key: string]: string } }> & { get: () => object }`
+
+All preprocessed translations store.
+
+**Structure:**
+
+```javascript
+{
+  en: {
+    'common.greeting': 'Hello',
+    'home.title': 'Welcome',
+  },
+  cs: {
+    'common.greeting': 'Ahoj',
+    'home.title': 'Vítejte',
+  },
+}
+```
+
+**Usage:**
+
+```svelte
+<script>
+  import { translations } from '$lib/translations';
+</script>
+
+<pre>{JSON.stringify($translations, null, 2)}</pre>
+```
+
+**Use Cases:**
+- Debugging
+- Checking available translations
+- Custom translation logic
+
+---
+
+### `rawTranslations`
+
+**Type:** `Readable<{ [locale: string]: { [key: string]: any } }> & { get: () => object }`
+
+All loaded translations before preprocessing.
+
+**Difference from `translations`:**
+
+- `rawTranslations`: Original nested structure
+- `translations`: After preprocessing (flattened)
+
+---
+
+### `loadTranslations`
+
+**Type:** `(locale: string, route?: string) => Promise<void>`
+
+Load translations for a specific locale and route.
+
+**Usage in layouts:**
+
+```javascript
+// +layout.js
+import { loadTranslations } from '$lib/translations';
+
+export const load = async ({ url }) => {
+  await loadTranslations('en', url.pathname);
+  return {};
+};
+```
+
+**Parameters:**
+- `locale` – Locale to load
+- `route` – Current route (optional, for route-based loading)
+
+**What it does:**
+1. Sets the locale
+2. Finds matching loaders
+3. Executes loaders (if not cached)
+4. Preprocesses translations
+5. Updates stores
+
+---
+
+### `setLocale`
+
+**Type:** `(locale: string) => Promise<void>`
+
+Set locale and load its translations.
+
+**Usage:**
+
+```javascript
+import { setLocale } from '$lib/translations';
+
+await setLocale('cs');
+// Czech translations are now loaded and active
+```
+
+**Safety features:**
+- Converts to lowercase
+- Validates locale exists in config
+- Loads translations if not cached
+
+---
+
+### `setRoute`
+
+**Type:** `(route: string) => Promise<void>`
+
+Update current route and load route-specific translations.
+
+**Usage:**
+
+```javascript
+import { setRoute } from '$lib/translations';
+
+await setRoute('/products/electronics');
+// Translations for /products/* are loaded
+```
+
+**Use Case:** Manual route tracking (usually handled by `loadTranslations`).
+
+---
+
+### `loadConfig`
+
+**Type:** `(config: Config) => Promise<void>`
+
+Replace current configuration.
+
+**Usage:**
+
+```javascript
+import { loadConfig } from '$lib/translations';
+
+await loadConfig({
+  parser: newParser(),
+  loaders: [/* new loaders */],
+});
+```
+
+**Use Case:** Dynamic configuration (advanced scenarios).
+
+---
+
+### `getTranslationProps`
+
+**Type:** `(locale: string, route?: string) => Promise<[{ [locale: string]: Record<string, string> }, Record<string, string[]>]>`
+
+Get translations and keys for a specific locale/route without storing them.
+
+**Usage:**
+
+```javascript
+import { getTranslationProps } from '$lib/translations';
+
+const [translations, keys] = await getTranslationProps('en', '/about');
+console.log(translations);  // { en: { 'about.title': 'About' } }
+console.log(keys);           // { en: ['about'] }
+```
+
+**Use Case:** Server-side pre-loading, custom caching logic.
+
+---
+
+### `addTranslations`
+
+**Type:** `(translations?: { [locale: string]: Record<string, any> }, keys?: Record<string, string[]>) => void`
+
+Manually add translations to the store.
+
+**Usage:**
+
+```javascript
+import { addTranslations } from '$lib/translations';
+
+addTranslations({
+  en: {
+    'custom.key': 'Custom value',
+  },
+}, {
+  en: ['custom'],
+});
+```
+
+**Use Cases:**
+- Manual translation injection
+- Testing
+- Dynamic translation updates
+
+---
+
+## TypeScript
+
+Full TypeScript support with complete type definitions:
+
+```typescript
+import i18n, { type Config } from '@sveltekit-i18n/base';
+import parser from '@sveltekit-i18n/parser-default';
+import type { Config as ParserConfig } from '@sveltekit-i18n/parser-default';
+
+const config: Config<ParserConfig> = {
+  parser: parser(),
+  loaders: [
+    {
+      locale: 'en',
+      key: 'common',
+      loader: async () => (await import('./en/common.json')).default,
+    },
+  ],
+};
+
+export const { t, locale, locales, loading, loadTranslations } = new i18n(config);
+```
+
+The library provides:
+- ✅ Complete type definitions for configuration
+- ✅ Typed API methods and stores
+- ✅ Generic types for custom parser integration
+- ❌ Automatic translation key inference (not built-in)
+
+For type-safe translation keys, see [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+
+---
+
+## See Also
+
+- [Getting Started Guide](https://github.com/sveltekit-i18n/lib/tree/master/docs/GETTING_STARTED.md) – Step-by-step tutorial
+- [Architecture Overview](https://github.com/sveltekit-i18n/lib/tree/master/docs/ARCHITECTURE.md) – How it works
+- [Parsers](https://github.com/sveltekit-i18n/parsers) – Available parsers
+- [Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples) – Working code examples
+- [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md) – Recommended patterns
