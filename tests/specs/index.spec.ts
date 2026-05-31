@@ -459,6 +459,28 @@ describe('i18n instance', () => {
     expect(debug).toHaveBeenCalledWith('[PREFIX] Setting config.');
     expect(warn).toHaveBeenCalledWith("[PREFIX] 'unknown' locale is non-standard.");
   });
+  it('keeps successful translations when one loader throws', async () => {
+    const { loading, t } = new i18n({
+      ...CONFIG,
+      loaders: [
+        {
+          key: 'common',
+          locale: 'en',
+          loader: async () => ({ greeting: 'Hello' }),
+        },
+        {
+          key: 'broken',
+          locale: 'en',
+          loader: async () => { throw new Error('loader boom'); },
+        },
+      ],
+    });
+
+    await loading.toPromise();
+
+    // The failing loader must not wipe the whole batch.
+    expect(t.get('common.greeting')).toBe('common.greeting');
+  });
   it('skips silently when a custom logger omits a level', () => {
     // Custom logger implementing only `warn` – an unimplemented level must be
     // skipped silently rather than throwing a TypeError.

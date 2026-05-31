@@ -111,24 +111,18 @@ export const serialize = (input: Translations.TranslationData[]) => {
 };
 
 export const fetchTranslations: Translations.FetchTranslations = async (loaders) => {
-  try {
-    const response = await Promise.all(loaders.map(({ loader, ...rest }) => new Promise<Translations.TranslationData>(async (res) => {
-      let data;
-      try {
-        data = await loader();
-      } catch (error) {
-        logger.error(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
-        logger.error(error);
-      }
-      res({ loader, ...rest, data });
-    })));
+  const response = await Promise.all(loaders.map(async ({ loader, ...rest }) => {
+    let data;
+    try {
+      data = await loader();
+    } catch (error) {
+      logger.error(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
+      logger.error(error);
+    }
+    return { loader, ...rest, data };
+  }));
 
-    return serialize(response);
-  } catch (error) {
-    logger.error(error);
-  }
-
-  return {};
+  return serialize(response);
 };
 
 export const testRoute = (route: string) => (input: Loader.Route) => {
