@@ -1,6 +1,15 @@
 import type { DotNotation, Translations, Loader } from './types';
 import { logger } from './logger';
 
+// Safe own-property read. Translation keys like `toString`, `constructor` or
+// `__proto__` would otherwise resolve to inherited `Object.prototype` members
+// instead of being treated as missing translations.
+export const hasOwn = (obj: any, key: PropertyKey): boolean => obj != null && Object.prototype.hasOwnProperty.call(obj, key);
+
+// Own-property read: returns the value only when `key` is the object's own
+// property, otherwise undefined. Centralizes the prototype-safe table lookup.
+export const read = <T = any>(obj: any, key: PropertyKey): T | undefined => (hasOwn(obj, key) ? obj[key] : undefined);
+
 export const translate: Translations.Translate = ({
   parser,
   key,
@@ -20,16 +29,18 @@ export const translate: Translations.Translate = ({
     return '';
   }
 
-  let text = (translations[locale] || {})[key];
+  const localeTranslations = read(translations, locale);
+  let text = read(localeTranslations, key);
 
   if (fallbackLocale && text === undefined) {
     logger.debug(`No translation provided for '${key}' key in locale '${locale}'. Trying fallback '${fallbackLocale}'`);
-    text = (translations[fallbackLocale] || {})[key];
+    const fallbackTranslations = read(translations, fallbackLocale);
+    text = read(fallbackTranslations, key);
   }
 
   if (text === undefined) {
     logger.debug(`No translation provided for '${key}' key in fallback '${fallbackLocale}'.`);
-    if (rest.hasOwnProperty('fallbackValue')  ) {
+    if (hasOwn(rest, 'fallbackValue')) {
       return rest.fallbackValue;
     }
     logger.warn(`No translation nor fallback found for '${key}' .`);
