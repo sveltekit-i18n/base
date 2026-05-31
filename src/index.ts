@@ -254,9 +254,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       logger.debug('Fetching translations...');
 
-      const rawTranslations = await fetchTranslations(filteredLoaders);
-
-      this.isLoading.set(false);
+      let rawTranslations: Translations.SerializedTranslations;
+      try {
+        rawTranslations = await fetchTranslations(filteredLoaders);
+      } finally {
+        // Always release the loading flag, even if fetching throws, so the
+        // instance never gets stuck in a permanent loading state.
+        this.isLoading.set(false);
+      }
 
       const loadedKeys = Object.keys(rawTranslations).reduce(
         (acc, locale) => ({ ...acc, [locale]: Object.keys(rawTranslations[locale]) }), {} as Loader.IndexedKeys,
