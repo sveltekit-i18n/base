@@ -1,5 +1,6 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
+import { loggerFactory } from '../../src/logger';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -457,5 +458,32 @@ describe('i18n instance', () => {
 
     expect(debug).toHaveBeenCalledWith('[PREFIX] Setting config.');
     expect(warn).toHaveBeenCalledWith("[PREFIX] 'unknown' locale is non-standard.");
+  });
+  it('skips silently when a custom logger omits a level', () => {
+    // Custom logger implementing only `warn` – an unimplemented level must be
+    // skipped silently rather than throwing a TypeError.
+    const warn = import.meta.jest.fn();
+    const partialLogger = { warn } as any;
+
+    const log = loggerFactory({ level: 'debug', logger: partialLogger });
+
+    expect(() => log.debug('nope')).not.toThrow();
+    expect(() => log.error('nope')).not.toThrow();
+    log.warn('yep');
+    expect(warn).toHaveBeenCalledWith('[i18n]: yep'); // implemented levels still work
+  });
+  it('falls back to `warn` level for an unknown configured level', () => {
+    const logger = { error: import.meta.jest.fn(), warn: import.meta.jest.fn(), debug: import.meta.jest.fn() } as any;
+
+    // An invalid level must not silence everything; it behaves as the default 'warn'.
+    const log = loggerFactory({ level: 'info' as any, logger });
+
+    log.error('e');
+    log.warn('w');
+    log.debug('d');
+
+    expect(logger.error).toHaveBeenCalledWith('[i18n]: e');
+    expect(logger.warn).toHaveBeenCalledWith('[i18n]: w');
+    expect(logger.debug).not.toHaveBeenCalled(); // debug is below 'warn'
   });
 });
