@@ -1,5 +1,5 @@
 import { derived, get, writable } from 'svelte/store';
-import { checkProps, fetchTranslations, sanitizeLocales, testRoute, toDotNotation, translate } from './utils';
+import { checkProps, fetchTranslations, hasOwn, read, sanitizeLocales, testRoute, toDotNotation, translate } from './utils';
 import { logger, loggerFactory, setLogger } from './logger';
 
 import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore, Logger } from './types';
@@ -109,7 +109,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   });
 
   private translation: Readable<Record<string, string>> = derived([this.privateTranslations, this.locale, this.isLoading], ([$translations, $locale, $loading], set) => {
-    const translation = $translations[$locale];
+    const translation = read($translations, $locale);
     if (translation && Object.keys(translation).length && !$loading) set(translation);
   }, {});
 
@@ -123,7 +123,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         translations: this.translations.get(),
         locale: this.locale.get(),
         fallbackLocale,
-        ...(rest.hasOwnProperty('fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
+        ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
       }),
     ),
     get: (key, ...params) => get(this.t)(key, ...params),
@@ -139,7 +139,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         translations,
         locale,
         fallbackLocale,
-        ...(rest.hasOwnProperty('fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
+        ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
       }),
     ),
     get: (locale, key, ...params) => get(this.l)(locale, key, ...params),
@@ -234,18 +234,18 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     const [sanitizedLocale, sanitizedFallbackLocale] = sanitizeLocales($locale, fallbackLocale);
 
-    const translationForLocale = $translations[sanitizedLocale];
-    const translationForFallbackLocale = $translations[sanitizedFallbackLocale];
+    const translationForLocale = read($translations, sanitizedLocale);
+    const translationForFallbackLocale = read($translations, sanitizedFallbackLocale);
 
     const filteredLoaders = (loaders || [])
       .map(({ locale, ...rest }) => ({ ...rest, locale: sanitizeLocales(locale)[0] }))
       .filter(({ routes }) => !routes || (routes || []).some(testRoute($route)))
       .filter(({ key, locale }) => locale === sanitizedLocale && (
-        !translationForLocale || !(this.loadedKeys[sanitizedLocale] || []).includes(key)
+        !translationForLocale || !(read(this.loadedKeys, sanitizedLocale) || []).includes(key)
       ) || (
         fallbackLocale && locale === sanitizedFallbackLocale && (
           !translationForFallbackLocale ||
-          !(this.loadedKeys[sanitizedFallbackLocale] || []).includes(key)
+          !(read(this.loadedKeys, sanitizedFallbackLocale) || []).includes(key)
         )),
       );
 
@@ -263,7 +263,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       );
 
       const keys = filteredLoaders
-        .filter(({ key, locale }) => (loadedKeys[locale] || []).some(
+        .filter(({ key, locale }) => (read<Loader.Key[]>(loadedKeys, locale) || []).some(
           (loadedKey) => `${loadedKey}`.startsWith(key),
         ))
         .reduce<Record<string, any>>((acc, { key, locale }) => ({
@@ -323,11 +323,11 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     ));
 
     translationLocales.forEach(($locale) => {
-      let localeKeys = Object.keys(translations[$locale]).map((k) => `${k}`.split('.')[0]);
-      if (keys) localeKeys = keys[$locale];
+      let localeKeys: Loader.Key[] | undefined = Object.keys(translations[$locale]).map((k) => `${k}`.split('.')[0]);
+      if (keys) localeKeys = read(keys, $locale);
 
       this.loadedKeys[$locale] = Array.from(new Set([
-        ...(this.loadedKeys[$locale] || []),
+        ...(read(this.loadedKeys, $locale) || []),
         ...(localeKeys || []),
       ]));
     });

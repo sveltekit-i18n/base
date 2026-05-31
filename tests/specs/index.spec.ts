@@ -406,6 +406,39 @@ describe('i18n instance', () => {
 
     expect($t(key)).toBe(key);
   });
+  it('treats `Object.prototype` keys as missing translations', async () => {
+    const fallbackValue = 'CUSTOM_FALLBACK_VALUE';
+
+    const { loading, t } = new i18n({
+      ...CONFIG,
+      fallbackValue,
+    });
+
+    await loading.toPromise();
+
+    const $t = t.get;
+
+    // These keys exist on `Object.prototype`; they must not leak as translations.
+    ['toString', 'constructor', 'valueOf', 'hasOwnProperty', '__proto__'].forEach((key) => {
+      expect($t(key)).toBe(fallbackValue);
+    });
+  });
+  it('handles a locale named like an `Object.prototype` member', async () => {
+    // A loader locale colliding with a prototype member must not throw when the
+    // `loadedKeys` cache is indexed by it.
+    const { loadTranslations } = new i18n({
+      ...CONFIG,
+      loaders: [
+        {
+          key: 'common',
+          locale: '__proto__',
+          loader: async () => ({ greeting: 'Hi' }),
+        },
+      ],
+    });
+
+    await expect(loadTranslations('__proto__')).resolves.not.toThrow();
+  });
   it('logger works as expected', async () => {
     const debug = import.meta.jest.spyOn(console, 'debug');
     const warn = import.meta.jest.spyOn(console, 'warn');
