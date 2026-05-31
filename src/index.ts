@@ -116,7 +116,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   t: ExtendedStore<Translations.TranslationFunction<ParserParams>, Translations.TranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translation],
-      ([{ parser, fallbackLocale, ...rest }]): Translations.TranslationFunction<ParserParams> => (key, ...params) => translate<ParserParams>({
+      ([{ parser, fallbackLocale, ...rest } = {} as Config.T<ParserParams>]): Translations.TranslationFunction<ParserParams> => (key, ...params) => translate<ParserParams>({
         parser,
         key,
         params,
@@ -132,7 +132,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   l: ExtendedStore<Translations.LocalTranslationFunction<ParserParams>, Translations.LocalTranslationFunction<ParserParams>> = {
     ...derived(
       [this.config, this.translations],
-      ([{ parser, fallbackLocale, ...rest }, translations]): Translations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => translate<ParserParams>({
+      ([{ parser, fallbackLocale, ...rest } = {} as Config.T<ParserParams>, translations]): Translations.LocalTranslationFunction<ParserParams> => (locale, key, ...params) => translate<ParserParams>({
         parser,
         key,
         params,
