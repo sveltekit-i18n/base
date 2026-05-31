@@ -46,6 +46,14 @@ export const translate: Translations.Translate = ({
     logger.warn(`No translation nor fallback found for '${key}' .`);
   }
 
+  if (!parser || typeof parser.parse !== 'function') {
+    // Reached on every call while no parser is set (e.g. before config loads),
+    // so keep it at debug to avoid flooding logs on the render path.
+    logger.debug(`No parser configured. Returning raw value for '${key}' key.`);
+    // Mirror the missing-translation contract: fall back to the key itself.
+    return text === undefined ? key : text;
+  }
+
   return parser.parse(text, params, locale, key);
 };
 

@@ -1,6 +1,7 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { loggerFactory } from '../../src/logger';
+import { translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -481,6 +482,12 @@ describe('i18n instance', () => {
     // The failing loader must not wipe the whole batch.
     expect(t.get('common.greeting')).toBe('common.greeting');
   });
+  it('does not throw when `t`/`l` are used before a config is loaded', () => {
+    const { t, l } = new i18n();
+
+    expect(() => t.get('any.key')).not.toThrow();
+    expect(() => l.get('en', 'any.key')).not.toThrow();
+  });
   it('skips silently when a custom logger omits a level', () => {
     // Custom logger implementing only `warn` – an unimplemented level must be
     // skipped silently rather than throwing a TypeError.
@@ -493,6 +500,16 @@ describe('i18n instance', () => {
     expect(() => log.error('nope')).not.toThrow();
     log.warn('yep');
     expect(warn).toHaveBeenCalledWith('[i18n]: yep'); // implemented levels still work
+  });
+  it('returns the key when no parser is configured and the translation is missing', () => {
+    const base = { params: [] as any[], locale: 'en', translations: { en: { hi: 'Hello' } } };
+
+    // No parser: a missing key must still fall back to the key, not undefined.
+    expect(translate({ ...base, parser: undefined as any, key: 'missing' })).toBe('missing');
+    // Existing translations are returned verbatim (no parser to interpolate).
+    expect(translate({ ...base, parser: undefined as any, key: 'hi' })).toBe('Hello');
+    // A configured fallbackValue still wins over the key.
+    expect(translate({ ...base, parser: undefined as any, key: 'missing', fallbackValue: 'FB' })).toBe('FB');
   });
   it('falls back to `warn` level for an unknown configured level', () => {
     const logger = { error: import.meta.jest.fn(), warn: import.meta.jest.fn(), debug: import.meta.jest.fn() } as any;
