@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { logger, loggerFactory, setLogger } from '../../src/logger';
-import { read, testRoute, translate } from '../../src/utils';
+import { read, sanitizeLocales, testRoute, translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -868,6 +868,33 @@ describe('i18n instance', () => {
     expect(read(instance.translations.get(), '__proto__')).toEqual(
       expect.objectContaining({ 'a.one': '1', 'b.two': '2' }),
     );
+  });
+  it('`sanitizeLocales` caches successes but keeps warning for unknown locales', () => {
+    const { captured, restore } = captureLogs('warn');
+
+    try {
+      // A standard locale resolves identically whether or not it is cached.
+      expect(sanitizeLocales('zh-Hans')).toEqual(sanitizeLocales('zh-Hans'));
+
+      // Failures are never cached, so the warning is not deduplicated away —
+      // deduplicating it would tie the diagnostic to whichever logger and level
+      // happened to be installed on the first occurrence.
+      sanitizeLocales('qqq-alpha');
+      sanitizeLocales('qqq-alpha');
+    } finally {
+      restore();
+    }
+
+    expect(captured.warn.filter((message) => message.includes('qqq-alpha'))).toHaveLength(2);
+  });
+  it('`sanitizeLocales` does not let a non-string input poison a string key', () => {
+    // The array stringifies to 'de,fr'; caching it under that key would make a
+    // later lookup of the literal string 'de,fr' return the array's result.
+    const fromArray = sanitizeLocales(['de', 'fr'] as any);
+    const fromString = sanitizeLocales('de,fr');
+
+    expect(fromArray).toEqual(['de']);
+    expect(fromString).toEqual(['de,fr']); // non-standard, lowercased as-is
   });
   it('logger works as expected', async () => {
     const debug = import.meta.jest.spyOn(console, 'debug');

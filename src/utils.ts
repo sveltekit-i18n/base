@@ -57,10 +57,35 @@ export const translate: Translations.Translate = ({
   return parser.parse(text, params, locale, key);
 };
 
+// `Intl.Collator.supportedLocalesOf` is comparatively expensive and locales
+// repeat constantly (per loader, per store recompute), so successful lookups
+// are cached. Failed lookups are deliberately NOT cached: a locale that is
+// temporarily unknown to Intl (e.g. before a polyfill loads) can recover, and
+// the non-standard warning stays tied to the call rather than to whichever
+// logger and level happened to be installed the first time. Only string inputs
+// are cacheable — for any other input the string form is not a faithful key.
+//
+// Least-recently-used: the map is insertion-ordered and every hit reinserts, so
+// a flood of visitor-supplied locales evicts itself rather than the app's own.
+const LOCALE_CACHE_LIMIT = 1000;
+const sanitizedLocaleCache = new Map<string, string>();
+
 export const sanitizeLocales = (...locales: any[]) => {
   if (!locales.length) return [];
 
   return locales.filter((locale) => !!locale).map((locale) => {
+    const cacheable = typeof locale === 'string';
+
+    if (cacheable) {
+      const cached = sanitizedLocaleCache.get(locale);
+      if (cached !== undefined) {
+        sanitizedLocaleCache.delete(locale);
+        sanitizedLocaleCache.set(locale, cached);
+
+        return cached;
+      }
+    }
+
     let current = `${locale}`.toLowerCase();
     try {
       const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
@@ -68,6 +93,13 @@ export const sanitizeLocales = (...locales: any[]) => {
       if (!sanitized) throw new Error();
 
       current = sanitized;
+
+      if (cacheable) {
+        if (sanitizedLocaleCache.size >= LOCALE_CACHE_LIMIT) {
+          sanitizedLocaleCache.delete(sanitizedLocaleCache.keys().next().value as string);
+        }
+        sanitizedLocaleCache.set(locale, current);
+      }
     } catch (error) {
       logger.warn(`'${locale}' locale is non-standard.`);
     }
