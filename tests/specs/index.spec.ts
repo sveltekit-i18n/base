@@ -1,6 +1,6 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
-import { loggerFactory } from '../../src/logger';
+import { logger, loggerFactory, setLogger } from '../../src/logger';
 import { read, translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
@@ -8,6 +8,48 @@ import { filterTranslationKeys } from '../utils';
 const TRANSLATIONS = getTranslations();
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
+
+// The library logs through one module-level singleton, so a test that asserts
+// on its output has to install a capturing logger. Doing it through this helper
+// keeps install and restore symmetric — restoring anything else (a fresh
+// factory, CONFIG's level) silently changes the level for every later test.
+const withLogger = (level: 'error' | 'warn' | 'debug', impl: any) => {
+  const previous = logger;
+
+  setLogger(loggerFactory({ level, logger: impl }));
+
+  return () => setLogger(previous);
+};
+
+// Waits for an observable condition instead of a fixed delay: a load settling
+// is not a wall-clock event, and a budget generous enough for a loaded CI
+// runner would make the fixed-delay form pointlessly slow everywhere else. The
+// deadline stays under jest's own test timeout so a genuine failure reports
+// this message rather than jest's.
+const delay = (ms: number) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+const until = async (condition: () => boolean, timeout = 2000) => {
+  const deadline = Date.now() + timeout;
+
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for the expected state.');
+
+    // eslint-disable-next-line no-await-in-loop -- polling is the point
+    await delay(1);
+  }
+};
+
+const captureLogs = (level: 'error' | 'warn' | 'debug') => {
+  const captured = { error: [] as string[], warn: [] as string[], debug: [] as string[] };
+
+  const restore = withLogger(level, {
+    error: (value: any) => captured.error.push(`${value}`),
+    warn: (value: any) => captured.warn.push(`${value}`),
+    debug: (value: any) => captured.debug.push(`${value}`),
+  });
+
+  return { captured, restore };
+};
 
 describe('i18n instance', () => {
   it('exports all properties and methods', () => {
@@ -464,10 +506,259 @@ describe('i18n instance', () => {
       expect.objectContaining({ greeting: 'Hallo' }),
     );
   });
+  it('reports a failed load to the caller instead of crashing the process', async () => {
+    // Errors raised after the fetch (a throwing `preprocess` here) must reach
+    // whoever awaits the load, rather than being swallowed or surfacing as an
+    // unhandled rejection from a promise nobody can reach.
+    const instance = new i18n({
+      ...CONFIG,
+      preprocess: () => { throw new Error('preprocess boom'); },
+      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+    });
+
+    await expect(instance.loadTranslations('en', '/')).rejects.toThrow('preprocess boom');
+  });
+  it('reports a discarded failing load instead of crashing the process', async () => {
+    // A rejection that escapes fails this test through jest's own handler, so
+    // the run itself pins the contract; these assertions pin that the failure
+    // is still reported rather than silently swallowed.
+    const { captured, restore } = captureLogs('error');
+
+    try {
+      const instance = new i18n({
+        parser,
+        preprocess: () => { throw new Error('preprocess boom'); },
+        loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+      });
+
+      instance.setRoute('/');
+      instance.setLocale('en');
+      instance.loadTranslations('en', '/second');
+
+      await until(() => captured.error.some((message) => message.includes('preprocess boom')));
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.some((message) => message.includes('preprocess boom'))).toBe(true);
+  });
+  it('reports a failure raised before the load starts', async () => {
+    // The loader runs as a store subscriber, whose returned promise svelte
+    // discards. A throw in its synchronous prologue has to reach the caller
+    // through the same path as a failed fetch, filed under the requested
+    // locale so `toPromise` does not filter the rejection out.
+    const brokenLoader: any = { key: 'common', loader: async () => ({ greeting: 'Hi' }) };
+    Object.defineProperty(brokenLoader, 'locale', {
+      enumerable: true,
+      get: () => { throw new Error('locale getter boom'); },
+    });
+
+    const { captured, restore } = captureLogs('error');
+
+    try {
+      const instance = new i18n({ parser, loaders: [brokenLoader] });
+
+      instance.setRoute('/');
+
+      await expect(instance.setLocale('en')).rejects.toThrow('locale getter boom');
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.some((message) => message.includes('locale getter boom'))).toBe(true);
+  });
+  it('delivers a finished load while another one is still in flight', async () => {
+    // Characterizes delivery across overlapping loads: the fast route's data
+    // reaches `t` subscribers while the slow one is still fetching.
+    let release: (value: unknown) => void = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+
+    const instance = new i18n({
+      // Returns the text, unlike the suite's key-returning test parser, so the
+      // assertion below distinguishes "delivered" from "still missing".
+      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      log,
+      loaders: [
+        { key: 'slow', locale: 'en', routes: [/^\/y/], loader: async () => { await gate; return { b: '2' }; } },
+        { key: 'fast', locale: 'en', routes: [/^\/x/], loader: async () => ({ a: '1' }) },
+      ],
+    });
+
+    const seen: string[] = [];
+    instance.t.subscribe(($t) => seen.push($t('fast.a')));
+
+    instance.setLocale('en');
+    instance.setRoute('/y');
+    await instance.setRoute('/x');
+
+    expect(seen[seen.length - 1]).toBe('1');
+
+    release({});
+    await instance.loading.toPromise();
+  });
+  it('reports a failing locale lookup from `loadTranslations` as a rejection', async () => {
+    // The primary public entry point resolves the locale before any promise
+    // exists, so a throw there would reach the caller synchronously — before
+    // they could attach the `.catch` the docs tell them to use.
+    const brokenLoader: any = { key: 'common', loader: async () => ({ greeting: 'Hi' }) };
+    Object.defineProperty(brokenLoader, 'locale', {
+      enumerable: true,
+      get: () => { throw new Error('locale getter boom'); },
+    });
+
+    const { captured, restore } = captureLogs('error');
+
+    try {
+      const instance = new i18n({ parser, loaders: [brokenLoader] });
+
+      await expect(instance.loadTranslations('en', '/')).rejects.toThrow('locale getter boom');
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.some((message) => message.includes('locale getter boom'))).toBe(true);
+  });
+  it('survives a logger it cannot even call', async () => {
+    // `log.logger` is consumer input: reading the level off it can throw just
+    // as calling it can.
+    const restore = withLogger('debug', null);
+
+    try {
+      const instance = new i18n({
+        parser,
+        loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+      });
+
+      instance.setRoute('/');
+
+      await expect(instance.setLocale('en')).resolves.not.toThrow();
+    } finally {
+      restore();
+    }
+  });
+  it('reports a prologue failure under a non-canonical locale', async () => {
+    // `toPromise` matches on the sanitized locale, so an entry filed under the
+    // raw input would be filtered out and the caller would see a success.
+    const brokenLoader: any = { key: 'common', loader: async () => ({ greeting: 'Hi' }) };
+    Object.defineProperty(brokenLoader, 'locale', {
+      enumerable: true,
+      get: () => { throw new Error('locale getter boom'); },
+    });
+
+    const instance = new i18n({ parser, loaders: [brokenLoader] });
+
+    instance.setRoute('/');
+
+    await expect(instance.setLocale('EN')).rejects.toThrow('locale getter boom');
+  });
+  it('reports a config load that fails before any loader runs', async () => {
+    // `loadConfig` from the constructor has no caller to reject to. A failure
+    // in its synchronous section never reaches the loader's handler, so the
+    // instance would otherwise end up silently half-initialized.
+    const { captured, restore } = captureLogs('error');
+
+    try {
+      // eslint-disable-next-line no-new -- constructing is what is under test
+      new i18n({
+        parser,
+        preprocess: () => { throw new Error('config boom'); },
+        translations: { en: { greeting: 'Hi' } },
+      });
+
+      await until(() => captured.error.some((message) => message.includes('config boom')));
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.some((message) => message.includes('config boom'))).toBe(true);
+  });
+  it('survives a logger that throws on every level', async () => {
+    // A consumer's logger is arbitrary code called from promise handlers that
+    // nothing awaits; a throw there must not escape as an unhandled rejection.
+    const throwing = () => { throw new Error('logger boom'); };
+    const restore = withLogger('debug', { error: throwing, warn: throwing, debug: throwing });
+
+    try {
+      const instance = new i18n({
+        parser,
+        preprocess: () => { throw new Error('preprocess boom'); },
+        loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+      });
+
+      instance.setRoute('/');
+
+      // The caller still receives the load's own failure — a throwing logger
+      // must not replace it, nor escape as an unhandled rejection.
+      await expect(instance.setLocale('en')).rejects.toThrow('preprocess boom');
+    } finally {
+      restore();
+    }
+  });
+  it('does not throw when a route is set before a config is loaded', () => {
+    const instance = new i18n();
+
+    // A route can be set while an async `loadConfig` is still pending.
+    expect(() => instance.setRoute('/')).not.toThrow();
+    expect(() => instance.loading.toPromise()).not.toThrow();
+  });
+  it('purges settled loads without dropping one that started later', async () => {
+    let releaseB: (value: unknown) => void = () => {};
+    let releaseC: (value: unknown) => void = () => {};
+    const gateB = new Promise((resolve) => { releaseB = resolve; });
+    const gateC = new Promise((resolve) => { releaseC = resolve; });
+
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { key: 'a', locale: 'en', routes: [/^\/a/], loader: async () => ({ a: '1' }) },
+        { key: 'b', locale: 'en', routes: [/^\/b/], loader: async () => { await gateB; return { b: '2' }; } },
+        { key: 'c', locale: 'en', routes: [/^\/c/], loader: async () => { await gateC; return { c: '3' }; } },
+      ],
+    });
+
+    instance.setLocale('en');
+
+    // Settles, so the loading flag drops — the next load's rising edge is what
+    // runs the purge.
+    await instance.setRoute('/a');
+    expect(instance.loading.get()).toBe(false);
+
+    instance.setRoute('/b');
+
+    // The purge snapshots the tracked promises when the flag rises, and the
+    // flag rises a microtask after the route is set.
+    await until(() => instance.loading.get() === true);
+
+    // `loader` records its entry synchronously, so this one is added after the
+    // snapshot the purge is waiting on.
+    instance.setRoute('/c');
+
+    let resolvedEarly = false;
+    instance.loading.toPromise().then(() => { resolvedEarly = true; }, () => {});
+
+    releaseB({});
+
+    // B's data landing means B settled, so the purge's own wait is over and it
+    // has deleted everything it snapshotted.
+    await until(() => !!read<any>(instance.translations.get(), 'en')?.['b.b']);
+
+    // Purging must remove only what it waited for. Clearing the whole set would
+    // drop the still-running load, and `toPromise()` would report success while
+    // its data is missing.
+    expect(resolvedEarly).toBe(false);
+
+    releaseC({});
+    await instance.loading.toPromise();
+
+    expect(read(instance.translations.get(), 'en')).toEqual(
+      expect.objectContaining({ 'c.c': '3' }),
+    );
+  });
   it('`serialize` keeps a loader locale named like a prototype member', async () => {
     // Characterizes the merge: two loaders sharing a prototype-named locale end
-    // up in one table. Spreading `Object.prototype` yields `{}`, so this passes
-    // on master too — it pins the behavior, not a fix.
+    // up in one table. Spreading `Object.prototype` yields `{}` either way, so
+    // this pins the behavior rather than guarding a defect.
     const instance = new i18n({
       ...CONFIG,
       loaders: [

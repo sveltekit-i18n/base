@@ -1,6 +1,6 @@
 import { derived, get, writable } from 'svelte/store';
 import { checkProps, fetchTranslations, hasOwn, read, sanitizeLocales, testRoute, toDotNotation, translate } from './utils';
-import { logger, loggerFactory, setLogger } from './logger';
+import { logError, logger, loggerFactory, setLogger } from './logger';
 
 import type { Config, Loader, Parser, Translations, LoadingStore, ExtendedStore, Logger } from './types';
 import type { Readable, Writable } from 'svelte/store';
@@ -14,15 +14,25 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     this.loaderTrigger.subscribe(this.loader);
 
     // purge resolved promises
-    this.isLoading.subscribe(async ($loading) => {
-      if ($loading && this.promises.size) {
-        await this.loading.toPromise();
-        this.promises.clear();
+    this.isLoading.subscribe(($loading) => {
+      if (!$loading || !this.promises.size) return;
+
+      const tracked = Array.from(this.promises);
+
+      // Every promise has to SETTLE before the set is cleared — `Promise.all`
+      // rejects on the first failure, which would drop loads still in flight
+      // and make a later `toPromise()` resolve before their data arrived.
+      // A plain `.then` chain keeps this out of a discarded async subscriber.
+      Promise.all(tracked.map(({ promise }) => promise.catch(() => {}))).then(() => {
+        tracked.forEach((entry) => this.promises.delete(entry));
 
         logger.debug('Loader promises have been purged.');
-      }
+      });
     });
 
+    // `loadConfig` reports and marks its own failure, so a config load started
+    // here — with no caller to reject to — is covered by the same path as a
+    // consumer's fire-and-forget call.
     if (config) this.loadConfig(config);
   }
 
@@ -43,7 +53,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   loading: LoadingStore = {
     subscribe: this.isLoading.subscribe,
     toPromise: (locale, route) => {
-      const { fallbackLocale } = get(this.config);
+      // A route or locale can be set before the config resolves, so this must
+      // not assume one exists.
+      const { fallbackLocale } = get(this.config) || {};
 
       const promises = Array.from(this.promises).filter(
         (promise) => {
@@ -54,7 +66,15 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         },
       ).map(({ promise }) => promise);
 
-      return Promise.all(promises);
+      const output = Promise.all(promises);
+
+      // `setLocale`/`setRoute`/`loadTranslations` return this and are routinely
+      // called fire-and-forget. The underlying failure is already reported by
+      // `loader`, so mark the aggregate handled; anyone awaiting it still gets
+      // the rejection.
+      output.catch(() => {});
+
+      return output;
     },
     get: () => get(this.isLoading),
   };
@@ -210,8 +230,17 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     if (initLocale) await this.loadTranslations(initLocale);
   }
 
-  loadConfig = async (config: Config.T<ParserParams>) => {
-    await this.configLoader(config);
+  loadConfig = (config: Config.T<ParserParams>) => {
+    const promise = this.configLoader(config);
+
+    // Documented as a public method and routinely called fire-and-forget, so
+    // the failure is reported and the promise marked handled here; anyone
+    // awaiting it still receives the rejection. A synchronous failure in
+    // `configLoader` never reaches the loader's own handler, so without this it
+    // would leave a silently half-initialized instance.
+    promise.catch((error) => logError('Failed to load the i18n config.', error));
+
+    return promise;
   };
 
   getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> => {
@@ -260,8 +289,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       try {
         rawTranslations = await fetchTranslations(filteredLoaders);
       } finally {
-        // Always release the loading flag, even if fetching throws, so the
-        // instance never gets stuck in a permanent loading state.
+        // Always release the flag, even if fetching throws, so the instance
+        // never gets stuck in a permanent loading state.
         this.isLoading.set(false);
       }
 
@@ -342,29 +371,65 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     });
   };
 
-  private loader = async ([inputLocale, route]: string[]) => {
-    const locale = this.getLocale(inputLocale) || undefined;
-
-    logger.debug(`Adding loader promise for '${locale}' locale and '${route}' route.`);
+  // Not `async`: `subscribe` discards whatever the subscriber returns, so
+  // anything thrown outside `promise` — `getLocale`, a custom logger — would
+  // reject a promise nobody can reach.
+  private loader = ([inputLocale, route]: string[]) => {
+    let locale: Config.Locale | undefined;
 
     const promise = (async () => {
+      try {
+        locale = this.getLocale(inputLocale) || undefined;
+      } catch (error) {
+        // Runs before the first `await`, so this still lands before the entry
+        // is recorded below. `loading.toPromise` matches on the sanitized
+        // locale, so filing the failure under the raw input would filter the
+        // rejection out and report success to the caller.
+        [locale] = sanitizeLocales(inputLocale);
+
+        throw error;
+      }
+
+      logger.debug(`Adding loader promise for '${locale}' locale and '${route}' route.`);
+
       const props = await this.getTranslationProps(locale, route);
+
       if (props.length) this.addTranslations(...props);
+
+      if (locale && this.locale.get() !== locale) this.locale.forceSet(locale);
     })();
 
+    // Marks the promise handled so a load nobody awaits cannot terminate the
+    // process, without swallowing it: callers awaiting `loadTranslations` or
+    // `loading.toPromise()` still receive the rejection.
+    promise.catch((error) => logError(`Failed to load translations for '${locale}' locale and '${route}' route.`, error));
+
+    // `locale` is assigned before the first `await` above, so it is already
+    // resolved here and the entry stays filterable by `loading.toPromise`.
     this.promises.add({
       locale,
       route,
       promise,
     });
-
-    promise.then(() => {
-      if (locale && this.locale.get() !== locale) this.locale.forceSet(locale);
-    });
   };
 
   loadTranslations = (locale: Config.Locale, route = get(this.currentRoute) || '') => {
-    const normalizedLocale = this.getLocale(locale);
+    let normalizedLocale: Config.Locale | undefined;
+
+    try {
+      normalizedLocale = this.getLocale(locale);
+    } catch (error) {
+      // Resolving the locale reads consumer config, so it can throw. This is
+      // the primary public entry point: the failure has to arrive the same way
+      // a failed load does, as a reported rejection rather than a synchronous
+      // throw the caller cannot attach a handler to.
+      logError(`Failed to load translations for '${locale}' locale and '${route}' route.`, error);
+
+      const failed = Promise.reject(error);
+      failed.catch(() => {});
+
+      return failed;
+    }
 
     if (!normalizedLocale) return;
 

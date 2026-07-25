@@ -1,5 +1,5 @@
 import type { DotNotation, Translations, Loader } from './types';
-import { logger } from './logger';
+import { logError, logger } from './logger';
 
 // Safe own-property read. Translation keys like `toString`, `constructor` or
 // `__proto__` would otherwise resolve to inherited `Object.prototype` members
@@ -124,8 +124,7 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
     try {
       data = await loader();
     } catch (error) {
-      logger.error(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`);
-      logger.error(error);
+      logError(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`, error);
     }
     return { loader, ...rest, data };
   }));

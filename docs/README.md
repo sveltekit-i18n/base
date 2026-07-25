@@ -852,7 +852,11 @@ Array of all available locales (from loaders).
 
 ### `loading`
 
-**Type:** `Readable<boolean> & { toPromise: () => Promise<void[]>, get: () => boolean }`
+**Type:** `Readable<boolean> & { toPromise: (locale?: string, route?: string) => Promise<void[] | void>, get: () => boolean }`
+
+With overlapping loads the flag belongs to whichever load last touched it, so
+prefer awaiting the promise returned by `loadTranslations()` for the load you
+actually care about.
 
 Loading state indicator.
 
@@ -964,9 +968,11 @@ All loaded translations before preprocessing.
 
 ### `loadTranslations`
 
-**Type:** `(locale: string, route?: string) => Promise<void>`
+**Type:** `(locale: string, route?: string) => Promise<void[] | void> | undefined`
 
-Load translations for a specific locale and route.
+Load translations for a specific locale and route. Returns `undefined` when the
+locale cannot be resolved (unknown and no matching `fallbackLocale`), so use
+`await` rather than chaining onto the result directly.
 
 **Usage in layouts:**
 
@@ -991,13 +997,33 @@ export const load = async ({ url }) => {
 4. Preprocesses translations
 5. Updates stores
 
+**Errors:** a loader that throws is caught and logged individually, so one
+broken loader does not fail the batch. Anything that throws afterwards — a
+custom `preprocess`, a malformed payload — **rejects the returned promise**, so
+`await loadTranslations(...)` surfaces it (in SvelteKit, straight to the error
+boundary). A result you discard is safe — the failure is logged through the
+configured logger and never surfaces as an unhandled rejection — but it is then
+only visible in the log.
+
+A subscriber of your own that throws is the exception, and where the error
+surfaces depends on which store it subscribes to. `loading` is written while the
+load is still starting up, inside the store write your call triggered, so a
+throwing `loading` subscriber propagates **synchronously** out of
+`loadTranslations()` / `setLocale()` / `setRoute()` — there is no promise to
+reject yet. `translations` and `locale` are written after the fetch resolves, so
+a throwing subscriber there **rejects the returned promise** like any other
+late failure. Either way the throw leaves svelte's subscriber queue mid-flush,
+which stalls later store updates, so keep subscribers total.
+
 ---
 
 ### `setLocale`
 
-**Type:** `(locale: string) => Promise<void>`
+**Type:** `(locale?: string) => Promise<void[] | void> | undefined`
 
-Set locale and load its translations.
+Set locale and load its translations. Returns `undefined` when no locale is
+given or the locale is already active; errors behave as in
+[`loadTranslations`](#loadtranslations).
 
 **Usage:**
 
@@ -1017,9 +1043,11 @@ await setLocale('cs');
 
 ### `setRoute`
 
-**Type:** `(route: string) => Promise<void>`
+**Type:** `(route: string) => Promise<void[] | void> | undefined`
 
-Update current route and load route-specific translations.
+Update current route and load route-specific translations. Returns `undefined`
+when the route is already active; errors behave as in
+[`loadTranslations`](#loadtranslations).
 
 **Usage:**
 
