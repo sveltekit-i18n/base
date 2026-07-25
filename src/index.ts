@@ -176,7 +176,21 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
     const $locales = this.locales.get();
 
-    const outputLocale = $locales.find((l) => sanitizeLocales(locale).includes(l)) || $locales.find((l) => sanitizeLocales(fallbackLocale).includes(l));
+    // Nothing to match against yet; sanitizing here would only emit a
+    // non-standard warning for a lookup that cannot succeed anyway.
+    if (!$locales.length) return;
+
+    // Sanitized once per lookup rather than once per candidate locale.
+    const sanitizedLocale = sanitizeLocales(locale);
+
+    let outputLocale = $locales.find((l) => sanitizedLocale.includes(l));
+
+    if (!outputLocale) {
+      // Evaluated lazily: the fallback (and any non-standard warning it emits)
+      // must not run when the requested locale resolves directly.
+      const sanitizedFallbackLocale = sanitizeLocales(fallbackLocale);
+      outputLocale = $locales.find((l) => sanitizedFallbackLocale.includes(l));
+    }
 
     return outputLocale;
   };
