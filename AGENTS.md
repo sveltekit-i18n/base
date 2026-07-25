@@ -201,10 +201,16 @@ chat (§3).
 - Match airbnb-typescript: 2-space indent, single quotes, semicolons, trailing
   commas, no trailing whitespace, no multiple blank lines. Let `npm run lint
   --fix` handle it.
-- Prefer the existing **functional, immutable** style in `utils.ts`
-  (computed-key spread `{ ...acc, [k]: v }`, `reduce`, no mutation). That spread
-  form has `DefineProperty` semantics — it can't pollute `Object.prototype`.
-  Keep it that way.
+- Prefer the **functional, immutable** style for shared state (computed-key
+  spread `{ ...acc, [k]: v }`, `reduce`). That spread form has `DefineProperty`
+  semantics — it can't pollute `Object.prototype`. On a **measured hot path** a
+  function-local accumulator may be built by mutation instead, but only into a
+  null-prototype object (`Object.create(null)`), and it must be finished with a
+  single spread before it escapes to consumers — that restores a normal
+  prototype while keeping the same pollution safety (see `toDotNotation`).
+  Store values are replaced, never mutated in place. Long-lived instance state
+  may be written in place only when it is null-prototype and internal (see
+  `loadedKeys` in §11) — never a plain object indexed by consumer input.
 - Keep `index.ts` for orchestration; put pure, testable logic in `utils.ts`.
 - Log through the module `logger` (`logger.error/warn/debug`), never raw
   `console`. Respect the configured level; a custom logger may omit a level —
