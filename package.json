@@ -16,7 +16,11 @@
   },
   "scripts": {
     "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
+    "pretest": "npm run typecheck",
     "test": "npx cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "pretest:dist": "npm run build",
+    "test:dist": "npx cross-env NODE_OPTIONS=--experimental-vm-modules jest tests/specs/dist.spec.ts --testPathIgnorePatterns=/node_modules/",
     "build": "tsup",
     "prepublishOnly": "npm run build",
     "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."

@@ -1,0 +1,16 @@
+{
+  // The root config compiles `src` only — `allowJs` is off there, so the repo's
+  // own JavaScript config files were never checked by anything.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    // These files import build tooling whose own declarations do not typecheck
+    // in isolation; the subject here is our config, not their types.
+    "skipLibCheck": true
+  },
+  "include": [
+    "./*.js"
+  ]
+}

@@ -33,3 +33,8 @@ jobs:
         run: npm run test
         env:
           tests: true
+
+      - name: Test published bundle
+        run: npm run test:dist
+        env:
+          tests: true

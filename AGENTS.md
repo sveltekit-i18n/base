@@ -42,7 +42,9 @@ translation state, loading, caching, route matching, and preprocessing — but
 |---------|---------|
 | `npm install` / `npm ci` | install (respects `package-lock.json`) |
 | `npm run build` | tsup build to `dist/` |
-| `npm test` | jest suite |
+| `npm test` | jest suite (runs `typecheck` first) |
+| `npm run test:dist` | bundle-level suite (builds first) — not part of `npm test` |
+| `npm run typecheck` | `tsc --noEmit` over `src` **and** the repo's `*.js` configs |
 | `npm run lint` | eslint `--fix` over `.ts`/`.js` (also a pre-commit hook) |
 
 ## Repository map
@@ -54,9 +56,11 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite (one `describe`) |
+| `tests/specs/dist.spec.ts` | bundle-level checks — runs only via `npm run test:dist` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
+| `tsconfig.tools.json` | type-checks the repo's own `*.js` config files |
 
 ## Architecture you must respect
 
@@ -254,7 +258,11 @@ not RCE/XSS.
 
 ## 13. Tests
 
-- Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`.
+- Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`. The one
+  exception is `tests/specs/dist.spec.ts`, which asserts on the built bundle
+  (toolchain-level guarantees the sources cannot prove) and therefore runs
+  separately via `npm run test:dist`, which builds first. Everything else
+  belongs in `index.spec.ts`.
 - Drive behavior through the **public API** (`new i18n(CONFIG)`, stores,
   methods). Pure helpers may be imported directly from `src/` when that yields a
   more deterministic test (e.g. unit-testing `loggerFactory`).
@@ -264,7 +272,11 @@ not RCE/XSS.
   **alongside** the fix — never a fix without it. Escape hatch (SSR hydration,
   infra, purely visual): say so explicitly in the PR with manual repro steps.
 - Don't assert on the shared module-level `logger` singleton — it leaks across
-  async tests; construct a logger/instance locally instead.
+  async tests; construct a logger/instance locally instead. When the output
+  under test only reaches that singleton, install it through the spec's
+  `captureLogs` helper (which restores the previous logger, not a fresh one)
+  and match captured messages by content — never by call count, which any
+  still-running load from an earlier test can change.
 - `t`/`l` resolve via a no-op test parser (`parse: (...) => key`) — design
   assertions accordingly.
 
