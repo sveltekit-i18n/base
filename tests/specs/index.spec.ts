@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { logger, loggerFactory, setLogger } from '../../src/logger';
-import { read, translate } from '../../src/utils';
+import { read, testRoute, translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -494,6 +494,86 @@ describe('i18n instance', () => {
     // the loader would refire on every route change.
     await instance.loadTranslations('__proto__', '/second');
     expect(calls).toBe(1);
+  });
+  it('matches a `g`-flagged route pattern on every navigation', () => {
+    // `test` advances `lastIndex` on a global/sticky pattern, so a route object
+    // shared across navigations would match only every other time.
+    const pattern = /\/shop/g;
+
+    expect(testRoute('/shop')(pattern)).toBe(true);
+    expect(testRoute('/shop/cart')(pattern)).toBe(true);
+    expect(testRoute('/shop')(pattern)).toBe(true);
+  });
+  it('leaves a route pattern unmutated', () => {
+    // The pattern belongs to the consumer's config; matching a route must not
+    // write state into an object they may also use themselves.
+    const pattern = /shop/g;
+
+    testRoute('/shop/cart')(pattern);
+
+    expect(pattern.lastIndex).toBe(0);
+  });
+  it('matches a frozen route pattern, including a stateful one', () => {
+    // A deep-frozen config is legitimate: `lastIndex` is then read-only, so any
+    // implementation that writes it — directly or through `String.search` —
+    // throws, and the surrounding catch turns that into a silent permanent
+    // non-match.
+    expect(testRoute('/shop')(Object.freeze(/^\/shop/))).toBe(true);
+    expect(testRoute('/other')(Object.freeze(/^\/shop/))).toBe(false);
+    expect(testRoute('/shop/cart')(Object.freeze(/\/shop/g))).toBe(true);
+
+    // Sticky still anchors at the start rather than degrading to a free match.
+    expect(testRoute('/shop/cart')(Object.freeze(/\/shop/y))).toBe(true);
+    expect(testRoute('/shop/cart')(Object.freeze(/cart/y))).toBe(false);
+  });
+  it('keeps matching a duck-typed route matcher', () => {
+    // `Loader.Route` is typed `string | RegExp`, but this ships as JS, so
+    // anything object-shaped is asked for `test` and consumers rely on it.
+    const matcher = { test: (route: string) => route.startsWith('/shop') };
+
+    expect(testRoute('/shop/cart')(matcher as any)).toBe(true);
+    expect(testRoute('/about')(matcher as any)).toBe(false);
+
+    // Its own `test` decides even when it carries pattern-shaped properties:
+    // copying it would produce `new RegExp(undefined)`, i.e. match everything.
+    const flagged = { global: true, test: (route: string) => route.startsWith('/shop') };
+
+    expect(testRoute('/about')(flagged as any)).toBe(false);
+    expect(testRoute('/shop')({ sticky: true, source: 'nope', test: () => false } as any)).toBe(false);
+
+    // The route reaches a custom matcher unchanged, so it can tell an unset
+    // route from the string 'undefined'.
+    expect(testRoute(undefined as any)({ test: (route: any) => route === undefined } as any)).toBe(true);
+  });
+  it('rejects a route that is not a pattern instead of coercing it', () => {
+    const { captured, restore } = captureLogs('error');
+
+    let matched: boolean | undefined;
+    try {
+      // Coercing this to a regex yields /[object Object]/, which matches any
+      // route containing one of those characters.
+      matched = testRoute('/contact')({} as any);
+    } finally {
+      restore();
+    }
+
+    expect(matched).toBe(false);
+    expect(captured.error.some((message) => message.includes('Invalid route config!'))).toBe(true);
+  });
+  it('does not report a config error when no route is set yet', async () => {
+    // `getTranslationProps` runs with `$route === undefined` before the first
+    // navigation; that is not a broken config.
+    const { captured, restore } = captureLogs('error');
+
+    try {
+      const instance = new i18n({ parser, loaders });
+
+      await instance.getTranslationProps(initLocale);
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.filter((message) => message.includes('Invalid route config!'))).toEqual([]);
   });
   it('`addTranslations` fails soft on a `null` payload', () => {
     const instance = new i18n({ parser, log });

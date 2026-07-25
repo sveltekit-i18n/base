@@ -135,7 +135,24 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
 export const testRoute = (route: string) => (input: Loader.Route) => {
   try {
     if (typeof input === 'string') return input === route;
-    if (typeof input === 'object') return input.test(route);
+    if (typeof input === 'object') {
+      // `test` advances `lastIndex` on a `g`/`y` pattern, so a route object
+      // shared across navigations would match only every other time and the
+      // consumer's own use of it would be corrupted. A throwaway copy starts at
+      // `lastIndex === 0` every time, keeps the flags' meaning (sticky still
+      // anchors), and never writes to the original — which also matters when
+      // the original is frozen.
+      //
+      // Only an actual RegExp is copied: `source`/`flags` on anything else are
+      // not a pattern, and `new RegExp(undefined)` is `/(?:)/`, which matches
+      // every route. Everything else is asked for `test` as-is, with the route
+      // passed through unchanged — a custom matcher may distinguish an unset
+      // route from the string 'undefined'.
+      const stateful = input instanceof RegExp && (input.global || input.sticky);
+      const pattern = stateful ? new RegExp(input.source, input.flags) : input;
+
+      return pattern.test(route);
+    }
   } catch (error) {
     logger.error('Invalid route config!');
   }

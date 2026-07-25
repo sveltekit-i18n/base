@@ -210,6 +210,19 @@ This will match:
 - `/shop`
 - `/shop/cart`
 
+**⚠️ Security note:** Route patterns are tested against the current route — typically the visitor-controlled `url.pathname`. A regular expression with catastrophic backtracking (e.g. nested quantifiers like `/^\/(a+)+$/` — a run of `a`s followed by a non-matching character stalls it for seconds) lets a crafted URL stall your server (ReDoS). Keep route regexes simple and anchored, and avoid nested quantifiers.
+
+Route patterns are matched statelessly and are never written to: a pattern
+carrying the `g` or `y` flag matches the same way on every navigation instead of
+alternating, its `lastIndex` is left untouched for your own use, and a frozen
+pattern works like any other. Flag semantics are preserved — `y` still anchors
+the match at the start of the route.
+
+An object that is not a regular expression is asked for a `test(route)` method
+like any other, so a custom matcher works; one that cannot answer is reported as
+an invalid route config. Entries that are neither strings nor objects simply
+never match.
+
 **No routes (global):**
 
 ```javascript
