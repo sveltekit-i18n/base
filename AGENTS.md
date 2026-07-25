@@ -228,6 +228,14 @@ not RCE/XSS.
   user-controlled key must use an own-property check (`Object.prototype.
   hasOwnProperty.call`, or the `hasOwn` helper) so `toString`/`__proto__`/
   `constructor` are treated as missing, not inherited members.
+- **Never bracket-assign a user-supplied locale or key onto a plain object.**
+  `table[locale] = value` routes `'__proto__'` through the prototype setter, so
+  no own key is recorded and the object's prototype is replaced. Write with a
+  computed-key spread (`{ ...table, [locale]: value }`, which is
+  `DefineProperty`) or target an `Object.create(null)` object — that is why
+  `loadedKeys` has a null prototype. The locale-indexed accumulators in
+  `serialize` and `getTranslationProps` are plain objects and stay correct only
+  while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
   batch; a missing config/parser must not throw on `t.get()`/`l.get()`.
 - **`route` reaches `RegExp.test()` and is visitor-controlled** (`url.pathname`)

@@ -6,6 +6,9 @@
     "outDir": "lib",
     "sourceMap": false,
     "strict": true,
+    // tsup inherits this as its build target, so it sets the published
+    // bundle's language level. `tests/tsconfig.json` raises it for the suite
+    // only.
     "target": "es2017",
     "moduleResolution": "node",
     "noEmit": true,

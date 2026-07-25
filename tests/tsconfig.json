@@ -1,5 +1,12 @@
 {
   "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // Object spread must stay native here. When tsc downlevels it (below
+    // es2018) it emits an `Object.assign` helper whose [[Set]] semantics drop
+    // own '__proto__' keys, so the suite would exercise different
+    // prototype-pollution behavior than esbuild's output.
+    "target": "es2020"
+  },
   "include": [
     "./"
   ]

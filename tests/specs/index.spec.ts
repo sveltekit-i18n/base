@@ -1,7 +1,7 @@
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { loggerFactory } from '../../src/logger';
-import { translate } from '../../src/utils';
+import { read, translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -427,19 +427,60 @@ describe('i18n instance', () => {
   });
   it('handles a locale named like an `Object.prototype` member', async () => {
     // A loader locale colliding with a prototype member must not throw when the
-    // `loadedKeys` cache is indexed by it.
-    const { loadTranslations } = new i18n({
+    // `loadedKeys` cache is indexed by it, must keep its data, and must still
+    // be deduped by that cache.
+    let calls = 0;
+    const instance = new i18n({
       ...CONFIG,
       loaders: [
         {
           key: 'common',
           locale: '__proto__',
-          loader: async () => ({ greeting: 'Hi' }),
+          loader: async () => { calls += 1; return { greeting: 'Hi' }; },
         },
       ],
     });
 
-    await expect(loadTranslations('__proto__')).resolves.not.toThrow();
+    await expect(instance.loadTranslations('__proto__')).resolves.not.toThrow();
+
+    expect(read(instance.translations.get(), '__proto__')).toEqual(
+      expect.objectContaining({ 'common.greeting': 'Hi' }),
+    );
+
+    // The dedupe cache must hold an OWN entry for the locale — on a plain
+    // object the write would go through the `__proto__` setter instead, and
+    // the loader would refire on every route change.
+    await instance.loadTranslations('__proto__', '/second');
+    expect(calls).toBe(1);
+  });
+  it('`addTranslations` fails soft on a `null` payload', () => {
+    const instance = new i18n({ parser, log });
+
+    // A module that resolved to `null` is consumer input, not a bug in the
+    // instance: every other step tolerates it, so the whole call must too.
+    expect(() => instance.addTranslations({ en: null as any, de: { greeting: 'Hallo' } })).not.toThrow();
+
+    expect(read(instance.translations.get(), 'de')).toEqual(
+      expect.objectContaining({ greeting: 'Hallo' }),
+    );
+  });
+  it('`serialize` keeps a loader locale named like a prototype member', async () => {
+    // Characterizes the merge: two loaders sharing a prototype-named locale end
+    // up in one table. Spreading `Object.prototype` yields `{}`, so this passes
+    // on master too — it pins the behavior, not a fix.
+    const instance = new i18n({
+      ...CONFIG,
+      loaders: [
+        { key: 'a', locale: '__proto__', loader: async () => ({ one: '1' }) },
+        { key: 'b', locale: '__proto__', loader: async () => ({ two: '2' }) },
+      ],
+    });
+
+    await instance.loadTranslations('__proto__');
+
+    expect(read(instance.translations.get(), '__proto__')).toEqual(
+      expect.objectContaining({ 'a.one': '1', 'b.two': '2' }),
+    );
   });
   it('logger works as expected', async () => {
     const debug = import.meta.jest.spyOn(console, 'debug');
