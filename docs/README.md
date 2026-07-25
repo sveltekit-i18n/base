@@ -1143,6 +1143,36 @@ addTranslations({
 
 ---
 
+### `destroy`
+
+**Type:** `() => void`
+
+Releases the instance's lifetime store subscriptions (the loader trigger, promise purging, and the internally kept-warm derived chains) and discards pending loader promises.
+
+**Usage:**
+
+```javascript
+const i18nInstance = new i18n(config);
+
+// ... when the instance is no longer needed:
+i18nInstance.destroy();
+```
+
+**Behavior after `destroy()`:**
+- The instance stays readable (`t.get()`, `$translations`, ...), but `setLocale()`, `setRoute()` and writes through the `locale` store (`locale.set()` / `locale.update()`) are refused outright: they warn, leave `$locale`/`$route` unchanged, and load nothing.
+- Results of loads still in flight when `destroy()` was called are dropped — they no longer update the stores or the locale.
+- `loadTranslations()` and `loadConfig()` warn once, naming the call you made, and load nothing.
+- Existing store subscriptions you created are NOT removed — manual `addTranslations()` calls still propagate to them.
+- `.get()` reads lose their warm-chain performance (each read re-initializes the store chain).
+- Calling `destroy()` again is a no-op.
+
+**Use Cases:**
+- Component-scoped instances created and discarded dynamically
+- Per-request instances on the server
+- Test teardown
+
+---
+
 ## TypeScript
 
 Full TypeScript support with complete type definitions:

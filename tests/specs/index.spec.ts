@@ -70,6 +70,7 @@ describe('i18n instance', () => {
     toHaveProperty('addTranslations');
     toHaveProperty('setLocale');
     toHaveProperty('setRoute');
+    toHaveProperty('destroy');
   });
   it('`setRoute` method does not trigger loading if locale is not set', async () => {
     const { initialized, setRoute, loading, locale } = new i18n({ loaders, parser, log });
@@ -925,6 +926,128 @@ describe('i18n instance', () => {
     healthy.setRoute('/');
 
     expect(get(healthy.initialized)).toBe(false);
+  });
+  it('`destroy` releases lifetime subscriptions', async () => {
+    const {
+      destroy, setLocale, setRoute, loading, translations,
+    } = new i18n({ loaders, parser, log });
+
+    destroy();
+
+    // The loader trigger is detached: locale/route changes no longer load.
+    await setRoute('');
+    setLocale(initLocale);
+
+    expect(loading.get()).toBe(false);
+    expect(Object.keys(translations.get()).length).toBe(0);
+
+    // Idempotent.
+    expect(() => destroy()).not.toThrow();
+  });
+  it('`destroy` drops results of loads still in flight', async () => {
+    let release: (value: unknown) => void = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [{
+        key: 'common',
+        locale: 'en',
+        loader: async () => { await gate; return { greeting: 'Hi' }; },
+      }],
+    });
+
+    // The load itself, not a snapshot taken before it started: awaiting the
+    // wrong promise would let the test pass while the fence does nothing.
+    const pending = instance.loadTranslations('en', '/');
+
+    instance.destroy();
+    release({});
+    await pending;
+
+    // The late result must not mutate the released instance.
+    expect(Object.keys(instance.translations.get()).length).toBe(0);
+    expect(instance.locale.get()).toBe(undefined); // forceSet fenced too
+  });
+  it('`destroy` clears the loading state it leaves behind', async () => {
+    let release: (value: unknown) => void = () => {};
+    const gate = new Promise((resolve) => { release = resolve; });
+
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [{ key: 'common', locale: 'en', loader: async () => { await gate; return {}; } }],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    expect(instance.loading.get()).toBe(true);
+
+    instance.destroy();
+
+    // `toPromise()` resolves immediately once the promises are dropped, so the
+    // flag must not stay stuck at true.
+    expect(instance.loading.get()).toBe(false);
+
+    release({});
+    // Settles the load before the next test, so its logging cannot land in a
+    // later test's logger.
+    await pending;
+  });
+  it('`addTranslations` still reaches the stores after `destroy`', () => {
+    const instance = new i18n({ parser, log });
+
+    instance.destroy();
+    instance.addTranslations({ en: { greeting: 'Hi' } });
+
+    expect(read(instance.translations.get(), 'en')).toEqual(
+      expect.objectContaining({ greeting: 'Hi' }),
+    );
+  });
+  it('`destroy` refuses locale and route writes out loud', async () => {
+    const { captured, restore } = captureLogs('warn');
+
+    try {
+      const instance = new i18n({ loaders, parser });
+
+      instance.destroy();
+
+      // Writing through the store is the documented equivalent of `setLocale`,
+      // so it must not be silently inert either.
+      instance.locale.set('en');
+      instance.locale.update(() => 'en');
+
+      // Reported, not silently dropped: the write is a no-op either way,
+      // because the loader trigger that would publish it is detached.
+      expect(captured.warn.filter((message) => message.includes('Cannot set the locale'))).toHaveLength(2);
+      expect(instance.locale.get()).toBe(undefined);
+
+      // One report per call the consumer made, naming that call — not the two
+      // internal ones `loadTranslations` would otherwise delegate to.
+      captured.warn.length = 0;
+      await instance.loadTranslations('en', '/');
+
+      expect(captured.warn).toEqual(['[i18n]: Cannot load translations: the instance is destroyed.']);
+    } finally {
+      restore();
+    }
+  });
+  it('`destroy` releases the warm chains', () => {
+    const instance = new i18n({ loaders, parser, log });
+
+    instance.destroy();
+
+    // Cold derived: every read re-initializes and yields a fresh value.
+    expect(get(instance.t)).not.toBe(get(instance.t));
+  });
+  it('`loadConfig` after `destroy` loads nothing', async () => {
+    const instance = new i18n();
+
+    instance.destroy();
+    await instance.loadConfig({ ...CONFIG });
+
+    expect(Object.keys(instance.translations.get()).length).toBe(0);
+    expect(instance.locales.get().length).toBe(0); // config was never applied
   });
   it('logger works as expected', async () => {
     const debug = import.meta.jest.spyOn(console, 'debug');

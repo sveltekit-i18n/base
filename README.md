@@ -259,6 +259,7 @@ log: {
 - `loadTranslations(locale, route)` – Load translations for locale and route
 - `setLocale(locale)` – Change current locale
 - `setRoute(route)` – Update current route
+- `destroy()` – Stop the instance from loading and release its subscriptions
 
 Full API documentation: [docs/README.md](./docs/README.md)
 

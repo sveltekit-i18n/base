@@ -11,10 +11,10 @@ const defaultCache = 1000 * 60 * 60 * 24;
 
 export default class I18n<ParserParams extends Parser.Params = any> {
   constructor(config?: Config.T<ParserParams>) {
-    this.loaderTrigger.subscribe(this.loader);
+    this.subscriptions.push(this.loaderTrigger.subscribe(this.loader));
 
     // purge resolved promises
-    this.isLoading.subscribe(($loading) => {
+    this.subscriptions.push(this.isLoading.subscribe(($loading) => {
       if (!$loading || !this.promises.size) return;
 
       const tracked = Array.from(this.promises);
@@ -28,7 +28,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
         logger.debug('Loader promises have been purged.');
       });
-    });
+    }));
 
     // Keep the read-path derived chains warm for the instance's lifetime.
     // `get(store)` on an inactive derived re-initializes (and tears down) its
@@ -42,15 +42,54 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     // subscriber queue does not unwind on a throw — one malformed loader would
     // then break store propagation process-wide instead of failing the one
     // lookup that read it.
-    this.t.subscribe(() => {});
-    this.l.subscribe(() => {});
-    this.initialized.subscribe(() => {});
+    this.subscriptions.push(
+      this.t.subscribe(() => {}),
+      this.l.subscribe(() => {}),
+      this.initialized.subscribe(() => {}),
+    );
 
     // `loadConfig` reports and marks its own failure, so a config load started
     // here — with no caller to reject to — is covered by the same path as a
     // consumer's fire-and-forget call.
     if (config) this.loadConfig(config);
   }
+
+  private subscriptions: Array<() => void> = [];
+
+  private destroyed = false;
+
+  // Single gate for every entry point that would load or mutate, so callers
+  // bail with one shared warning instead of each guarding itself.
+  private isActive = (action: string) => {
+    if (this.destroyed) {
+      logger.warn(`Cannot ${action}: the instance is destroyed.`);
+      return false;
+    }
+
+    return true;
+  };
+
+  /**
+   * Stops the instance from loading: detaches its lifetime store
+   * subscriptions, drops the results of loads still in flight, and clears the
+   * loading state. Reads keep working (`t.get()`, `translations.get()`, your
+   * own subscriptions), but every entry point that would load — `setLocale`,
+   * `setRoute`, `locale.set`/`locale.update`, `loadTranslations`, `loadConfig`
+   * — is refused with a warning, and `.get()` reads lose their warm-chain
+   * performance. `addTranslations` still applies: a destroyed instance stops
+   * loading, not storing.
+   *
+   * Not required for garbage collection — the subscription graph is internal
+   * to the instance and is collected with it. Use it to stop work you no
+   * longer want, e.g. when a component-scoped instance goes away mid-load.
+   */
+  destroy = () => {
+    this.destroyed = true;
+    this.subscriptions.forEach((unsubscribe) => unsubscribe());
+    this.subscriptions = [];
+    this.promises.clear();
+    this.isLoading.set(false);
+  };
 
   private cachedAt = 0;
 
@@ -137,8 +176,14 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   locale: ExtendedStore<Config.Locale, () => Config.Locale, Writable<string>> & { forceSet: any } = {
     subscribe: this.localeHelper.subscribe,
     forceSet: this.localeHelper.set,
-    set: this.internalLocale.set,
-    update: this.internalLocale.update,
+    // Gated like `setLocale`: the loader trigger is what propagates a write to
+    // the public store, so after `destroy()` these would be silently inert.
+    set: (value: Config.Locale) => {
+      if (this.isActive('set the locale')) this.internalLocale.set(value);
+    },
+    update: (updater: (value: Config.Locale) => Config.Locale) => {
+      if (this.isActive('set the locale')) this.internalLocale.update(updater);
+    },
     get: () => get(this.locale),
   };
 
@@ -213,6 +258,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   setLocale = (locale?: string) => {
     if (!locale) return;
+    if (!this.isActive('set the locale')) return;
 
     if (locale !== get(this.internalLocale)) {
       logger.debug(`Setting '${locale}' locale.`);
@@ -226,6 +272,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   setRoute = (route: string) => {
+    if (!this.isActive('set the route')) return;
+
     if (route !== get(this.currentRoute)) {
       logger.debug(`Setting '${route}' route.`);
       this.currentRoute.set(route);
@@ -239,6 +287,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   async configLoader(config: Config.T<ParserParams>) {
     if (!config) return logger.error('No config provided!');
+    if (!this.isActive('load a config')) return;
 
     let { initLocale, fallbackLocale, translations, log, ...rest } = config;
 
@@ -274,6 +323,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   getTranslationProps = async ($locale = this.locale.get(), $route = get(this.currentRoute)): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> => {
+    if (!this.isActive('load translations')) return [];
+
     const $config = get(this.config);
 
     if (!$config || !$locale) return [];
@@ -424,6 +475,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
       const props = await this.getTranslationProps(locale, route);
 
+      // The load can outlive a destroy(); its results must not reach the
+      // stores afterwards.
+      if (this.destroyed) return;
+
       if (props.length) this.addTranslations(...props);
 
       if (locale && this.locale.get() !== locale) this.locale.forceSet(locale);
@@ -444,6 +499,10 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   };
 
   loadTranslations = (locale: Config.Locale, route = get(this.currentRoute) || '') => {
+    // Gated before delegating, so a destroyed instance reports this call rather
+    // than the two internal ones it would otherwise make.
+    if (!this.isActive('load translations')) return;
+
     let normalizedLocale: Config.Locale | undefined;
 
     try {
