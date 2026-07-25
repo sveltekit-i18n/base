@@ -896,6 +896,36 @@ describe('i18n instance', () => {
     expect(fromArray).toEqual(['de']);
     expect(fromString).toEqual(['de,fr']); // non-standard, lowercased as-is
   });
+  it('keeps derived chains warm so repeated reads hit the cached value', () => {
+    const instance = new i18n({ loaders, parser, log });
+
+    // With an inactive derived, every get() re-initializes the chain and
+    // produces a fresh value; the constructor's warm subscriptions make
+    // repeated reads return the identical cached reference.
+    expect(get(instance.t)).toBe(get(instance.t));
+    expect(get(instance.l)).toBe(get(instance.l));
+  });
+  it('leaves `locales` cold so a malformed loader cannot break store flushes', () => {
+    // Its callback is the only warm-chain candidate that reads consumer config
+    // objects. Warming it would run that read inside a store flush, where a
+    // throw leaves svelte's subscriber queue wedged for the whole process.
+    const brokenLoader: any = { key: 'common', loader: async () => ({}) };
+    Object.defineProperty(brokenLoader, 'locale', {
+      enumerable: true,
+      get: () => { throw new Error('locale getter boom'); },
+    });
+
+    const instance = new i18n({ parser, log, loaders: [brokenLoader] });
+
+    // The failure belongs to the lookup that read it, not to the next store
+    // write anywhere in the process.
+    expect(() => instance.locales.get()).toThrow('locale getter boom');
+
+    const healthy = new i18n({ loaders, parser, log });
+    healthy.setRoute('/');
+
+    expect(get(healthy.initialized)).toBe(false);
+  });
   it('logger works as expected', async () => {
     const debug = import.meta.jest.spyOn(console, 'debug');
     const warn = import.meta.jest.spyOn(console, 'warn');

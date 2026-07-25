@@ -30,6 +30,22 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       });
     });
 
+    // Keep the read-path derived chains warm for the instance's lifetime.
+    // `get(store)` on an inactive derived re-initializes (and tears down) its
+    // whole dependency chain on every call, which makes `.get()` reads scale
+    // with table size; with an active subscriber, additional subscribers
+    // receive the cached value.
+    //
+    // `locales` is deliberately left cold: its callback is the only one that
+    // touches consumer-supplied config objects (`loaders.map(({ locale }) => …)`).
+    // Warming it would move that read into a store flush, where svelte's
+    // subscriber queue does not unwind on a throw — one malformed loader would
+    // then break store propagation process-wide instead of failing the one
+    // lookup that read it.
+    this.t.subscribe(() => {});
+    this.l.subscribe(() => {});
+    this.initialized.subscribe(() => {});
+
     // `loadConfig` reports and marks its own failure, so a config load started
     // here — with no caller to reject to — is covered by the same path as a
     // consumer's fire-and-forget call.
