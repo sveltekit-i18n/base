@@ -34,7 +34,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Tests | Jest + `ts-jest` ESM preset, `testEnvironment: node` |
 | Lint | ESLint `airbnb-typescript/base` |
 | Runtime peer | `svelte >=3.49.0` (uses `svelte/store` only) |
-| CI | `.github/workflows/tests.yml` — Node 18, ubuntu/macOS/windows |
+| CI | `.github/workflows/tests.yml` — Node 18 + 24, ubuntu/macOS/windows |
 
 ## Commands
 
@@ -275,7 +275,8 @@ not RCE/XSS.
   async tests; construct a logger/instance locally instead. When the output
   under test only reaches that singleton, install it through the spec's
   `captureLogs` helper (which restores the previous logger, not a fresh one)
-  and match captured messages by content — never by call count, which any
+  and assert on messages matched by content. Counting is fine once filtered to
+  the message under test; never assert on a raw call count, which any
   still-running load from an earlier test can change.
 - `t`/`l` resolve via a no-op test parser (`parse: (...) => key`) — design
   assertions accordingly.

@@ -14,7 +14,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node-version: [18]
+        # 18 is the documented minimum; 24 is the current LTS and the only leg
+        # where `require()` of an ESM dependency works, so it is what actually
+        # exercises the published CJS entry.
+        node-version: [18, 24]
         os: [ubuntu-latest, windows-latest, macOS-latest]
 
     steps:
