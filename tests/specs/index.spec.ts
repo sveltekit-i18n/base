@@ -467,6 +467,22 @@ describe('i18n instance', () => {
       expect($t(key)).toBe(fallbackValue);
     });
   });
+  it('`addTranslations` keeps a literal `__proto__` key an own property', async () => {
+    const { addTranslations, translations } = new i18n();
+
+    // JSON.parse creates real own '__proto__' keys (object literals would not).
+    addTranslations({ en: JSON.parse('{"__proto__": {"polluted": "yes"}, "plain": "ok"}') });
+    // A bare '__proto__' LEAF is the dangerous case: on a normal-prototype
+    // accumulator the assignment would hit the setter and silently drop it.
+    addTranslations({ cs: JSON.parse('{"__proto__": "boom"}') });
+
+    const $translations = translations.get();
+
+    expect(({} as any).polluted).toBe(undefined); // Object.prototype untouched
+    expect($translations.en['__proto__.polluted']).toBe('yes');
+    expect($translations.en.plain).toBe('ok');
+    expect(read($translations.cs, '__proto__')).toBe('boom'); // survived as an own key
+  });
   it('handles a locale named like an `Object.prototype` member', async () => {
     // A loader locale colliding with a prototype member must not throw when the
     // `loadedKeys` cache is indexed by it, must keep its data, and must still

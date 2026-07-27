@@ -82,19 +82,33 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
   }
 
   if (input && typeof input === 'object') {
-    const output = Object.keys(input).reduce((acc, key) => {
-      const value = (input as any)[key];
-      const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
+    // This runs over the whole translation set on every load, so the
+    // accumulator is mutated instead of being rebuilt per key (which is
+    // quadratic). It has a null prototype so that a literal '__proto__' key
+    // stays an own property rather than reaching the prototype setter; the
+    // single spread below restores a normal object for consumers, with
+    // DefineProperty semantics that preserve that key.
+    const output: any = Object.create(null);
+    let hasEntries = false;
 
-      if (value && typeof value === 'object' && !(preserveArrays && Array.isArray(value))) {
-        return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
-      }
+    const walk = (node: any, prefix?: string) => {
+      Object.keys(node).forEach((key) => {
+        const value = node[key];
+        const outputKey = prefix ? `${prefix}.${key}` : `${key}`;
 
-      return ({ ...acc, [outputKey]: toDotNotation(value, preserveArrays) });
-    }, {});
+        if (value && typeof value === 'object' && !(preserveArrays && Array.isArray(value))) {
+          walk(value, outputKey);
+        } else {
+          output[outputKey] = toDotNotation(value, preserveArrays);
+          hasEntries = true;
+        }
+      });
+    };
 
-    if (Object.keys(output).length) {
-      return output;
+    walk(input, parentKey);
+
+    if (hasEntries) {
+      return { ...output };
     }
 
     return null;
