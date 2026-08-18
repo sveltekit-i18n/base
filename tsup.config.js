@@ -14,15 +14,5 @@ export default defineConfig(
       sourcemap: options.watch,
       splitting: true,
     },
-    {
-      clean: false,
-      dts: false,
-      format: ['cjs'],
-      entry: ['src/index.ts'],
-      watch: options.watch && ['src/*'],
-      minify: !options.watch,
-      sourcemap: options.watch,
-      splitting: true,
-    },
   ],
 );

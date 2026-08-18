@@ -30,11 +30,11 @@ translation state, loading, caching, route matching, and preprocessing — but
 |--------|---------|
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
-| Build | `tsup` → `dist/` (CJS + ESM + `.d.ts`) |
-| Tests | Jest + `ts-jest` ESM preset, `testEnvironment: node` |
+| Build | `tsup` → `dist/` (ESM + `.d.ts`, no CJS) |
+| Tests | Vitest (`vitest.config.ts`), environment `node` |
 | Lint | ESLint `airbnb-typescript/base` |
 | Runtime peer | `svelte >=3.49.0` (uses `svelte/store` only) |
-| CI | `.github/workflows/tests.yml` — Node 18, ubuntu/macOS/windows |
+| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows |
 
 ## Commands
 
@@ -42,7 +42,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 |---------|---------|
 | `npm install` / `npm ci` | install (respects `package-lock.json`) |
 | `npm run build` | tsup build to `dist/` |
-| `npm test` | jest suite |
+| `npm test` | vitest suite (runs `typecheck` first) |
+| `npm run typecheck` | `tsc --noEmit` over `src` **and** the repo's `*.js` configs |
 | `npm run lint` | eslint `--fix` over `.ts`/`.js` (also a pre-commit hook) |
 
 ## Repository map
@@ -57,6 +58,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
+| `vitest.config.ts` | test runner config |
+| `tsconfig.tools.json` | type-checks the repo's own `*.js` config files |
 
 ## Architecture you must respect
 
@@ -85,7 +88,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 2. **No breaking changes** to public store/method shapes or `types.ts` exports.
    Consumers read `$translations['en']['key']`, etc.
 3. **Parser-agnostic.** No imports from `@sveltekit-i18n/parser-*`.
-4. **ESM-only, npm-only, Node 18-compatible.**
+4. **ESM-only (single ESM artifact, no CJS), npm-only, Node 22+.**
 5. **`dist/` is generated** — never hand-edit; never commit unrelated `dist`
    churn.
 
@@ -228,6 +231,14 @@ not RCE/XSS.
   user-controlled key must use an own-property check (`Object.prototype.
   hasOwnProperty.call`, or the `hasOwn` helper) so `toString`/`__proto__`/
   `constructor` are treated as missing, not inherited members.
+- **Never bracket-assign a user-supplied locale or key onto a plain object.**
+  `table[locale] = value` routes `'__proto__'` through the prototype setter, so
+  no own key is recorded and the object's prototype is replaced. Write with a
+  computed-key spread (`{ ...table, [locale]: value }`, which is
+  `DefineProperty`) or target an `Object.create(null)` object — that is why
+  `loadedKeys` has a null prototype. The locale-indexed accumulators in
+  `serialize` and `getTranslationProps` are plain objects and stay correct only
+  while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
   batch; a missing config/parser must not throw on `t.get()`/`l.get()`.
 - **`route` reaches `RegExp.test()` and is visitor-controlled** (`url.pathname`)

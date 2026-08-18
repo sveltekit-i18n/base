@@ -1,7 +1,8 @@
+import { describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { loggerFactory } from '../../src/logger';
-import { translate } from '../../src/utils';
+import { read, translate } from '../../src/utils';
 import { CONFIG, getTranslations } from '../data';
 import { filterTranslationKeys } from '../utils';
 
@@ -13,21 +14,20 @@ describe('i18n instance', () => {
   it('exports all properties and methods', () => {
     const instance = new i18n();
 
-    const { toHaveProperty } = expect(instance);
-
-    toHaveProperty('loading');
-    toHaveProperty('initialized');
-    toHaveProperty('locale');
-    toHaveProperty('locales');
-    toHaveProperty('translations');
-    toHaveProperty('rawTranslations');
-    toHaveProperty('t');
-    toHaveProperty('l');
-    toHaveProperty('loadConfig');
-    toHaveProperty('loadTranslations');
-    toHaveProperty('addTranslations');
-    toHaveProperty('setLocale');
-    toHaveProperty('setRoute');
+    // Called per property: destructured matchers are not bound in vitest.
+    expect(instance).toHaveProperty('loading');
+    expect(instance).toHaveProperty('initialized');
+    expect(instance).toHaveProperty('locale');
+    expect(instance).toHaveProperty('locales');
+    expect(instance).toHaveProperty('translations');
+    expect(instance).toHaveProperty('rawTranslations');
+    expect(instance).toHaveProperty('t');
+    expect(instance).toHaveProperty('l');
+    expect(instance).toHaveProperty('loadConfig');
+    expect(instance).toHaveProperty('loadTranslations');
+    expect(instance).toHaveProperty('addTranslations');
+    expect(instance).toHaveProperty('setLocale');
+    expect(instance).toHaveProperty('setRoute');
   });
   it('`setRoute` method does not trigger loading if locale is not set', async () => {
     const { initialized, setRoute, loading, locale } = new i18n({ loaders, parser, log });
@@ -427,23 +427,64 @@ describe('i18n instance', () => {
   });
   it('handles a locale named like an `Object.prototype` member', async () => {
     // A loader locale colliding with a prototype member must not throw when the
-    // `loadedKeys` cache is indexed by it.
-    const { loadTranslations } = new i18n({
+    // `loadedKeys` cache is indexed by it, must keep its data, and must still
+    // be deduped by that cache.
+    let calls = 0;
+    const instance = new i18n({
       ...CONFIG,
       loaders: [
         {
           key: 'common',
           locale: '__proto__',
-          loader: async () => ({ greeting: 'Hi' }),
+          loader: async () => { calls += 1; return { greeting: 'Hi' }; },
         },
       ],
     });
 
-    await expect(loadTranslations('__proto__')).resolves.not.toThrow();
+    await expect(instance.loadTranslations('__proto__')).resolves.not.toThrow();
+
+    expect(read(instance.translations.get(), '__proto__')).toEqual(
+      expect.objectContaining({ 'common.greeting': 'Hi' }),
+    );
+
+    // The dedupe cache must hold an OWN entry for the locale — on a plain
+    // object the write would go through the `__proto__` setter instead, and
+    // the loader would refire on every route change.
+    await instance.loadTranslations('__proto__', '/second');
+    expect(calls).toBe(1);
+  });
+  it('`addTranslations` fails soft on a `null` payload', () => {
+    const instance = new i18n({ parser, log });
+
+    // A module that resolved to `null` is consumer input, not a bug in the
+    // instance: every other step tolerates it, so the whole call must too.
+    expect(() => instance.addTranslations({ en: null as any, de: { greeting: 'Hallo' } })).not.toThrow();
+
+    expect(read(instance.translations.get(), 'de')).toEqual(
+      expect.objectContaining({ greeting: 'Hallo' }),
+    );
+  });
+  it('`serialize` keeps a loader locale named like a prototype member', async () => {
+    // Characterizes the merge: two loaders sharing a prototype-named locale end
+    // up in one table. Spreading `Object.prototype` yields `{}`, so this passes
+    // on master too — it pins the behavior, not a fix.
+    const instance = new i18n({
+      ...CONFIG,
+      loaders: [
+        { key: 'a', locale: '__proto__', loader: async () => ({ one: '1' }) },
+        { key: 'b', locale: '__proto__', loader: async () => ({ two: '2' }) },
+      ],
+    });
+
+    await instance.loadTranslations('__proto__');
+
+    expect(read(instance.translations.get(), '__proto__')).toEqual(
+      expect.objectContaining({ 'a.one': '1', 'b.two': '2' }),
+    );
   });
   it('logger works as expected', async () => {
-    const debug = import.meta.jest.spyOn(console, 'debug');
-    const warn = import.meta.jest.spyOn(console, 'warn');
+    const debug = vi.spyOn(console, 'debug');
+    const warn = vi.spyOn(console, 'warn');
 
     const { loading } = new i18n({
       ...CONFIG,
@@ -491,7 +532,7 @@ describe('i18n instance', () => {
   it('skips silently when a custom logger omits a level', () => {
     // Custom logger implementing only `warn` – an unimplemented level must be
     // skipped silently rather than throwing a TypeError.
-    const warn = import.meta.jest.fn();
+    const warn = vi.fn();
     const partialLogger = { warn } as any;
 
     const log = loggerFactory({ level: 'debug', logger: partialLogger });
@@ -512,7 +553,7 @@ describe('i18n instance', () => {
     expect(translate({ ...base, parser: undefined as any, key: 'missing', fallbackValue: 'FB' })).toBe('FB');
   });
   it('falls back to `warn` level for an unknown configured level', () => {
-    const logger = { error: import.meta.jest.fn(), warn: import.meta.jest.fn(), debug: import.meta.jest.fn() } as any;
+    const logger = { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } as any;
 
     // An invalid level must not silence everything; it behaves as the default 'warn'.
     const log = loggerFactory({ level: 'info' as any, logger });
