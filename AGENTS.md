@@ -31,10 +31,10 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
 | Build | `tsup` → `dist/` (ESM + `.d.ts`, no CJS) |
-| Tests | Jest + `ts-jest` ESM preset, `testEnvironment: node` |
+| Tests | Vitest (`vitest.config.ts`), environment `node` |
 | Lint | ESLint `airbnb-typescript/base` |
 | Runtime peer | `svelte >=3.49.0` (uses `svelte/store` only) |
-| CI | `.github/workflows/tests.yml` — Node 18, ubuntu/macOS/windows |
+| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows |
 
 ## Commands
 
@@ -42,7 +42,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 |---------|---------|
 | `npm install` / `npm ci` | install (respects `package-lock.json`) |
 | `npm run build` | tsup build to `dist/` |
-| `npm test` | jest suite (runs `typecheck` first) |
+| `npm test` | vitest suite (runs `typecheck` first) |
 | `npm run typecheck` | `tsc --noEmit` over `src` **and** the repo's `*.js` configs |
 | `npm run lint` | eslint `--fix` over `.ts`/`.js` (also a pre-commit hook) |
 
@@ -58,6 +58,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
+| `vitest.config.ts` | test runner config |
+| `tsconfig.tools.json` | type-checks the repo's own `*.js` config files |
 
 ## Architecture you must respect
 

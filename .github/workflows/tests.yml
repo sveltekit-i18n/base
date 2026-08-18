@@ -14,7 +14,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        node-version: [18]
+        # The two maintained LTS lines; engines declares >=22.
+        node-version: [22, 24]
         os: [ubuntu-latest, windows-latest, macOS-latest]
 
     steps:
