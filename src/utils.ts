@@ -1,5 +1,5 @@
-import type { DotNotation, Translations, Loader } from './types';
-import { logger } from './logger';
+import type { DotNotation, Translations, Loader } from './types.js';
+import { logger } from './logger.js';
 
 // Safe own-property read. Translation keys like `toString`, `constructor` or
 // `__proto__` would otherwise resolve to inherited `Object.prototype` members
@@ -57,10 +57,36 @@ export const translate: Translations.Translate = ({
   return parser.parse(text, params, locale, key);
 };
 
+// `Intl.Collator.supportedLocalesOf` is comparatively expensive and locales
+// repeat constantly (per loader on every load trigger, per lookup), so
+// successful lookups are cached. Failed lookups are deliberately NOT cached: a
+// locale that is temporarily unknown to Intl (e.g. before a polyfill loads)
+// can recover, and the non-standard warning stays tied to the call rather than
+// to whichever logger and level happened to be installed the first time. Only
+// string inputs are cacheable — for any other input the string form is not a
+// faithful key.
+//
+// Least-recently-used: the map is insertion-ordered and every hit reinserts, so
+// a flood of visitor-supplied locales evicts itself rather than the app's own.
+const LOCALE_CACHE_LIMIT = 1000;
+const sanitizedLocaleCache = new Map<string, string>();
+
 export const sanitizeLocales = (...locales: any[]) => {
   if (!locales.length) return [];
 
   return locales.filter((locale) => !!locale).map((locale) => {
+    const cacheable = typeof locale === 'string';
+
+    if (cacheable) {
+      const cached = sanitizedLocaleCache.get(locale);
+      if (cached !== undefined) {
+        sanitizedLocaleCache.delete(locale);
+        sanitizedLocaleCache.set(locale, cached);
+
+        return cached;
+      }
+    }
+
     let current = `${locale}`.toLowerCase();
     try {
       const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
@@ -68,6 +94,13 @@ export const sanitizeLocales = (...locales: any[]) => {
       if (!sanitized) throw new Error();
 
       current = sanitized;
+
+      if (cacheable) {
+        if (sanitizedLocaleCache.size >= LOCALE_CACHE_LIMIT) {
+          sanitizedLocaleCache.delete(sanitizedLocaleCache.keys().next().value as string);
+        }
+        sanitizedLocaleCache.set(locale, current);
+      }
     } catch (error) {
       logger.warn(`'${locale}' locale is non-standard.`);
     }
@@ -82,19 +115,33 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
   }
 
   if (input && typeof input === 'object') {
-    const output = Object.keys(input).reduce((acc, key) => {
-      const value = (input as any)[key];
-      const outputKey = parentKey ? `${parentKey}.${key}` : `${key}`;
+    // This runs over the whole translation set on every load, so the
+    // accumulator is mutated instead of being rebuilt per key (which is
+    // quadratic). It has a null prototype so that a literal '__proto__' key
+    // stays an own property rather than reaching the prototype setter; the
+    // single spread below restores a normal object for consumers, with
+    // DefineProperty semantics that preserve that key.
+    const output: any = Object.create(null);
+    let hasEntries = false;
 
-      if (value && typeof value === 'object' && !(preserveArrays && Array.isArray(value))) {
-        return ({ ...acc, ...toDotNotation(value, preserveArrays, outputKey) });
-      }
+    const walk = (node: any, prefix?: string) => {
+      Object.keys(node).forEach((key) => {
+        const value = node[key];
+        const outputKey = prefix ? `${prefix}.${key}` : `${key}`;
 
-      return ({ ...acc, [outputKey]: toDotNotation(value, preserveArrays) });
-    }, {});
+        if (value && typeof value === 'object' && !(preserveArrays && Array.isArray(value))) {
+          walk(value, outputKey);
+        } else {
+          output[outputKey] = toDotNotation(value, preserveArrays);
+          hasEntries = true;
+        }
+      });
+    };
 
-    if (Object.keys(output).length) {
-      return output;
+    walk(input, parentKey);
+
+    if (hasEntries) {
+      return { ...output };
     }
 
     return null;
@@ -136,24 +183,27 @@ export const fetchTranslations: Translations.FetchTranslations = async (loaders)
 export const testRoute = (route: string) => (input: Loader.Route) => {
   try {
     if (typeof input === 'string') return input === route;
-    if (typeof input === 'object') return input.test(route);
+    if (typeof input === 'object') {
+      // `test` advances `lastIndex` on a `g`/`y` pattern, so a route object
+      // shared across navigations would match only every other time and the
+      // consumer's own use of it would be corrupted. A throwaway copy starts at
+      // `lastIndex === 0` every time, keeps the flags' meaning (sticky still
+      // anchors), and never writes to the original — which also matters when
+      // the original is frozen.
+      //
+      // Only an actual RegExp is copied: `source`/`flags` on anything else are
+      // not a pattern, and `new RegExp(undefined)` is `/(?:)/`, which matches
+      // every route. Everything else is asked for `test` as-is, with the route
+      // passed through unchanged — a custom matcher may distinguish an unset
+      // route from the string 'undefined'.
+      const stateful = input instanceof RegExp && (input.global || input.sticky);
+      const pattern = stateful ? new RegExp(input.source, input.flags) : input;
+
+      return pattern.test(route);
+    }
   } catch (error) {
     logger.error('Invalid route config!');
   }
 
   return false;
-};
-
-export const checkProps = (props: any, object: any) => {
-  let out = true;
-
-  try {
-    out = Object.keys(props).filter(
-      (key) => props[key] !== undefined,
-    ).every(
-      (key) => props[key] === object[key],
-    );
-  } catch (error) { }
-
-  return out;
 };

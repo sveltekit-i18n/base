@@ -15,6 +15,8 @@
     "moduleResolution": "bundler",
     "noEmit": true,
     "resolveJsonModule": true,
+    // Ambient rune declarations ($state, $derived) for the .svelte.ts modules.
+    "types": ["node", "svelte"],
     "allowSyntheticDefaultImports": true
   },
   "include": [
