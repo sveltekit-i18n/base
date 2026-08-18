@@ -101,7 +101,7 @@ export const sanitizeLocales = (...locales: any[]) => {
         }
         sanitizedLocaleCache.set(locale, current);
       }
-    } catch (error) {
+    } catch {
       logger.warn(`'${locale}' locale is non-standard.`);
     }
 
@@ -201,7 +201,7 @@ export const testRoute = (route: string) => (input: Loader.Route) => {
 
       return pattern.test(route);
     }
-  } catch (error) {
+  } catch {
     logger.error('Invalid route config!');
   }
 

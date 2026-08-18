@@ -17,7 +17,7 @@ export const loggerFactory = ({ logger = console, level = loggerLevels[1], prefi
         if (typeof logger[key] !== 'function') return undefined;
 
         return logger[key](`${prefix}${value}`);
-      } catch (error) {
+      } catch {
         return undefined;
       }
     },

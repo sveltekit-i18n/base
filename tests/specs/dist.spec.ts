@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-// eslint-disable-next-line import/extensions -- the built artifact is the subject under test
 import I18n from '../../dist/index.js';
 import { read } from '../../src/utils.js';
 

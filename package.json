@@ -21,13 +21,10 @@
     "test:dist": "vitest run --config vitest.dist.config.ts",
     "build": "svelte-package -i src -o dist",
     "prepublishOnly": "npm run build",
-    "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."
+    "lint": "eslint --fix ."
   },
   "files": [
     "dist"
-  ],
-  "pre-commit": [
-    "lint"
   ],
   "repository": {
     "type": "git",
@@ -54,29 +51,29 @@
   "peerDependencies": {
     "svelte": ">=5"
   },
-  "overrides": {
-    "@typescript-eslint/typescript-estree": {
-      "minimatch": "^9.0.9"
-    },
-    "pre-commit": {
-      "cross-spawn": "^7.0.6"
-    }
-  },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
     "@sveltejs/package": "^2.5.8",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@types/node": "^26.2.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "@typescript-eslint/types": "^8.67.0",
     "esbuild": "^0.28.2",
-    "eslint": "^8.4.1",
-    "eslint-config-airbnb-typescript": "^17.1.0",
-    "eslint-plugin-import": "^2.25.3",
+    "eslint": "^10.8.1",
+    "eslint-plugin-import-x": "^4.17.1",
+    "globals": "^17.11.0",
     "pre-commit": "^1.2.2",
     "svelte": "^5.56.9",
     "typescript": "^5.1.6",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   },
-  "svelte": "./dist/index.js"
+  "svelte": "./dist/index.js",
+  "pre-commit": [
+    "lint"
+  ],
+  "overrides": {
+    "pre-commit": {
+      "cross-spawn": "^7.0.6"
+    }
+  }
 }
