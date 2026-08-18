@@ -149,7 +149,7 @@ describe('i18n instance', () => {
     const instance = new i18n({ loaders, parser, log });
 
     instance.addTranslations(TRANSLATIONS);
-    instance.loadTranslations(initLocale);
+    void instance.loadTranslations(initLocale);
 
     expect(instance.loading).toBe(false);
   });

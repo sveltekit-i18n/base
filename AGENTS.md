@@ -32,7 +32,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
 | Build | `svelte-package` → `dist/` (per-file ESM + `.d.ts`; rune modules ship UNCOMPILED) |
 | Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node` |
-| Lint | ESLint `airbnb-typescript/base` |
+| Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
 | CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows |
 
@@ -46,7 +46,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `npm test` | vitest suite (runs `typecheck` first) |
 | `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
 | `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs |
-| `npm run lint` | eslint `--fix` over `.ts`/`.js` (also a pre-commit hook) |
+| `npm run lint` | `eslint --fix .` (also a pre-commit hook) |
 
 ## Repository map
 
@@ -222,9 +222,9 @@ chat (§3).
 
 ## 10. Coding conventions
 
-- Match airbnb-typescript: 2-space indent, single quotes, semicolons, trailing
-  commas, no trailing whitespace, no multiple blank lines. Let `npm run lint
-  --fix` handle it.
+- Formatting contract (the `@stylistic` block in `eslint.config.js`): 2-space
+  indent, single quotes, semicolons, trailing commas, no trailing whitespace,
+  no multiple blank lines. Let `npm run lint` handle it.
 - Prefer the **functional, immutable** style for shared state (computed-key
   spread `{ ...acc, [k]: v }`, `reduce`). That spread form has `DefineProperty`
   semantics — it can't pollute `Object.prototype`. On a **measured hot path** a

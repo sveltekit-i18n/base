@@ -38,7 +38,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
   #inflight = new Map<string, Promise<void>>();
 
   constructor(config?: Config.T<ParserParams>) {
-    if (config) this.loadConfig(config);
+    if (config) void this.loadConfig(config);
   }
 
   // -- reactive reads ---------------------------------------------------------
@@ -100,7 +100,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       locale: this.#locale,
       fallbackLocale,
       ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
-    }) as string;
+    });
   };
 
   /** Like `t`, for an explicit locale. */
@@ -115,7 +115,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       locale,
       fallbackLocale,
       ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
-    }) as string;
+    });
   };
 
   // -- configuration ----------------------------------------------------------
@@ -144,7 +144,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       fallbackLocale: sanitizedFallbackLocale,
       translations,
       ...rest,
-    } as Config.T<ParserParams>;
+    };
 
     // A reconfiguration can swap loaders or cache policy — bookkeeping from
     // the previous config must not suppress the new loaders.
@@ -275,9 +275,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         (loadedKey) => `${loadedKey}` === key || `${loadedKey}`.startsWith(`${key}.`),
       ))
       .reduce<Loader.IndexedKeys>((acc, { key, locale: loaderLocale }) => ({
-      ...acc,
-      [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), key],
-    }), {});
+        ...acc,
+        [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), key],
+      }), {});
 
     return [rawTranslations, keys];
   }
