@@ -21,7 +21,8 @@
     "test:dist": "vitest run --config vitest.dist.config.ts",
     "build": "svelte-package -i src -o dist",
     "prepublishOnly": "npm run build",
-    "lint": "eslint --fix ."
+    "lint": "eslint --fix .",
+    "prepare": "simple-git-hooks"
   },
   "files": [
     "dist"
@@ -61,19 +62,14 @@
     "eslint": "^10.8.1",
     "eslint-plugin-import-x": "^4.17.1",
     "globals": "^17.11.0",
-    "pre-commit": "^1.2.2",
+    "simple-git-hooks": "^2.13.1",
     "svelte": "^5.56.9",
     "typescript": "^5.1.6",
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   },
   "svelte": "./dist/index.js",
-  "pre-commit": [
-    "lint"
-  ],
-  "overrides": {
-    "pre-commit": {
-      "cross-spawn": "^7.0.6"
-    }
+  "simple-git-hooks": {
+    "pre-commit": "npm run lint"
   }
 }

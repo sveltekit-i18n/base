@@ -46,7 +46,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `npm test` | vitest suite (runs `typecheck` first) |
 | `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
 | `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs |
-| `npm run lint` | `eslint --fix .` (also a pre-commit hook) |
+| `npm run lint` | `eslint --fix .` (also the pre-commit hook, via `simple-git-hooks`) |
+| `npm run prepare` | installs the git hooks (`simple-git-hooks`); npm runs it automatically after `npm install` |
 
 ## Repository map
 
