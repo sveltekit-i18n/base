@@ -54,6 +54,14 @@
   "peerDependencies": {
     "svelte": ">=5"
   },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^9.0.9"
+    },
+    "pre-commit": {
+      "cross-spawn": "^7.0.6"
+    }
+  },
   "devDependencies": {
     "@sveltejs/package": "^2.5.8",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
