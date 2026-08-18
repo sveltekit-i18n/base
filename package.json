@@ -1,23 +1,25 @@
 {
   "name": "@sveltekit-i18n/base",
-  "version": "1.3.8",
+  "version": "3.0.0-next.0",
   "description": "Base functionality of sveltekit-i18n library with a support for external message parsers.",
   "type": "module",
-  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "svelte": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
   "scripts": {
-    "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
-    "pretest": "npm run typecheck",
+    "dev": "svelte-package -i src -o dist -w",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "pretest": "npm run build && npm run typecheck",
     "test": "vitest run",
-    "build": "tsup",
+    "pretest:dist": "npm run build",
+    "test:dist": "vitest run --config vitest.dist.config.ts",
+    "build": "svelte-package -i src -o dist",
     "prepublishOnly": "npm run build",
     "lint": "eslint --fix --ext .ts,.js --ignore-path .gitignore ."
   },
@@ -50,7 +52,7 @@
     "node": ">=22"
   },
   "peerDependencies": {
-    "svelte": ">=3.49.0"
+    "svelte": ">=5"
   },
   "devDependencies": {
     "@sveltejs/package": "^2.5.8",
@@ -63,8 +65,8 @@
     "eslint-plugin-import": "^2.25.3",
     "pre-commit": "^1.2.2",
     "svelte": "^5.56.9",
-    "tsup": "^8.0.1",
     "typescript": "^5.1.6",
     "vitest": "^4.1.10"
-  }
+  },
+  "svelte": "./dist/index.js"
 }

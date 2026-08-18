@@ -1,10 +1,4 @@
-import { Readable } from 'svelte/store';
-
-export type ExtendedStore<T, Get = () => T, Store = Readable<T>> = Store & { get: Get };
-
-export type LoadingStore = Readable<boolean> & { toPromise: (locale?: Config.Locale, route?: string) => Promise<void[] | void>, get: () => boolean };
-
-export module DotNotation {
+export namespace DotNotation {
   export type Input = any;
 
   export type Output<V = any, K extends keyof V = keyof V> = { [P in K]?: V[K] } | null | V;
@@ -12,7 +6,7 @@ export module DotNotation {
   export type T = <I = Input>(input: I, preserveArrays?: boolean, parentKey?: string) => Output<I>;
 }
 
-export module Logger {
+export namespace Logger {
   export type Level = 'error' | 'warn' | 'debug';
 
   export type Prefix = string;
@@ -43,7 +37,7 @@ export module Logger {
   };
 }
 
-export module Config {
+export namespace Config {
   export type Loader = Loader.LoaderModule;
 
   export type Translations = Translations.T;
@@ -58,7 +52,7 @@ export module Config {
 
   export type T<P extends Parser.Params = Parser.Params> = {
     /**
-     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get refreshed according to `config.cache`.
+     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
      */
     loaders?: Loader[];
     /**
@@ -101,11 +95,11 @@ export module Config {
      */
     parser: Parser.T<P>;
     /**
-     * When you are running your app on Node.js server, translations are loaded only once during the SSR. This property allows you to setup a refresh period in milliseconds when your translations are refetched on the server.
+     * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next load trigger runs its loaders again. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS.
      *
-     * @default 86400000 // 24 hours
+     * @default Number.POSITIVE_INFINITY
      *
-     * @tip You can set to `Number.POSITIVE_INFINITY` to disable server-side refreshing.
+     * @tip Set to `0` to treat translations as always stale (refetch on every load trigger).
      */
     cache?: number;
     /**
@@ -115,7 +109,7 @@ export module Config {
   };
 }
 
-export module Loader {
+export namespace Loader {
   export type Key = string;
 
   export type Locale = Config.Locale;
@@ -146,7 +140,7 @@ export module Loader {
   export type T = () => Promise<Translations.Input>;
 }
 
-export module Parser {
+export namespace Parser {
   export type Value = any;
 
   export type Params = Array<unknown>;
@@ -184,7 +178,7 @@ export module Parser {
   };
 }
 
-export module Translations {
+export namespace Translations {
   export type Locales<T = string> = T[];
 
   export type SerializedTranslations = LocaleIndexed<DotNotation.Input>;
@@ -193,16 +187,16 @@ export module Translations {
 
   export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
 
-  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => any;
+  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => string;
 
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: Config.Locale, key: string, ...restParams: P) => any;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: Config.Locale, key: string, ...restParams: P) => string;
 
   export type Translate = <P extends Parser.Params = Parser.Params>(props: {
     parser: Parser.T<P>;
     key: string;
     params: P;
     translations: SerializedTranslations;
-    locale: Locales[number];
+    locale: Locales[number] | undefined;
     fallbackLocale?: Config.FallbackLocale;
     fallbackValue?: Config.FallbackValue;
   }) => string;

@@ -200,10 +200,16 @@ chat (§3).
 - Match airbnb-typescript: 2-space indent, single quotes, semicolons, trailing
   commas, no trailing whitespace, no multiple blank lines. Let `npm run lint
   --fix` handle it.
-- Prefer the existing **functional, immutable** style in `utils.ts`
-  (computed-key spread `{ ...acc, [k]: v }`, `reduce`, no mutation). That spread
-  form has `DefineProperty` semantics — it can't pollute `Object.prototype`.
-  Keep it that way.
+- Prefer the **functional, immutable** style for shared state (computed-key
+  spread `{ ...acc, [k]: v }`, `reduce`). That spread form has `DefineProperty`
+  semantics — it can't pollute `Object.prototype`. On a **measured hot path** a
+  function-local accumulator may be built by mutation instead, but only into a
+  null-prototype object (`Object.create(null)`), and it must be finished with a
+  single spread before it escapes to consumers — that restores a normal
+  prototype while keeping the same pollution safety (see `toDotNotation`).
+  Long-lived internal state may be written in place only when it is
+  null-prototype and never exposed (see `#loadedKeys` in §11) — never a plain
+  object indexed by consumer input.
 - Keep `index.ts` for orchestration; put pure, testable logic in `utils.ts`.
 - Log through the module `logger` (`logger.error/warn/debug`), never raw
   `console`. Respect the configured level; a custom logger may omit a level —
@@ -236,7 +242,7 @@ not RCE/XSS.
   no own key is recorded and the object's prototype is replaced. Write with a
   computed-key spread (`{ ...table, [locale]: value }`, which is
   `DefineProperty`) or target an `Object.create(null)` object — that is why
-  `loadedKeys` has a null prototype. The locale-indexed accumulators in
+  `#loadedKeys` has a null prototype. The locale-indexed accumulators in
   `serialize` and `getTranslationProps` are plain objects and stay correct only
   while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole

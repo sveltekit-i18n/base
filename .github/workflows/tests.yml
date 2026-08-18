@@ -34,3 +34,9 @@ jobs:
         run: npm run test
         env:
           tests: true
+
+      # Verifies the shipped (uncompiled rune) artifact produced by svelte-package.
+      - name: Test dist
+        run: npm run test:dist
+        env:
+          tests: true
