@@ -19,7 +19,8 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 
 ## Key Features
 
-✅ **SvelteKit ready** – Full SSR and CSR support  
+✅ **Svelte 5 runes** – One reactive instance, no stores  
+✅ **Framework ready** – Full SSR and CSR support  
 ✅ **Parser-agnostic** – Use any message syntax you need  
 ✅ **Custom data sources** – Load translations from anywhere (files, APIs, databases)  
 ✅ **Module-based** – Translations load only for visited pages  
@@ -59,7 +60,7 @@ npm install @sveltekit-i18n/parser-icu
 
 ```javascript
 // src/lib/translations/index.js
-import i18n from '@sveltekit-i18n/base';
+import { I18n } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 
 /** @type {import('@sveltekit-i18n/base').Config} */
@@ -79,22 +80,27 @@ const config = {
   ],
 };
 
-export const { t, locale, locales, loading, loadTranslations } = new i18n(config);
+// One reactive instance. Do NOT destructure its value properties — reading
+// them off the instance is what makes templates reactive. (`t`/`l` are
+// functions and stay reactive even when destructured, since the tracked reads
+// happen at call time. In a component, `const { loading } = $derived(i18n)`
+// destructures value reads without losing reactivity.)
+export const i18n = new I18n(config);
 ```
 
 ### 3. Load translations in your layout
 
 ```javascript
 // src/routes/+layout.js
-import { loadTranslations } from '$lib/translations';
+import { i18n } from '$lib/translations';
 
 /** @type {import('./$types').LayoutLoad} */
 export const load = async ({ url }) => {
   const { pathname } = url;
   const initLocale = 'en';
-  
-  await loadTranslations(initLocale, pathname);
-  
+
+  await i18n.loadTranslations(initLocale, pathname);
+
   return {};
 };
 ```
@@ -103,11 +109,14 @@ export const load = async ({ url }) => {
 
 ```svelte
 <script>
-  import { t } from '$lib/translations';
+  import { i18n } from '$lib/translations';
 </script>
 
-<p>{$t('common.greeting', { name: 'World' })}</p>
+<p>{i18n.t('common.greeting', { name: 'World' })}</p>
 ```
+
+The call reads the reactive translation table and locale, so the text updates
+automatically when either changes — no stores, no `$` prefix.
 
 ## Using Different Parsers
 
@@ -223,13 +232,15 @@ preprocess: 'full' // 'full' | 'preserveArrays' | 'none' | custom function
 
 ### `cache`
 
-Server-side cache duration in milliseconds:
+Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — loaders run once per locale and key (a loader's `routes` only decide whether a load trigger considers it, not how often it runs).
+
+Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 
 ```javascript
-cache: 86400000 // Default: 24 hours
+cache: 3600000 // Translations older than 1 hour refetch on the next load
 ```
 
-Set to `Number.POSITIVE_INFINITY` to disable cache refresh.
+Set to `0` to treat translations as always stale (refetch on every load trigger). You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
 
 ### `log`
 
@@ -245,20 +256,26 @@ log: {
 
 ## API Reference
 
-### Stores
+### Reactive properties
 
-- `t` – Translation function store
-- `locale` – Current locale (writable)
-- `locales` – Available locales (readable)
-- `loading` – Loading state (readable)
-- `initialized` – Initialization state (readable)
-- `translations` – All loaded translations (readable)
+- `t(key, ...params)` – translate for the active locale (reactive function)
+- `l(locale, key, ...params)` – translate for an explicit locale
+- `locale` – the ACTIVE locale; assignment is a fire-and-forget `setLocale()`
+- `locales` – available locales
+- `loading` – `true` while any load is in flight
+- `initialized` – locale and route set, translations present
+- `translations` / `rawTranslations` – the (pre/post-preprocess) tables
 
 ### Methods
 
-- `loadTranslations(locale, route)` – Load translations for locale and route
-- `setLocale(locale)` – Change current locale
-- `setRoute(route)` – Update current route
+Load-triggering methods return the promise of the matching load — concurrent duplicate triggers share one in-flight load (and its promise) instead of fetching twice.
+
+- `loadTranslations(locale, route)` – load translations for locale and route
+- `setLocale(locale)` – request a locale; loads once a route is known
+- `setRoute(route)` – update the current route
+- `loadConfig(config)` – (re)configure the instance
+- `addTranslations(translations)` – add synchronous translations
+- `invalidate(locale?)` – mark loaded translations stale (one locale, or all); loaders run again on the next load trigger, and a load still in flight for an invalidated locale settles with its data discarded
 
 Full API documentation: [docs/README.md](./docs/README.md)
 
@@ -272,7 +289,7 @@ Full API documentation: [docs/README.md](./docs/README.md)
 ## TypeScript Support
 
 ```typescript
-import i18n, { type Config } from '@sveltekit-i18n/base';
+import { I18n, type Config } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 import type { Config as ParserConfig } from '@sveltekit-i18n/parser-default';
 

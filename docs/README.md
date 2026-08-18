@@ -14,7 +14,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 When creating an i18n instance, you can configure it with these options:
 
 ```typescript
-import i18n from '@sveltekit-i18n/base';
+import { I18n } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 
 const config = {
@@ -23,7 +23,7 @@ const config = {
   // ... other options
 };
 
-const { t, locale, loadTranslations } = new i18n(config);
+export const i18n = new I18n(config);
 ```
 
 ---
@@ -92,7 +92,7 @@ Translation namespace identifier. This acts as a prefix for translation keys.
 {
   locale: 'en',
   key: 'common',
-  // Translations will be accessible as $t('common.greeting')
+  // Translations will be accessible as i18n.t('common.greeting')
 }
 ```
 
@@ -353,8 +353,8 @@ Flattens all nested objects and arrays to dot notation.
 **Usage:**
 
 ```javascript
-$t('user.profile.name')
-$t('user.profile.settings.0')
+i18n.t('user.profile.name')
+i18n.t('user.profile.settings.0')
 ```
 
 #### `'preserveArrays'`
@@ -386,8 +386,8 @@ Flattens objects but keeps arrays intact.
 **Usage:**
 
 ```javascript
-$t('user.profile.name')
-$t('user.profile.settings')[0]  // Access array directly
+i18n.t('user.profile.name')
+i18n.t('user.profile.settings')[0]  // Access array directly
 ```
 
 **Use Case:** When you need to iterate over arrays in your components.
@@ -402,8 +402,8 @@ No preprocessing – keep original structure.
 
 ```javascript
 // Must match your JSON structure exactly
-$t('user')           // Returns entire user object
-$t('user.profile')   // Returns profile object
+i18n.t('user')           // Returns entire user object
+i18n.t('user.profile')   // Returns profile object
 ```
 
 **Use Case:** When working with complex nested structures or when your parser handles nested objects.
@@ -426,7 +426,7 @@ const config = {
 };
 
 // All keys will have 'app.' prefix
-$t('app.greeting')
+i18n.t('app.greeting')
 ```
 
 **Example 2: Transform values**
@@ -501,13 +501,13 @@ const config = {
 ```javascript
 // Current locale: 'cs'
 // Translation exists in 'cs': returns Czech translation
-$t('greeting')  // → "Ahoj"
+i18n.t('greeting')  // → "Ahoj"
 
 // Translation missing in 'cs' but exists in 'en': returns English translation
-$t('new.feature')  // → "New Feature" (from 'en')
+i18n.t('new.feature')  // → "New Feature" (from 'en')
 
 // Translation missing in both: returns fallbackValue or key
-$t('nonexistent')  // → "nonexistent"
+i18n.t('nonexistent')  // → "nonexistent"
 ```
 
 **⚠️ Performance Impact:** Both current locale and fallback locale translations are loaded, doubling network/memory usage. Use only if necessary.
@@ -529,7 +529,7 @@ Value returned when translation key is not found.
 **Default behavior:**
 
 ```javascript
-$t('unknown.key')  // → "unknown.key"
+i18n.t('unknown.key')  // → "unknown.key"
 ```
 
 **Custom fallback:**
@@ -539,7 +539,7 @@ const config = {
   fallbackValue: '...',
 };
 
-$t('unknown.key')  // → "..."
+i18n.t('unknown.key')  // → "..."
 ```
 
 **Dynamic fallback:**
@@ -549,7 +549,7 @@ const config = {
   fallbackValue: '',  // Return empty string
 };
 
-$t('unknown.key')  // → ""
+i18n.t('unknown.key')  // → ""
 ```
 
 **Use Cases:**
@@ -562,52 +562,66 @@ $t('unknown.key')  // → ""
 ### `cache`
 
 **Type:** `number` (milliseconds)  
-**Default:** `86400000` (24 hours)
+**Default:** `Number.POSITIVE_INFINITY` (never expires)
 
-Server-side cache refresh period.
+How long loaded translations stay fresh. Once a locale's translations are
+older than this window, the **next load trigger** (`loadTranslations`,
+`setLocale`, `setRoute`) runs its loaders again; nothing refetches on its own
+in the background.
 
-**Default (24 hours):**
+**Default (never expires):**
 
 ```javascript
 const config = {
-  cache: 86400000,  // Refresh every 24 hours
+  // cache: Number.POSITIVE_INFINITY — loaders run once per locale and key
 };
 ```
 
-**Disable caching:**
+The right fit for the common case: translation files ship with the app and
+change only with a deploy.
+
+**Finite cache (CMS or other runtime source):**
 
 ```javascript
 const config = {
-  cache: Number.POSITIVE_INFINITY,  // Never refresh
+  cache: 3600000,  // Translations older than 1 hour refetch on the next load
 };
 ```
 
-**Short cache (development):**
+Use this when loaders fetch from a source that can change while the app runs —
+a CMS, a translation service API, a database. Long-lived instances (e.g. a
+shared server-side instance) then pick up content updates on a later
+navigation instead of serving the first fetch forever.
+
+**Always stale:**
 
 ```javascript
 const config = {
-  cache: 60000,  // Refresh every minute
+  cache: 0,  // Refetch on every load trigger
 };
 ```
 
 **How it works:**
 
 ```
-Server starts
+Load trigger (loadTranslations / setLocale / setRoute)
    ↓
-Translations load
+Locale's translations older than `cache`? → drop its loaded state
    ↓
-Cache for X milliseconds
+Loaders not marked as loaded run again
    ↓
-After X milliseconds → reload from source
+Fresh data replaces the stale keys; freshness is stamped per locale
 ```
 
-**⚠️ Note:** Only affects server-side. Client-side cache persists for the session.
+**💡 Tip:** For event-driven refreshes (a CMS webhook, a manual "reload
+translations" action), keep the infinite default and call
+[`invalidate()`](#invalidatelocale) instead — expiry and manual invalidation
+compose.
 
 **Use Cases:**
-- **Production:** Long cache (hours/days) for performance
-- **Development:** Short cache or infinity for consistency
-- **CMS integration:** Short cache to reflect content updates
+- **Static translation files:** Keep the default — nothing ever refetches needlessly
+- **CMS integration:** Finite cache to reflect content updates, or `invalidate()` on demand
+- **Development against live content:** `cache: 0` to always see the latest data
 
 ---
 
@@ -711,394 +725,240 @@ const config = {
 
 ## Instance Properties and Methods
 
-After creating an i18n instance, you have access to these stores and methods:
+Everything lives on one reactive instance. Reading its properties is reactive
+wherever reads are tracked (component templates, `$derived`, `$effect`); the
+load-triggering methods return the promise of the **matching** load —
+concurrent duplicate triggers for the same locale and route join the load
+already in flight (and receive its promise) instead of fetching twice.
 
 ```javascript
-const { t, locale, locales, loading, initialized, translations, loadTranslations } = new i18n(config);
+export const i18n = new I18n(config);
+```
+
+Do not destructure value properties off the instance — a destructured value is
+a one-time snapshot. `t` and `l` are functions and stay reactive even when
+destructured, because their tracked reads happen at call time. To use
+destructured value reads in a component, destructure through `$derived` — each
+binding then stays in sync with the instance:
+
+```svelte
+<script>
+  import { i18n } from '$lib/translations';
+
+  const { loading, locale } = $derived(i18n);
+</script>
+
+{#if loading}Loading…{:else}{locale}{/if}
 ```
 
 ---
 
-### `t`
+### `t(key, ...params)`
 
-**Type:** `Readable<(key: string, vars?: Record<any, any>) => string> & { get: (key: string, vars?: Record<any, any>) => string }`
+**Type:** `(key: string, ...params: ParserParams) => string`
 
-Translation function store.
-
-**In Svelte components:**
+Translates `key` for the active locale.
 
 ```svelte
 <script>
-  import { t } from '$lib/translations';
+  import { i18n } from '$lib/translations';
 </script>
 
-<h1>{$t('home.title')}</h1>
-<p>{$t('greeting', { name: 'Alice' })}</p>
+<h1>{i18n.t('home.title')}</h1>
+<p>{i18n.t('greeting', { name: 'Alice' })}</p>
 ```
 
-**In JavaScript/TypeScript files:**
-
-```javascript
-import { t } from '$lib/translations';
-
-const message = t.get('home.title');
-const greeting = t.get('greeting', { name: 'Alice' });
-```
-
-**Parameters:**
-
-- `key` – Translation key (dot notation)
-- `vars` – Variables for interpolation (optional)
-- Additional parameters passed to parser
-
-**Returns:** Translated string
+The call reads the reactive translation table and locale, so the rendered text
+updates when either changes. Outside templates it is an ordinary function call.
 
 ---
 
-### `l`
+### `l(locale, key, ...params)`
 
-**Type:** `Readable<(locale: string, key: string, vars?: Record<any, any>) => string> & { get: (locale: string, key: string, vars?: Record<any, any>) => string }`
+**Type:** `(locale: string, key: string, ...params: ParserParams) => string`
 
-Locale-specific translation function. Get translation for a specific locale regardless of current locale.
-
-**Usage:**
-
-```svelte
-<script>
-  import { l } from '$lib/translations';
-</script>
-
-<!-- Always show English version -->
-<p>{$l('en', 'home.title')}</p>
-
-<!-- Always show Czech version -->
-<p>{$l('cs', 'home.title')}</p>
-
-<!-- With variables -->
-<p>{$l('en', 'greeting', { name: 'Bob' })}</p>
-```
-
-**Use Cases:**
-- Showing multiple languages simultaneously
-- Language comparison tools
-- Admin interfaces
+Like `t`, for an explicit locale — useful for rendering a language switcher in
+each language's own name.
 
 ---
 
 ### `locale`
 
-**Type:** `Writable<string> & { get: () => string }`
+**Type:** `string | undefined` (reactive; assignable)
 
-Current locale store.
-
-**Read current locale:**
-
-```svelte
-<script>
-  import { locale } from '$lib/translations';
-</script>
-
-<p>Current language: {$locale}</p>
-```
-
-**Change locale:**
+The **active** locale — the one whose translations are loaded. Assigning it is
+a shorthand for a fire-and-forget `setLocale()`, so the value advances once the
+new locale's translations resolved, not synchronously on assignment.
 
 ```svelte
 <script>
-  import { locale } from '$lib/translations';
-  
-  function switchToEnglish() {
-    locale.set('en');
-  }
+  import { i18n } from '$lib/translations';
 </script>
 
-<button on:click={switchToEnglish}>English</button>
+<p>Current language: {i18n.locale}</p>
+<button onclick={() => { i18n.locale = 'en'; }}>English</button>
 ```
 
-**In JS files:**
+Await the change explicitly when you need to know it finished:
 
 ```javascript
-import { locale } from '$lib/translations';
-
-const currentLocale = locale.get();
-locale.set('cs');
+await i18n.setLocale('cs');
 ```
 
 ---
 
 ### `locales`
 
-**Type:** `Readable<string[]>`
+**Type:** `string[]` (reactive)
 
-Array of all available locales (from loaders).
-
-**Usage:**
+All known locales (from loaders and added translations).
 
 ```svelte
-<script>
-  import { locale, locales } from '$lib/translations';
-</script>
-
-<select bind:value={$locale}>
-  {#each $locales as loc}
-    <option value={loc}>{loc}</option>
-  {/each}
-</select>
+{#each i18n.locales as loc}
+  <button onclick={() => i18n.setLocale(loc)}>{loc}</button>
+{/each}
 ```
-
-**Returns:** `['en', 'cs', 'de', ...]`
 
 ---
 
 ### `loading`
 
-**Type:** `Readable<boolean> & { toPromise: () => Promise<void[]>, get: () => boolean }`
+**Type:** `boolean` (reactive)
 
-Loading state indicator.
-
-**Show loading state:**
+`true` while **any** load is in flight; back to `false` once the last one
+settles. To wait for a specific load, await the promise returned by the method
+that started it — never poll this flag.
 
 ```svelte
-<script>
-  import { loading, t } from '$lib/translations';
-</script>
-
-{#if $loading}
-  <p>Loading translations...</p>
-{:else}
-  <p>{$t('home.title')}</p>
+{#if i18n.loading}
+  <p>Loading translations…</p>
 {/if}
-```
-
-**Wait for loading:**
-
-```javascript
-import { loading } from '$lib/translations';
-
-await loading.toPromise();
-// Translations are now loaded
-```
-
-**Check loading state:**
-
-```javascript
-if (loading.get()) {
-  console.log('Still loading...');
-}
 ```
 
 ---
 
 ### `initialized`
 
-**Type:** `Readable<boolean>`
+**Type:** `boolean` (reactive)
 
-Initialization state.
-
-**Usage:**
+`true` once a locale and route are set and translations are present. Useful to
+gate the first render:
 
 ```svelte
-<script>
-  import { initialized } from '$lib/translations';
-</script>
-
-{#if $initialized}
-  <p>App is ready!</p>
+{#if i18n.initialized}
+  <slot />
 {/if}
 ```
 
-**Use Case:** Show app content only after first translation loads.
+---
+
+### `translations` / `rawTranslations`
+
+**Type:** `Record<string, Record<string, any>>` (reactive)
+
+The locale-indexed tables — `rawTranslations` before preprocessing,
+`translations` after. Treat them as read-only; use `addTranslations()` to
+write.
 
 ---
 
-### `translations`
-
-**Type:** `Readable<{ [locale: string]: { [key: string]: string } }> & { get: () => object }`
-
-All preprocessed translations store.
-
-**Structure:**
-
-```javascript
-{
-  en: {
-    'common.greeting': 'Hello',
-    'home.title': 'Welcome',
-  },
-  cs: {
-    'common.greeting': 'Ahoj',
-    'home.title': 'Vítejte',
-  },
-}
-```
-
-**Usage:**
-
-```svelte
-<script>
-  import { translations } from '$lib/translations';
-</script>
-
-<pre>{JSON.stringify($translations, null, 2)}</pre>
-```
-
-**Use Cases:**
-- Debugging
-- Checking available translations
-- Custom translation logic
-
----
-
-### `rawTranslations`
-
-**Type:** `Readable<{ [locale: string]: { [key: string]: any } }> & { get: () => object }`
-
-All loaded translations before preprocessing.
-
-**Difference from `translations`:**
-
-- `rawTranslations`: Original nested structure
-- `translations`: After preprocessing (flattened)
-
----
-
-### `loadTranslations`
+### `loadTranslations(locale, route?)`
 
 **Type:** `(locale: string, route?: string) => Promise<void>`
 
-Load translations for a specific locale and route.
-
-**Usage in layouts:**
+Loads translations for a locale and route, and activates the locale once they
+resolved. The canonical SSR wiring:
 
 ```javascript
 // +layout.js
-import { loadTranslations } from '$lib/translations';
+import { i18n } from '$lib/translations';
 
 export const load = async ({ url }) => {
-  await loadTranslations('en', url.pathname);
+  await i18n.loadTranslations('en', url.pathname);
   return {};
 };
 ```
 
-**Parameters:**
-- `locale` – Locale to load
-- `route` – Current route (optional, for route-based loading)
-
-**What it does:**
-1. Sets the locale
-2. Finds matching loaders
-3. Executes loaders (if not cached)
-4. Preprocesses translations
-5. Updates stores
+**Errors:** a loader that throws is caught and logged individually, so one
+broken loader does not fail the batch. Anything that throws afterwards — a
+custom `preprocess`, a malformed payload — **rejects the returned promise**, so
+`await` surfaces it (in SvelteKit, straight to the error boundary). A result
+you discard is safe: the failure is logged through the configured logger and
+never becomes an unhandled rejection — but it is then only visible in the log.
 
 ---
 
-### `setLocale`
+### `setLocale(locale)`
 
-**Type:** `(locale: string) => Promise<void>`
+**Type:** `(locale?: string) => Promise<void>`
 
-Set locale and load its translations.
-
-**Usage:**
-
-```javascript
-import { setLocale } from '$lib/translations';
-
-await setLocale('cs');
-// Czech translations are now loaded and active
-```
-
-**Safety features:**
-- Converts to lowercase
-- Validates locale exists in config
-- Loads translations if not cached
+Requests a locale. If a route is already set the load starts immediately;
+otherwise it fires when the route arrives. An unknown locale (no loader, no
+`fallbackLocale` match) resolves without changing anything.
 
 ---
 
-### `setRoute`
+### `setRoute(route)`
 
 **Type:** `(route: string) => Promise<void>`
 
-Update current route and load route-specific translations.
-
-**Usage:**
-
-```javascript
-import { setRoute } from '$lib/translations';
-
-await setRoute('/products/electronics');
-// Translations for /products/* are loaded
-```
-
-**Use Case:** Manual route tracking (usually handled by `loadTranslations`).
+Updates the current route and loads route-scoped translations for the
+requested locale, if one is known.
 
 ---
 
-### `loadConfig`
+### `loadConfig(config)`
 
 **Type:** `(config: Config) => Promise<void>`
 
-Replace current configuration.
-
-**Usage:**
-
-```javascript
-import { loadConfig } from '$lib/translations';
-
-await loadConfig({
-  parser: newParser(),
-  loaders: [/* new loaders */],
-});
-```
-
-**Use Case:** Dynamic configuration (advanced scenarios).
+(Re)configures the instance — same as passing the config to the constructor.
+Safe to call fire-and-forget: a failure is reported through the logger and the
+returned promise is marked handled, while an awaiting caller still receives
+the rejection.
 
 ---
 
-### `getTranslationProps`
+### `addTranslations(translations)`
 
-**Type:** `(locale: string, route?: string) => Promise<[{ [locale: string]: Record<string, string> }, Record<string, string[]>]>`
+**Type:** `(translations: Record<string, any>) => void`
 
-Get translations and keys for a specific locale/route without storing them.
-
-**Usage:**
-
-```javascript
-import { getTranslationProps } from '$lib/translations';
-
-const [translations, keys] = await getTranslationProps('en', '/about');
-console.log(translations);  // { en: { 'about.title': 'About' } }
-console.log(keys);           // { en: ['about'] }
-```
-
-**Use Case:** Server-side pre-loading, custom caching logic.
-
----
-
-### `addTranslations`
-
-**Type:** `(translations?: { [locale: string]: Record<string, any> }, keys?: Record<string, string[]>) => void`
-
-Manually add translations to the store.
-
-**Usage:**
+Adds translations synchronously (static tables known ahead of time). Payload is
+preprocessed per `config.preprocess` and merged into the tables; already-added
+keys count as loaded, so matching loaders will not refire.
 
 ```javascript
-import { addTranslations } from '$lib/translations';
-
-addTranslations({
-  en: {
-    'custom.key': 'Custom value',
-  },
-}, {
-  en: ['custom'],
+i18n.addTranslations({
+  en: { 'lang.en': 'English', 'lang.cs': 'Czech' },
+  cs: { 'lang.en': 'Anglicky', 'lang.cs': 'Česky' },
 });
 ```
 
-**Use Cases:**
-- Manual translation injection
-- Testing
-- Dynamic translation updates
+---
+
+### `invalidate(locale?)`
+
+**Type:** `(locale?: string) => void`
+
+Marks loaded translations stale — for one locale, or for all of them when
+called without arguments. The call itself starts **no** load and the currently
+displayed translations stay in place; loaders run again on the next load
+trigger and fresh data replaces the old.
+
+```javascript
+// A CMS webhook / admin action told us the English content changed:
+i18n.invalidate('en');
+
+// Nothing happens yet — the next navigation (or explicit load) refetches:
+await i18n.loadTranslations('en', location.pathname);
+```
+
+A load already in flight when `invalidate()` is called is severed: it still
+settles, but its data is discarded — it predates the invalidation — and the
+next load trigger starts a fresh fetch instead of joining it.
+
+Works independently of `config.cache`: with the default infinite cache it is
+the way to pick up runtime content changes; with a finite cache it forces a
+refresh before the window elapses.
 
 ---
 
@@ -1107,7 +967,7 @@ addTranslations({
 Full TypeScript support with complete type definitions:
 
 ```typescript
-import i18n, { type Config } from '@sveltekit-i18n/base';
+import { I18n, type Config } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 import type { Config as ParserConfig } from '@sveltekit-i18n/parser-default';
 
@@ -1122,14 +982,14 @@ const config: Config<ParserConfig> = {
   ],
 };
 
-export const { t, locale, locales, loading, loadTranslations } = new i18n(config);
+export const i18n = new I18n(config);
 ```
 
 The library provides:
 - ✅ Complete type definitions for configuration
-- ✅ Typed API methods and stores
+- ✅ Typed methods and reactive properties (`t` returns `string`)
 - ✅ Generic types for custom parser integration
-- ❌ Automatic translation key inference (not built-in)
+- ❌ Automatic translation key inference (planned for the type generator)
 
 For type-safe translation keys, see [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
 

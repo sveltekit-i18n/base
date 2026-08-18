@@ -30,10 +30,10 @@ translation state, loading, caching, route matching, and preprocessing — but
 |--------|---------|
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
-| Build | `tsup` → `dist/` (ESM + `.d.ts`, no CJS) |
-| Tests | Vitest (`vitest.config.ts`), environment `node` |
+| Build | `svelte-package` → `dist/` (per-file ESM + `.d.ts`; rune modules ship UNCOMPILED) |
+| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node` |
 | Lint | ESLint `airbnb-typescript/base` |
-| Runtime peer | `svelte >=3.49.0` (uses `svelte/store` only) |
+| Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
 | CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows |
 
 ## Commands
@@ -41,39 +41,63 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Command | Purpose |
 |---------|---------|
 | `npm install` / `npm ci` | install (respects `package-lock.json`) |
-| `npm run build` | tsup build to `dist/` |
+| `npm run dev` | `svelte-package` build in watch mode |
+| `npm run build` | `svelte-package` build to `dist/` |
 | `npm test` | vitest suite (runs `typecheck` first) |
-| `npm run typecheck` | `tsc --noEmit` over `src` **and** the repo's `*.js` configs |
+| `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
+| `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs |
 | `npm run lint` | eslint `--fix` over `.ts`/`.js` (also a pre-commit hook) |
 
 ## Repository map
 
 | Path | Role |
 |------|------|
-| `src/index.ts` | `class I18n` — public stores & methods, orchestration |
-| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`, `checkProps`) |
+| `src/index.ts` | entry — re-exports the class and public types |
+| `src/I18n.svelte.ts` | `class I18n` — the runes-based core (state, loading, orchestration) |
+| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
-| `tests/specs/index.spec.ts` | the suite (one `describe`) |
+| `tests/specs/index.spec.ts` | the suite |
+| `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
-| `vitest.config.ts` | test runner config |
-| `tsconfig.tools.json` | type-checks the repo's own `*.js` config files |
+| `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs (see the rolldown filter workaround note inside) |
 
 ## Architecture you must respect
 
-- **Store-centric.** The public surface is Svelte stores (`t`, `l`, `locale`,
-  `locales`, `loading`, `initialized`, `translations`, `rawTranslations`) plus
-  methods (`loadTranslations`, `loadConfig`, `setLocale`, `setRoute`,
-  `addTranslations`, `getTranslationProps`). Each store is an `ExtendedStore` —
-  a Svelte store **plus** a synchronous `.get()`, so it works both in `.svelte`
-  (`$store`) and plain `.ts`/`.js` (`store.get()`). Preserve this dual shape on
-  anything public.
-- **Loaders are lazy and run once.** A loader fires only when its `locale`
-  matches and its `routes` match the current route (or it has no `routes`).
-  `loadedKeys` prevents refetching; the server-side `cache` window (default 24h)
-  controls refresh. Don't break load-once semantics.
+- **Runes-based core.** All state lives as `$state`/`$derived` class fields in
+  `src/I18n.svelte.ts` — a `.svelte.ts` module compiled by the CONSUMER's
+  bundler, not at publish time. The public surface is one reactive instance:
+  properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
+  `rawTranslations`), reactive functions (`t`, `l`), promise-returning
+  methods (`loadTranslations`, `loadConfig`, `setLocale`, `setRoute`) and
+  the synchronous `addTranslations` and
+  `invalidate`. There are no stores and no `.get()` duals — reads are plain
+  property/method access and are reactive wherever reads are tracked.
+- **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
+  `setRoute`/`loadTranslations` start loads directly and return the promise of
+  the MATCHING load — concurrent duplicate triggers for the same locale and
+  route join the in-flight load instead of fetching twice; `loading` is
+  derived from the set of in-flight loads. There is no loader-trigger store,
+  no promise purge, no `toPromise()`. A failed load rejects the caller's
+  promise; a discarded one is reported through the logger and never becomes an
+  unhandled rejection.
+- **`locale` advances after its load — last request wins.** Reading `locale`
+  gives the ACTIVE locale; assigning it is a fire-and-forget `setLocale()`.
+  Never surface a locale whose translations have not resolved, and never let a
+  superseded load overwrite the most recently requested locale when loads
+  resolve out of order.
+- **Loaders are lazy and run once per freshness window.** A loader fires only
+  when its `locale` matches and its `routes` match the current route (or it
+  has no `routes`). `loadedKeys` (null-prototype, keyed by user-supplied
+  locales) prevents refetching; per-locale expiry (`config.cache`, default
+  `Infinity` — never expires) and `invalidate(locale?)` drop that bookkeeping
+  so the NEXT load trigger refetches. Invalidation also severs matching
+  in-flight loads — a severed load settles but applies nothing, so its
+  pre-invalidation data cannot resurrect the dropped bookkeeping. Neither
+  expiry nor `invalidate` ever removes displayed translations or starts a
+  load by itself. Don't break load-once semantics.
 - **Parser is injected, never imported.** `translate()` calls
   `config.parser.parse(value, params, locale, key)`.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
@@ -85,8 +109,9 @@ translation state, loading, caching, route matching, and preprocessing — but
 
 1. **Zero runtime dependencies.** `dependencies` stays empty; `svelte` is a
    peer dep. Adding a runtime dep is a blocking change — stop and ask.
-2. **No breaking changes** to public store/method shapes or `types.ts` exports.
-   Consumers read `$translations['en']['key']`, etc.
+2. **No breaking changes** to the public instance surface or `types.ts`
+   exports. Consumers read `i18n.translations['en']['key']`, call
+   `i18n.t('key')` in templates, and await the load methods.
 3. **Parser-agnostic.** No imports from `@sveltekit-i18n/parser-*`.
 4. **ESM-only (single ESM artifact, no CJS), npm-only, Node 22+.**
 5. **`dist/` is generated** — never hand-edit; never commit unrelated `dist`
@@ -243,7 +268,7 @@ not RCE/XSS.
   computed-key spread (`{ ...table, [locale]: value }`, which is
   `DefineProperty`) or target an `Object.create(null)` object — that is why
   `#loadedKeys` has a null prototype. The locale-indexed accumulators in
-  `serialize` and `getTranslationProps` are plain objects and stay correct only
+  `serialize` and `#getTranslationProps` are plain objects and stay correct only
   while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
   batch; a missing config/parser must not throw on `t.get()`/`l.get()`.
@@ -263,10 +288,15 @@ not RCE/XSS.
 
 ## 13. Tests
 
-- Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`.
-- Drive behavior through the **public API** (`new i18n(CONFIG)`, stores,
-  methods). Pure helpers may be imported directly from `src/` when that yields a
-  more deterministic test (e.g. unit-testing `loggerFactory`).
+- Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`. The
+  exception is `tests/specs/dist.spec.ts`, which exercises the SHIPPED artifact
+  and runs separately via `npm run test:dist` (which builds first).
+- Drive behavior through the **public API** (`new i18n(CONFIG)`, reactive
+  properties, awaited method returns). Pure helpers may be imported directly
+  from `src/` when that yields a more deterministic test (e.g. unit-testing
+  `loggerFactory`).
+- Wait on awaitable promises or observable state, never on wall-clock sleeps —
+  the CI matrix has six legs and timing-based tests flake on the slow ones.
 - **Bug fixes are test-driven (red → green).** Write a test that reproduces the
   bug, confirm it **fails** against the unfixed code, then fix, then watch it
   pass. State that you verified both directions. Commit the regression test
