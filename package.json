@@ -53,6 +53,8 @@
     "svelte": ">=3.49.0"
   },
   "devDependencies": {
+    "@sveltejs/package": "^2.5.8",
+    "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@types/node": "^26.2.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
@@ -60,6 +62,7 @@
     "eslint-config-airbnb-typescript": "^17.1.0",
     "eslint-plugin-import": "^2.25.3",
     "pre-commit": "^1.2.2",
+    "svelte": "^5.56.9",
     "tsup": "^8.0.1",
     "typescript": "^5.1.6",
     "vitest": "^4.1.10"
