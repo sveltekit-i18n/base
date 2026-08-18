@@ -1,3 +1,4 @@
+import { describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import i18n from '../../src/index';
 import { loggerFactory } from '../../src/logger';
@@ -13,21 +14,20 @@ describe('i18n instance', () => {
   it('exports all properties and methods', () => {
     const instance = new i18n();
 
-    const { toHaveProperty } = expect(instance);
-
-    toHaveProperty('loading');
-    toHaveProperty('initialized');
-    toHaveProperty('locale');
-    toHaveProperty('locales');
-    toHaveProperty('translations');
-    toHaveProperty('rawTranslations');
-    toHaveProperty('t');
-    toHaveProperty('l');
-    toHaveProperty('loadConfig');
-    toHaveProperty('loadTranslations');
-    toHaveProperty('addTranslations');
-    toHaveProperty('setLocale');
-    toHaveProperty('setRoute');
+    // Called per property: destructured matchers are not bound in vitest.
+    expect(instance).toHaveProperty('loading');
+    expect(instance).toHaveProperty('initialized');
+    expect(instance).toHaveProperty('locale');
+    expect(instance).toHaveProperty('locales');
+    expect(instance).toHaveProperty('translations');
+    expect(instance).toHaveProperty('rawTranslations');
+    expect(instance).toHaveProperty('t');
+    expect(instance).toHaveProperty('l');
+    expect(instance).toHaveProperty('loadConfig');
+    expect(instance).toHaveProperty('loadTranslations');
+    expect(instance).toHaveProperty('addTranslations');
+    expect(instance).toHaveProperty('setLocale');
+    expect(instance).toHaveProperty('setRoute');
   });
   it('`setRoute` method does not trigger loading if locale is not set', async () => {
     const { initialized, setRoute, loading, locale } = new i18n({ loaders, parser, log });
@@ -483,8 +483,8 @@ describe('i18n instance', () => {
     );
   });
   it('logger works as expected', async () => {
-    const debug = import.meta.jest.spyOn(console, 'debug');
-    const warn = import.meta.jest.spyOn(console, 'warn');
+    const debug = vi.spyOn(console, 'debug');
+    const warn = vi.spyOn(console, 'warn');
 
     const { loading } = new i18n({
       ...CONFIG,
@@ -532,7 +532,7 @@ describe('i18n instance', () => {
   it('skips silently when a custom logger omits a level', () => {
     // Custom logger implementing only `warn` – an unimplemented level must be
     // skipped silently rather than throwing a TypeError.
-    const warn = import.meta.jest.fn();
+    const warn = vi.fn();
     const partialLogger = { warn } as any;
 
     const log = loggerFactory({ level: 'debug', logger: partialLogger });
@@ -553,7 +553,7 @@ describe('i18n instance', () => {
     expect(translate({ ...base, parser: undefined as any, key: 'missing', fallbackValue: 'FB' })).toBe('FB');
   });
   it('falls back to `warn` level for an unknown configured level', () => {
-    const logger = { error: import.meta.jest.fn(), warn: import.meta.jest.fn(), debug: import.meta.jest.fn() } as any;
+    const logger = { error: vi.fn(), warn: vi.fn(), debug: vi.fn() } as any;
 
     // An invalid level must not silence everything; it behaves as the default 'warn'.
     const log = loggerFactory({ level: 'info' as any, logger });
