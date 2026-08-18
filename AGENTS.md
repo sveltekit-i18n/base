@@ -30,7 +30,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 |--------|---------|
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
-| Build | `tsup` → `dist/` (CJS + ESM + `.d.ts`) |
+| Build | `tsup` → `dist/` (ESM + `.d.ts`, no CJS) |
 | Tests | Jest + `ts-jest` ESM preset, `testEnvironment: node` |
 | Lint | ESLint `airbnb-typescript/base` |
 | Runtime peer | `svelte >=3.49.0` (uses `svelte/store` only) |
@@ -86,7 +86,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 2. **No breaking changes** to public store/method shapes or `types.ts` exports.
    Consumers read `$translations['en']['key']`, etc.
 3. **Parser-agnostic.** No imports from `@sveltekit-i18n/parser-*`.
-4. **ESM-only, npm-only, Node 18-compatible.**
+4. **ESM-only (single ESM artifact, no CJS), npm-only, Node 22+.**
 5. **`dist/` is generated** — never hand-edit; never commit unrelated `dist`
    churn.
 
