@@ -16,6 +16,8 @@
   },
   "scripts": {
     "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.tools.json",
+    "pretest": "npm run typecheck",
     "test": "npx cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "build": "tsup",
     "prepublishOnly": "npm run build",

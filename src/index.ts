@@ -28,7 +28,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   private cachedAt = 0;
 
-  private loadedKeys: Loader.IndexedKeys = {};
+  // Null prototype: this cache is indexed by user-supplied locales, and a
+  // plain object would resolve a '__proto__' assignment via the setter.
+  private loadedKeys: Loader.IndexedKeys = Object.create(null);
 
   private currentRoute: Writable<string> = writable();
 
@@ -228,7 +230,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       this.cachedAt = Date.now();
     } else if (Date.now() > cacheValue + this.cachedAt) {
       logger.debug('Refreshing cache.');
-      this.loadedKeys = {};
+      this.loadedKeys = Object.create(null);
       this.cachedAt = 0;
     }
 
@@ -263,8 +265,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         this.isLoading.set(false);
       }
 
-      const loadedKeys = Object.keys(rawTranslations).reduce(
-        (acc, locale) => ({ ...acc, [locale]: Object.keys(rawTranslations[locale]) }), {} as Loader.IndexedKeys,
+      const loadedKeys = Object.entries(rawTranslations).reduce(
+        (acc, [locale, data]) => ({ ...acc, [locale]: Object.keys(data) }), {} as Loader.IndexedKeys,
       );
 
       const keys = filteredLoaders
@@ -273,7 +275,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         ))
         .reduce<Record<string, any>>((acc, { key, locale }) => ({
         ...acc,
-        [locale]: [...(acc[locale] || []), key],
+        [locale]: [...(read<Loader.Key[]>(acc, locale) || []), key],
       }), {});
 
       return [rawTranslations, keys];
@@ -296,8 +298,8 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       (acc, locale) => ({
         ...acc,
         [locale]: {
-          ...(acc[locale] || {}),
-          ...translations[locale],
+          ...(read(acc, locale) || {}),
+          ...read(translations, locale),
         },
       }),
       $rawTranslations,
@@ -306,7 +308,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     this.privateTranslations.update(($translations) => translationLocales.reduce(
       (acc, locale) => {
         let dotnotate = true;
-        let input = translations[locale];
+        let input = read(translations, locale);
 
         if (typeof preprocess === 'function') {
           input = preprocess(input);
@@ -319,7 +321,7 @@ export default class I18n<ParserParams extends Parser.Params = any> {
         return ({
           ...acc,
           [locale]: {
-            ...(acc[locale] || {}),
+            ...(read(acc, locale) || {}),
             ...dotnotate ? toDotNotation(input, preprocess === 'preserveArrays') : input,
           },
         });
@@ -328,7 +330,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     ));
 
     translationLocales.forEach(($locale) => {
-      let localeKeys: Loader.Key[] | undefined = Object.keys(translations[$locale]).map((k) => `${k}`.split('.')[0]);
+      // A `null` payload for a locale must not take the whole call down: every
+      // step above tolerates it, so this bookkeeping read does too.
+      let localeKeys: Loader.Key[] | undefined = Object.keys(read(translations, $locale) || {}).map((k) => `${k}`.split('.')[0]);
       if (keys) localeKeys = read(keys, $locale);
 
       this.loadedKeys[$locale] = Array.from(new Set([

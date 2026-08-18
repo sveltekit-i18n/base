@@ -6,8 +6,10 @@
     "outDir": "lib",
     "sourceMap": false,
     "strict": true,
-    "target": "es2017",
-    "moduleResolution": "node",
+    // tsup inherits this as the published bundle's language level; the suite
+    // compiles with the same config, so tests and artifact share one semantics.
+    "target": "es2022",
+    "moduleResolution": "bundler",
     "noEmit": true,
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
