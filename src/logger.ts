@@ -8,7 +8,7 @@ export const loggerFactory = ({ logger = console, level = loggerLevels[1], prefi
 
   return loggerLevels.reduce((acc, key, i) => ({
     ...acc,
-    [key]: (value: any) => {
+    [key]: (message: string, error?: unknown) => {
       if (levelIndex < i) return undefined;
       try {
         // Inside the `try`: the logger is consumer code — it can be null, omit
@@ -16,7 +16,12 @@ export const loggerFactory = ({ logger = console, level = loggerLevels[1], prefi
         // nothing awaits, where a throw would become an unhandled rejection.
         if (typeof logger[key] !== 'function') return undefined;
 
-        return logger[key](`${prefix}${value}`);
+        // The prefix applies to the message only; the error passes through raw
+        // so the logger formats its stack (or serializes it) itself. Forwarded
+        // only when present — `console` would otherwise print `undefined`.
+        if (error === undefined) return logger[key](`${prefix}${message}`);
+
+        return logger[key](`${prefix}${message}`, error);
       } catch {
         return undefined;
       }
@@ -28,9 +33,8 @@ export let logger = loggerFactory({});
 
 export const setLogger = (l: Logger.T) => { logger = l; };
 
-// Single shape for every reported failure: context first, then the error,
-// which the configured logger formats like any other value.
-export const logError = (message: string, error?: any) => {
-  logger.error(message);
-  logger.error(error);
+// Single shape for every reported failure: the context message first, the raw
+// error alongside it, in one call — so a consumer's logger sees them together.
+export const logError = (message: string, error?: unknown) => {
+  logger.error(message, error);
 };

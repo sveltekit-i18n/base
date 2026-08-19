@@ -321,9 +321,12 @@ Full API documentation: [docs/README.md](./docs/README.md)
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
-import type { Config as ParserConfig } from '@sveltekit-i18n/parser-default';
 
-const config: Config<ParserConfig> = {
+// The parser's params – the rest parameters of `t`/`l`. Annotate only when the
+// config lives on its own; `new I18n({ ... })` infers them.
+type Params = [payload?: Record<string, unknown>];
+
+const config: Config.T<Params> = {
   parser: parser(),
   loaders: [/* ... */],
 };

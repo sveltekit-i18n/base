@@ -5,10 +5,10 @@ import type { Config, Extension, Loader, Parser, Translations } from './types.js
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
-class I18nCore<ParserParams extends Parser.Params = any> {
+class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> {
   // -- reactive state ---------------------------------------------------------
 
-  #config = $state<Config.T<ParserParams> | undefined>(undefined);
+  #config = $state<Config.T<ParserParams, ParserOutput> | undefined>(undefined);
 
   /** The ACTIVE locale — advances only after its translations resolved. */
   #locale = $state<Config.Locale | undefined>(undefined);
@@ -37,7 +37,7 @@ class I18nCore<ParserParams extends Parser.Params = any> {
   /** In-flight loads keyed by locale and route; duplicate triggers share the promise. */
   #inflight = new Map<string, Promise<void>>();
 
-  constructor(config?: Config.T<ParserParams>) {
+  constructor(config?: Config.T<ParserParams, ParserOutput>) {
     if (config) void this.loadConfig(config);
 
     // A constructor may return a substitute object: the instance is folded
@@ -95,10 +95,10 @@ class I18nCore<ParserParams extends Parser.Params = any> {
    * tracked: the call reads the translation table and locale, so a component
    * using `{i18n.t('key')}` re-renders when either changes.
    */
-  t: Translations.TranslationFunction<ParserParams> = (key, ...params) => {
-    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams>;
+  t: Translations.TranslationFunction<ParserParams, ParserOutput> = (key, ...params) => {
+    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
-    return translate<ParserParams>({
+    return translate<ParserParams, ParserOutput>({
       parser,
       key,
       params,
@@ -110,10 +110,10 @@ class I18nCore<ParserParams extends Parser.Params = any> {
   };
 
   /** Like `t`, for an explicit locale. */
-  l: Translations.LocalTranslationFunction<ParserParams> = (locale, key, ...params) => {
-    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams>;
+  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput> = (locale, key, ...params) => {
+    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
-    return translate<ParserParams>({
+    return translate<ParserParams, ParserOutput>({
       parser,
       key,
       params,
@@ -130,7 +130,7 @@ class I18nCore<ParserParams extends Parser.Params = any> {
    * Applies a config. Overridable extension seam — `sveltekit-i18n` wires its
    * default parser by extending this method.
    */
-  async configLoader(config: Config.T<ParserParams>) {
+  async configLoader(config: Config.T<ParserParams, ParserOutput>) {
     if (!config) {
       logger.error('No config provided!');
       return;
@@ -154,6 +154,18 @@ class I18nCore<ParserParams extends Parser.Params = any> {
       ...rest,
     };
 
+    // Report-only: the loader still runs, but `.` is the dot-notation
+    // separator, so a dotted key collides with the flattened namespace.
+    // `String` rather than a template literal — interpolating a Symbol throws,
+    // and a config-time report must not abort the rest of the config load.
+    (rest.loaders ?? []).forEach(({ key }) => {
+      const name = key == null ? '' : String(key);
+
+      if (name.includes('.')) {
+        logger.error(`Invalid '${name}' loader key. It shouldn't include the '.' character.`);
+      }
+    });
+
     // A reconfiguration can swap loaders or cache policy — bookkeeping from
     // the previous config must not suppress the new loaders.
     this.invalidate();
@@ -167,7 +179,7 @@ class I18nCore<ParserParams extends Parser.Params = any> {
    * promise marked handled, so a fire-and-forget call cannot become an
    * unhandled rejection; an awaiting caller still receives it.
    */
-  loadConfig = (config: Config.T<ParserParams>) => {
+  loadConfig = (config: Config.T<ParserParams, ParserOutput>) => {
     const promise = this.configLoader(config);
 
     promise.catch((error) => logError('Failed to load the i18n config.', error));
@@ -269,7 +281,7 @@ class I18nCore<ParserParams extends Parser.Params = any> {
 
     logger.debug('Fetching translations...');
 
-    const rawTranslations = await fetchTranslations(filteredLoaders);
+    const rawTranslations = await fetchTranslations(filteredLoaders, route);
 
     const loadedKeys = Object.entries(rawTranslations).reduce(
       (acc, [translationLocale, data]) => ({ ...acc, [translationLocale]: Object.keys(data ?? {}) }),
@@ -506,14 +518,15 @@ class I18nCore<ParserParams extends Parser.Params = any> {
 /**
  * A class declaration cannot annotate its constructor's return type, so the
  * extension pipe's construction-time type lives on this construct signature
- * instead: parser params are inferred from `config.parser`, and the returned
- * surface is the instance type folded through the `config.extensions` tuple
- * (`const` keeps it a tuple without `as const` at the call site).
+ * instead: parser params and output are inferred from `config.parser`, and
+ * the returned surface is the instance type folded through the
+ * `config.extensions` tuple (`const` keeps it a tuple without `as const` at
+ * the call site).
  */
 interface I18nConstructor {
-  new <const C extends Config.T<any> = Config.T<any>>(
+  new <const C extends Config.T<any, any> = Config.T<any, any>>(
     config?: C
-  ): Extension.Piped<I18nCore<Parser.FromConfig<C>>, Extension.FromConfig<C>>;
+  ): Extension.Piped<I18nCore<Parser.FromConfig<C>, Parser.OutputFromConfig<C>>, Extension.FromConfig<C>>;
 }
 
 // The raw class is deliberately not exported — every consumer constructs
@@ -521,7 +534,7 @@ interface I18nConstructor {
 // meanings: the value is the facade, the type is the un-piped instance.
 const I18n = I18nCore as unknown as I18nConstructor;
 
-type I18n<ParserParams extends Parser.Params = any> = I18nCore<ParserParams>;
+type I18n<ParserParams extends Parser.Params = any, ParserOutput = string> = I18nCore<ParserParams, ParserOutput>;
 
 export { I18n };
 export default I18n;
