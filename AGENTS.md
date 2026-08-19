@@ -205,6 +205,12 @@ differently.**
 
 - **Default branch is `master`** (verify via `git remote show origin` if
   unsure). Never commit straight to it; never force-push a shared branch.
+- **`master` carries only finished product.** Nothing merges that is not
+  complete and shippable as-is — no temporary bootstraps or workarounds for
+  unpublished dependencies, no half-built surfaces. Branch-only scaffolding
+  (e.g. a `file:` dev dependency standing in for an unpublished package) is
+  removed before merge; until its precondition is met, the PR waits as a
+  draft.
 - **Branch from `master`, not from whatever HEAD happens to be:**
   `git fetch origin && git switch master && git pull --ff-only`, then create the
   branch. Use a descriptive prefix: `fix/<slug>`, `feat/<slug>`,
