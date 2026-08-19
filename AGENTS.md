@@ -300,6 +300,8 @@ not RCE/XSS.
   constraint, an invariant, a non-obvious workaround). Never reference the
   current task, a fixed bug, or a PR number — that rots.
 - A name that needs a comment to explain it is the wrong name — fix the name.
+- If you need a paragraph-long comment to justify why the workaround is OK,
+  the code is wrong — fix the code.
 - **All committed/published artifacts in English** — code comments, commit
   messages, PR titles/bodies, doc files. Chat may stay in the user's preferred
   language; the moment it crosses into something on GitHub, switch to English.
