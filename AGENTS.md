@@ -23,6 +23,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 - **`base`** (here) — core, parser-agnostic, zero runtime deps.
 - **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-default`.
 - **`parsers`** — `parser-default`, `parser-icu`.
+- **`extensions`** — official extensions for the `config.extensions` pipe
+  (e.g. `extension-stores`).
 
 ## Tech stack (ground truth — do not assume otherwise)
 
@@ -54,7 +56,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Path | Role |
 |------|------|
 | `src/index.ts` | entry — re-exports the class and public types |
-| `src/I18n.svelte.ts` | `class I18n` — the runes-based core (state, loading, orchestration) |
+| `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
 | `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
@@ -101,6 +103,15 @@ translation state, loading, caching, route matching, and preprocessing — but
   load by itself. Don't break load-once semantics.
 - **Parser is injected, never imported.** `translate()` calls
   `config.parser.parse(value, params, locale, key)`.
+- **`config.extensions` is a construction-time pipe.** The constructor returns
+  the instance folded through the extensions left to right, so
+  `new I18n(config)` evaluates to the last extension's output; `loadConfig()`
+  strips the property and never re-pipes. Because a class cannot annotate its
+  constructor's return type, the exported `I18n` is a typed facade over the
+  local `I18nCore` class (a construct signature folds the type through the
+  tuple); the same exported name is also the instance TYPE. The raw class is
+  deliberately not exported. Extensions run after the synchronous prefix of
+  the config load — they receive a configured instance.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep

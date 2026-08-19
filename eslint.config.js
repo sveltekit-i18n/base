@@ -23,6 +23,11 @@ export default tseslint.config(
       // Until then the unsafe-* family only restates that decision on every
       // line the payload flows through, so it is off; async correctness rules
       // (no-floating-promises, no-misused-promises, require-await) stay on.
+      // Omission destructuring (`const { dropped, ...rest } = obj`) is this
+      // codebase's idiom for excluding keys immutably — a rest sibling marks
+      // the extracted names as intentionally unused (tsc's noUnusedLocals
+      // already treats them that way).
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',

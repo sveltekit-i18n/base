@@ -625,6 +625,71 @@ compose.
 
 ---
 
+### `extensions`
+
+**Type:** `readonly Extension.T[]` (optional)
+
+Extension functions the constructed instance is piped through, left to right.
+Each extension receives the surface produced so far — the raw instance for the
+first one — and returns the surface handed on. `new I18n(config)` evaluates to
+the **last extension's output**.
+
+**Using an official extension:**
+
+```javascript
+import { I18n } from '@sveltekit-i18n/base';
+import stores from '@sveltekit-i18n/extension-stores';
+
+const { t, locale, loading } = new I18n({
+  ...config,
+  extensions: [stores],
+});
+```
+
+**Writing your own** — an extension is just a function. It may augment the
+instance in place:
+
+```javascript
+const withGreeting = (i18n) => Object.assign(i18n, {
+  greet: (name) => i18n.t('common.greeting', { name }),
+});
+
+export const i18n = new I18n({ ...config, extensions: [withGreeting] });
+
+i18n.greet('World');
+```
+
+…or replace the surface entirely:
+
+```javascript
+const minimal = (i18n) => ({
+  t: i18n.t,
+  setLocale: i18n.setLocale,
+  instance: i18n,
+});
+```
+
+**Behavior:**
+
+- **Construction-time only.** The pipe runs once, inside the constructor. A
+  later `loadConfig()` call ignores this property — it cannot re-pipe an
+  already-constructed surface.
+- **Extensions receive a configured instance.** The synchronous part of the
+  config load (config assignment, `translations`, `initLocale` bookkeeping)
+  has already happened when the first extension runs.
+- **`instanceof` caveat.** When an extension returns a new object, the result
+  is no longer `instanceof I18n`. The original instance stays reachable through
+  whatever the extension exposes — the official extensions expose it as
+  `instance`.
+- **Typed end to end.** The type of `new I18n(config)` folds through the
+  `extensions` tuple, so the expression's type is the last extension's return
+  type (see [TypeScript](#typescript)).
+
+Official extensions live in the
+[extensions](https://github.com/sveltekit-i18n/extensions) repository.
+
+---
+
 ### `log.level`
 
 **Type:** `'error' | 'warn' | 'debug'`  
@@ -990,6 +1055,36 @@ The library provides:
 - ✅ Typed methods and reactive properties (`t` returns `string`)
 - ✅ Generic types for custom parser integration
 - ❌ Automatic translation key inference (planned for the type generator)
+
+### Extensions and the constructor's type
+
+`new I18n(config)` is typed through a construct signature that folds the
+instance type through the `config.extensions` tuple — the expression's type is
+the **last extension's return type**, inferred without any manual annotation:
+
+```typescript
+import { I18n, type Extension } from '@sveltekit-i18n/base';
+import stores from '@sveltekit-i18n/extension-stores';
+
+// Typed as the store adapter's output — destructuring is fully typed:
+const { t, locale, loading } = new I18n({ ...config, extensions: [stores] });
+```
+
+A custom extension only needs an accurate function type — `Extension.T<I, O>`
+is `(input: I) => O`:
+
+```typescript
+const withGreeting = (i18n: I18n) => Object.assign(i18n, {
+  greet: (name: string) => i18n.t('common.greeting', { name }),
+});
+
+// Typed as I18n & { greet: (name: string) => string }:
+export const i18n = new I18n({ ...config, extensions: [withGreeting] });
+```
+
+Without `extensions`, the expression is a plain `I18n<ParserParams>` — the
+exported `I18n` name is both the constructor value and the instance type, so
+`const i: I18n = new I18n(config)` works as before.
 
 For type-safe translation keys, see [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
 

@@ -103,10 +103,49 @@ export namespace Config {
      */
     cache?: number;
     /**
+     * Extensions the constructed instance is piped through, left to right.
+     * Each extension receives the surface produced so far — the raw `I18n`
+     * instance for the first one, the previous extension's output for the
+     * next — and returns the surface handed on, so `new I18n(config)`
+     * evaluates to the LAST extension's output. Applied by the constructor
+     * only; a later `loadConfig()` ignores this property.
+     *
+     * @example
+     * import stores from '@sveltekit-i18n/extension-stores';
+     *
+     * const { t, locale, loading } = new I18n({ ...config, extensions: [stores] });
+     */
+    extensions?: readonly Extension.T[];
+    /**
      * Custom logger configuration.
      */
     log?: Logger.FactoryProps;
   };
+}
+
+export namespace Extension {
+  export type Input = any;
+
+  export type Output = any;
+
+  /**
+   * An extension is a plain function over the constructed surface. It may
+   * augment its input in place and return it, or return a brand-new surface —
+   * the constructor just folds the instance through the configured extensions.
+   */
+  export type T<I = Input, O = Output> = (input: I) => O;
+
+  /** The `extensions` tuple carried by a config; `[]` when absent. */
+  export type FromConfig<C> = C extends { extensions: infer E extends readonly T[] } ? E : [];
+
+  /**
+   * Folds a surface type through an extension tuple, left to right — the
+   * construction-time type of `new I18n(config)`. A non-tuple `extensions`
+   * array (or none at all) degrades to the plain instance type.
+   */
+  export type Piped<Instance, Extensions> = Extensions extends readonly [T<any, infer O>, ...infer Rest]
+    ? Piped<O, Rest>
+    : Instance;
 }
 
 export namespace Loader {
@@ -176,6 +215,9 @@ export namespace Parser {
     */
     parse: Parse<P>;
   };
+
+  /** The parser params carried by a config's `parser`; `any` when unknown. */
+  export type FromConfig<C> = C extends { parser: T<infer P> } ? P : any;
 }
 
 export namespace Translations {
