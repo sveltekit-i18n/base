@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
+import type { I18n } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -467,6 +468,96 @@ describe('i18n instance', () => {
 
     expect(() => instance.t('common.key')).not.toThrow();
     expect(() => instance.l('en', 'common.key')).not.toThrow();
+  });
+});
+
+describe('i18n extensions', () => {
+  it('constructs the plain instance when no extensions are configured', () => {
+    // Assignability doubles as the type-level assertion: without extensions
+    // the construction-time type stays the instance type.
+    const instance: I18n = new i18n({ parser, log });
+
+    expect(instance).toBeInstanceOf(i18n);
+  });
+  it('pipes the instance through the extensions left to right', () => {
+    const order: string[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      extensions: [
+        (input: I18n) => { order.push('first'); return Object.assign(input, { first: true as const }); },
+        (input: I18n & { first: true }) => { order.push('second'); return Object.assign(input, { second: true as const }); },
+      ],
+    });
+
+    expect(order).toEqual(['first', 'second']);
+    // Property accesses double as type-level assertions: the construction-time
+    // type is the instance folded through the extension tuple.
+    expect(instance.first).toBe(true);
+    expect(instance.second).toBe(true);
+    expect(instance).toBeInstanceOf(i18n);
+  });
+  it('an augmenting extension keeps the instance surface intact', () => {
+    // Synchronous translations + `initLocale` activate the locale within the
+    // constructor, so `t` resolves right after construction.
+    const instance = new i18n({
+      parser,
+      log,
+      initLocale: 'en',
+      translations: { en: { 'common.key': 'value' } },
+      extensions: [(input: I18n) => Object.assign(input, { flag: true as const })],
+    });
+
+    expect(instance.flag).toBe(true);
+    // The no-op test parser returns the key, so `t` resolving proves the
+    // reactive surface survived the pipe.
+    expect(instance.t('common.key')).toBe('common.key');
+  });
+  it('a transforming extension replaces the constructed surface', () => {
+    const instance = new i18n({
+      parser,
+      log,
+      initLocale: 'en',
+      translations: { en: { 'common.key': 'value' } },
+      extensions: [(input: I18n) => ({ translate: input.t, instance: input })],
+    });
+
+    expect(instance).not.toBeInstanceOf(i18n);
+    expect(instance.instance).toBeInstanceOf(i18n);
+
+    // Bound fields survive being carried off the instance by a transform.
+    const { translate } = instance;
+    expect(translate('common.key')).toBe('common.key');
+  });
+  it('extensions receive an already configured instance', () => {
+    let seenLocales: string[] = [];
+
+    void new i18n({
+      parser,
+      log,
+      loaders,
+      extensions: [(input: I18n) => {
+        seenLocales = input.locales;
+        return input;
+      }],
+    });
+
+    expect(seenLocales).toContain('en');
+  });
+  it('`loadConfig` ignores `extensions` — the pipe is construction-only', async () => {
+    const calls = vi.fn();
+    const instance = new i18n();
+
+    await instance.loadConfig({
+      parser,
+      log,
+      initLocale: 'en',
+      translations: { en: { 'common.key': 'value' } },
+      extensions: [(input: I18n) => { calls(); return input; }],
+    });
+
+    expect(calls).not.toHaveBeenCalled();
+    expect(instance.t('common.key')).toBe('common.key');
   });
 });
 

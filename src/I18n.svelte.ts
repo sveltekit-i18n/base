@@ -1,11 +1,11 @@
 import { fetchTranslations, hasOwn, read, sanitizeLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
-import type { Config, Loader, Parser, Translations } from './types.js';
+import type { Config, Extension, Loader, Parser, Translations } from './types.js';
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
-export default class I18n<ParserParams extends Parser.Params = any> {
+class I18nCore<ParserParams extends Parser.Params = any> {
   // -- reactive state ---------------------------------------------------------
 
   #config = $state<Config.T<ParserParams> | undefined>(undefined);
@@ -39,6 +39,12 @@ export default class I18n<ParserParams extends Parser.Params = any> {
 
   constructor(config?: Config.T<ParserParams>) {
     if (config) void this.loadConfig(config);
+
+    // A constructor may return a substitute object: the instance is folded
+    // through `config.extensions` left to right, so `new I18n(config)`
+    // evaluates to the last extension's output. The extensions run after the
+    // synchronous part of `configLoader` — they receive a configured instance.
+    return (config?.extensions ?? []).reduce<any>((acc, extension) => extension(acc), this);
   }
 
   // -- reactive reads ---------------------------------------------------------
@@ -130,7 +136,9 @@ export default class I18n<ParserParams extends Parser.Params = any> {
       return;
     }
 
-    const { initLocale, fallbackLocale, translations, log, ...rest } = config;
+    // `extensions` is a construction-time directive, not configuration state —
+    // it is consumed by the constructor and must not land in `#config`.
+    const { initLocale, fallbackLocale, translations, log, extensions, ...rest } = config;
 
     if (log) setLogger(loggerFactory(log));
 
@@ -494,3 +502,26 @@ export default class I18n<ParserParams extends Parser.Params = any> {
     return promise;
   }
 }
+
+/**
+ * A class declaration cannot annotate its constructor's return type, so the
+ * extension pipe's construction-time type lives on this construct signature
+ * instead: parser params are inferred from `config.parser`, and the returned
+ * surface is the instance type folded through the `config.extensions` tuple
+ * (`const` keeps it a tuple without `as const` at the call site).
+ */
+interface I18nConstructor {
+  new <const C extends Config.T<any> = Config.T<any>>(
+    config?: C
+  ): Extension.Piped<I18nCore<Parser.FromConfig<C>>, Extension.FromConfig<C>>;
+}
+
+// The raw class is deliberately not exported — every consumer constructs
+// through the extension-aware signature. The exported name carries both
+// meanings: the value is the facade, the type is the un-piped instance.
+const I18n = I18nCore as unknown as I18nConstructor;
+
+type I18n<ParserParams extends Parser.Params = any> = I18nCore<ParserParams>;
+
+export { I18n };
+export default I18n;

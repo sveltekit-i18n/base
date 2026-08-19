@@ -26,6 +26,7 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 ✅ **Module-based** – Translations load only for visited pages  
 ✅ **Route-aware** – Automatic loading based on SvelteKit routes  
 ✅ **Component-scoped** – Multiple translation instances with custom definitions  
+✅ **Extensible** – Pipe the instance through [extensions](#extensions) to reshape or augment its surface  
 ✅ **TypeScript** – Full type support  
 ✅ **Zero dependencies** – Lightweight and fast
 
@@ -242,6 +243,35 @@ cache: 3600000 // Translations older than 1 hour refetch on the next load
 
 Set to `0` to treat translations as always stale (refetch on every load trigger). You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
 
+### `extensions`
+
+Pipes the constructed instance through extension functions, left to right. Each extension receives the surface produced so far (the raw instance for the first one) and returns the surface handed on — `new I18n(config)` evaluates to the last extension's output:
+
+```javascript
+import stores from '@sveltekit-i18n/extension-stores';
+
+const { t, locale, loading } = new I18n({
+  ...config,
+  extensions: [stores],
+});
+```
+
+An extension may augment the instance in place, or replace the surface entirely (like the store adapter above). Official extensions live in the [extensions](https://github.com/sveltekit-i18n/extensions) repository; a custom extension is just a function:
+
+```javascript
+const withGreeting = (i18n) => Object.assign(i18n, {
+  greet: (name) => i18n.t('common.greeting', { name }),
+});
+
+export const i18n = new I18n({ ...config, extensions: [withGreeting] });
+
+i18n.greet('World');
+```
+
+**Notes:**
+- Applied at construction time only — a later `loadConfig()` call ignores this property.
+- When an extension returns a new object, the result is no longer `instanceof I18n`; the original instance stays reachable through whatever the extension exposes (the official extensions expose it as `instance`).
+
 ### `log`
 
 Logging configuration:
@@ -304,6 +334,7 @@ const config: Config<ParserConfig> = {
 - [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) – Complete solution with default parser
 - [@sveltekit-i18n/parser-default](https://github.com/sveltekit-i18n/parsers/tree/master/parser-default) – Default message parser
 - [@sveltekit-i18n/parser-icu](https://github.com/sveltekit-i18n/parsers/tree/master/parser-icu) – ICU message format parser
+- [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 
 ## Contributing
 
