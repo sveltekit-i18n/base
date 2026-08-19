@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
 import type { I18n } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
@@ -192,6 +192,25 @@ describe('i18n instance', () => {
 
     expect(instance.translations).toStrictEqual(instance.rawTranslations);
     expect(instance.translations[initLocale].common.preprocess[0].test.array).toBe('passed');
+  });
+  it('`preprocess` set to a custom function stores its output as-is', async () => {
+    const instance = new i18n({
+      loaders,
+      parser,
+      log,
+      preprocess: (input) => Object.fromEntries(
+        Object.entries(input).map(([key, value]) => [`app.${key}`, value]),
+      ),
+    });
+
+    await instance.loadTranslations(initLocale);
+
+    // A custom function replaces the flattening rather than feeding it: the
+    // nesting survives and the namespace is reachable only under the key the
+    // function produced.
+    expect(instance.translations[initLocale]['app.common'].preprocess[0].test.array).toBe('passed');
+    expect(instance.translations[initLocale].common).toBeUndefined();
+    expect(instance.rawTranslations[initLocale].common.preprocess[0].test.array).toBe('passed');
   });
   it('initializes properly with `initLocale`', async () => {
     const instance = new i18n();
@@ -462,6 +481,114 @@ describe('i18n instance', () => {
 
     expect(instance.t('common.greeting')).toBe('Hello');
     expect(errorSpy).toHaveBeenCalled();
+  });
+  it('a loader receives its sanitized locale and the triggering route', async () => {
+    const received: unknown[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { key: 'common', locale: 'EN', loader: async (props) => { received.push(props); return { greeting: 'Hello' }; } },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/path');
+
+    expect(received).toEqual([{ locale: 'en', route: '/path' }]);
+  });
+  it('a fallback-locale loader receives its own locale, not the requested one', async () => {
+    const received: unknown[] = [];
+    const push = async (props: { locale: string; route: string }) => { received.push(props); return { greeting: 'Hello' }; };
+    const instance = new i18n({
+      parser,
+      log,
+      fallbackLocale: 'EN',
+      loaders: [
+        { key: 'common', locale: 'EN', loader: push },
+        { key: 'common', locale: 'DE', loader: push },
+      ],
+    });
+
+    await instance.loadTranslations('de', '/path');
+
+    expect(received).toEqual(expect.arrayContaining([
+      { locale: 'de', route: '/path' },
+      { locale: 'en', route: '/path' },
+    ]));
+    expect(received).toHaveLength(2);
+  });
+  it('forwards a thrown loader value to the configured logger unwrapped', async () => {
+    const errorSpy = vi.fn();
+    const boom = new Error('loader boom');
+    const instance = new i18n({
+      parser,
+      log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
+      loaders: [
+        { key: 'broken', locale: 'en', loader: async () => { throw boom; } },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "[i18n]: Failed to load translation. Verify your 'en' > 'broken' Loader.",
+      boom,
+    );
+  });
+  it('matches `routes` through a custom matcher object', async () => {
+    const seen: string[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        {
+          key: 'common',
+          locale: 'en',
+          routes: [{ test: (route: string) => { seen.push(route); return route.startsWith('/products'); } }],
+          loader: async () => ({ greeting: 'Hello' }),
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/about');
+    expect(instance.translations['en']).toBeUndefined();
+
+    await instance.loadTranslations('en', '/products/123');
+    expect(instance.translations['en']['common.greeting']).toBe('Hello');
+    // The matcher may be consulted more than once per load — it is given the
+    // bare route path every time, never a full URL.
+    expect(Array.from(new Set(seen))).toEqual(['/about', '/products/123']);
+  });
+  it('reports a non-string loader key without throwing', async () => {
+    const errorSpy = vi.fn();
+    const instance = new i18n();
+
+    await expect(instance.loadConfig({
+      parser,
+      log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
+      loaders: [
+        { key: Symbol('common') as unknown as string, locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+      ],
+    })).resolves.toBeUndefined();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+  it('reports a loader key containing a `.` character but keeps the loader', async () => {
+    const errorSpy = vi.fn();
+    const instance = new i18n();
+
+    await instance.loadConfig({
+      parser,
+      log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
+      initLocale: 'en',
+      loaders: [
+        { key: 'common.nested', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+      ],
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith("[i18n]: Invalid 'common.nested' loader key. It shouldn't include the '.' character.");
+    // Report-only: the loader still ran and its data landed in the table.
+    expect(read(instance.translations['en'], 'common.nested.greeting')).toBe('Hello');
   });
   it('does not throw when `t`/`l` are used before a config is loaded', () => {
     const instance = new i18n();
@@ -980,6 +1107,18 @@ describe('logger', () => {
     expect(logger.warn).toHaveBeenCalledWith('[i18n]: shown');
     expect(logger.debug).not.toHaveBeenCalled();
   });
+  it('passes the raw error alongside the prefixed message', () => {
+    const logger = { error: vi.fn(), warn: vi.fn(), debug: vi.fn() };
+    const output = loggerFactory({ level: 'error', logger });
+    const error = new Error('boom');
+
+    output.error('context', error);
+    expect(logger.error).toHaveBeenCalledWith('[i18n]: context', error);
+
+    // No error → single-argument call, so `console` does not print `undefined`.
+    output.error('no error attached');
+    expect(logger.error).toHaveBeenLastCalledWith('[i18n]: no error attached');
+  });
 });
 
 describe('translate', () => {
@@ -996,6 +1135,39 @@ describe('translate', () => {
   });
 });
 
+describe('type inference', () => {
+  it('infers the `t`/`l` output type from the configured parser', () => {
+    const richParser = { parse: (_value: unknown, _params: unknown[], _locale: string, key: string) => ({ html: key }) };
+    const rich = new i18n({ parser: richParser, log });
+    const plain = new i18n({ parser, log });
+
+    // A parser declaring a rich output surfaces it on `t`/`l`.
+    expectTypeOf(rich.t('key')).toEqualTypeOf<{ html: string }>();
+
+    // An undeclared parser output (`any`) still surfaces as `string`.
+    expectTypeOf(plain.t('key')).toEqualTypeOf<string>();
+    expectTypeOf(plain.l('en', 'key')).toEqualTypeOf<string>();
+
+    // Load methods resolve with no value.
+    expectTypeOf(plain.setLocale('en')).toEqualTypeOf<Promise<void>>();
+
+    expect(rich).toBeInstanceOf(i18n);
+    expect(plain).toBeInstanceOf(i18n);
+  });
+
+  it('falls back to a `string` output for an untyped parser', () => {
+    // A parser the consumer has no types for: inference has no return type to
+    // read, so the output has to degrade to `string` like an undeclared one.
+    const untypedParser: any = parser;
+    const instance = new i18n({ parser: untypedParser, log });
+
+    expectTypeOf(instance.t('key')).toEqualTypeOf<string>();
+    expectTypeOf(instance.l('en', 'key')).toEqualTypeOf<string>();
+
+    expect(instance).toBeInstanceOf(i18n);
+  });
+});
+
 describe('utils', () => {
   // The library logs through one module-level singleton, so a test that
   // asserts on its output installs a capturing logger and restores the
@@ -1003,13 +1175,14 @@ describe('utils', () => {
   // the level for every later test.
   const captureLogs = () => {
     const previous = logger;
-    const captured = { error: [] as string[], warn: [] as string[] };
+    type Entry = { message: string; error?: unknown };
+    const captured = { error: [] as Entry[], warn: [] as Entry[] };
 
     setLogger(loggerFactory({
       level: 'warn',
       logger: {
-        error: (value: any) => { captured.error.push(`${value}`); },
-        warn: (value: any) => { captured.warn.push(`${value}`); },
+        error: (message: any, error?: unknown) => { captured.error.push({ message: `${message}`, error }); },
+        warn: (message: any, error?: unknown) => { captured.warn.push({ message: `${message}`, error }); },
       } as any,
     }));
 
@@ -1032,7 +1205,7 @@ describe('utils', () => {
       restore();
     }
 
-    expect(captured.warn.filter((message) => message.includes('qqq-alpha'))).toHaveLength(2);
+    expect(captured.warn.filter(({ message }) => message.includes('qqq-alpha'))).toHaveLength(2);
   });
   it('`sanitizeLocales` does not let a non-string input poison a string key', () => {
     const { restore } = captureLogs();
@@ -1088,23 +1261,45 @@ describe('utils', () => {
     expect(testRoute('/shop/cart')(Object.freeze(/cart/y))).toBe(false);
   });
   it('keeps matching a duck-typed route matcher', () => {
-    // `Loader.Route` is typed `string | RegExp`, but this ships as JS, so
-    // anything object-shaped is asked for `test` and consumers rely on it.
+    // `Loader.Route` officially admits any object with a `test` method — the
+    // matcher decides for itself.
     const matcher = { test: (route: string) => route.startsWith('/shop') };
 
-    expect(testRoute('/shop/cart')(matcher as any)).toBe(true);
-    expect(testRoute('/about')(matcher as any)).toBe(false);
+    expect(testRoute('/shop/cart')(matcher)).toBe(true);
+    expect(testRoute('/about')(matcher)).toBe(false);
 
     // Its own `test` decides even when it carries pattern-shaped properties:
     // copying it would produce `new RegExp(undefined)`, i.e. match everything.
     const flagged = { global: true, test: (route: string) => route.startsWith('/shop') };
 
-    expect(testRoute('/about')(flagged as any)).toBe(false);
-    expect(testRoute('/shop')({ sticky: true, source: 'nope', test: () => false } as any)).toBe(false);
+    expect(testRoute('/about')(flagged)).toBe(false);
+    expect(testRoute('/shop')({ sticky: true, source: 'nope', test: () => false })).toBe(false);
 
     // The route reaches a custom matcher unchanged, so it can tell an unset
     // route from the string 'undefined'.
-    expect(testRoute(undefined as any)({ test: (route: any) => route === undefined } as any)).toBe(true);
+    expect(testRoute(undefined as any)({ test: (route: any) => route === undefined })).toBe(true);
+  });
+  it('asks a callable route matcher for its `test` method', () => {
+    // `Loader.Route` admits anything carrying `test`, and a function carries
+    // properties like any other object — typing one as a matcher must not turn
+    // it into a silent non-match.
+    const matcher = Object.assign(() => true, { test: (route: string) => route.startsWith('/shop') });
+
+    expect(testRoute('/shop/cart')(matcher)).toBe(true);
+    expect(testRoute('/about')(matcher)).toBe(false);
+  });
+  it('reports a route that carries no `test` method', () => {
+    const { captured, restore } = captureLogs();
+
+    try {
+      // A bare predicate is not a `Loader.Route` — it has to be reported, not
+      // dropped without a trace.
+      expect(testRoute('/contact')(((route: string) => route === '/contact') as any)).toBe(false);
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.some(({ message }) => message.includes('Invalid route config!'))).toBe(true);
   });
   it('rejects a route that is not a pattern instead of coercing it', () => {
     const { captured, restore } = captureLogs();
@@ -1119,6 +1314,22 @@ describe('utils', () => {
     }
 
     expect(matched).toBe(false);
-    expect(captured.error.some((message) => message.includes('Invalid route config!'))).toBe(true);
+    expect(captured.error.some(({ message }) => message.includes('Invalid route config!'))).toBe(true);
+  });
+  it('forwards the error a throwing route matcher raised', () => {
+    const { captured, restore } = captureLogs();
+    const boom = new Error('matcher boom');
+
+    try {
+      expect(testRoute('/contact')({ test: () => { throw boom; } })).toBe(false);
+    } finally {
+      restore();
+    }
+
+    // The context message alone cannot say WHICH matcher blew up or how — the
+    // thrown value has to reach the consumer's logger unwrapped.
+    const reported = captured.error.find(({ message }) => message.includes('Invalid route config!'));
+
+    expect(reported?.error).toBe(boom);
   });
 });

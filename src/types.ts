@@ -12,7 +12,12 @@ export namespace Logger {
   export type Prefix = string;
 
   export type T = {
-    [key in Logger.Level]: (value: any) => void;
+    /**
+     * `message` arrives prefixed (see `FactoryProps.prefix`); `error` — when
+     * present — is the raw thrown value, passed through unformatted so the
+     * logger can render its stack or serialize it as it sees fit.
+     */
+    [key in Logger.Level]: (message: string, error?: unknown) => void;
   };
 
   export type FactoryProps = {
@@ -38,10 +43,6 @@ export namespace Logger {
 }
 
 export namespace Config {
-  export type Loader = Loader.LoaderModule;
-
-  export type Translations = Translations.T;
-
   export type Locale = Translations.Locales[number];
 
   export type InitLocale = Locale | undefined;
@@ -50,11 +51,11 @@ export namespace Config {
 
   export type FallbackValue = any;
 
-  export type T<P extends Parser.Params = Parser.Params> = {
+  export type T<P extends Parser.Params = Parser.Params, O = Parser.Output> = {
     /**
      * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
      */
-    loaders?: Loader[];
+    loaders?: Loader.LoaderModule[];
     /**
      * Locale-indexed translations, which should be in place before loaders will trigger. It's useful for static pages and synchronous translations – for example locally defined language names which are the same for all of the language mutations.
      *
@@ -77,7 +78,7 @@ export namespace Config {
      */
     fallbackValue?: FallbackValue;
     /**
-     * Preprocessor strategy or a custom function. Defines, how to transform the translation data immediately after the load.
+     * Preprocessor strategy or a custom function. Defines, how to transform the translation data immediately after the load. Note that a custom function (like `'none'`) bypasses the dot-notation flattening entirely – its return value is stored as-is, so keys are then looked up exactly as the function produced them.
      * @default 'full'
      *
      * @example 'full'
@@ -89,11 +90,11 @@ export namespace Config {
      * @example 'none'
      * {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}} => {a: {b: [{c: {d: 1}}, {c: {d: 2}}]}}
      */
-    preprocess?: 'full' | 'preserveArrays' | 'none' | ((input: Translations.Input) => any);
+    preprocess?: 'full' | 'preserveArrays' | 'none' | ((input: Translations.Input) => Translations.Input);
     /**
      * This property defines translation syntax you want to use.
      */
-    parser: Parser.T<P>;
+    parser: Parser.T<P, O>;
     /**
      * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next load trigger runs its loaders again. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS.
      *
@@ -153,9 +154,30 @@ export namespace Loader {
 
   export type Locale = Config.Locale;
 
-  export type Route = string | RegExp;
+  /**
+   * Anything with a `test` method can act as a route matcher. It receives the
+   * bare route path (e.g. `/products/123`), so a matcher built around a full
+   * URL has to be wrapped in a predicate that supplies the origin itself.
+   */
+  export type RouteMatcher = {
+    test: (route: string) => boolean;
+  };
+
+  export type Route = string | RegExp | RouteMatcher;
 
   export type IndexedKeys = Translations.LocaleIndexed<Key[]>;
+
+  /** The load context every loader is called with. */
+  export type Props = {
+    /**
+     * Sanitized locale this loader run fetches translations for.
+     */
+    locale: Locale;
+    /**
+     * Route the load was triggered for.
+     */
+    route: string;
+  };
 
   export type LoaderModule = {
     /**
@@ -171,12 +193,16 @@ export namespace Loader {
     */
     loader: T;
     /**
-    * Define routes this loader should be triggered for. You can use Regular expressions too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
     */
     routes?: Route[];
   };
 
-  export type T = () => Promise<Translations.Input>;
+  /**
+   * Loads translation data. Receives the load context (`locale`, `route`) –
+   * loaders that don't need it can simply take no parameters.
+   */
+  export type T = (props: Props) => Promise<Translations.Input>;
 }
 
 export namespace Parser {
@@ -190,7 +216,7 @@ export namespace Parser {
 
   export type Output = any;
 
-  export type Parse<P extends Parser.Params = Parser.Params> = (
+  export type Parse<P extends Parser.Params = Parser.Params, O = Output> = (
     /**
      * Translation value from the definitions.
     */
@@ -207,17 +233,29 @@ export namespace Parser {
      * This key is serialized path to translation (e.g., `home.content.title`)
      */
     key: Key,
-  ) => Output;
+  ) => O;
 
-  export type T<P extends Parser.Params = Parser.Params> = {
+  export type T<P extends Parser.Params = Parser.Params, O = Output> = {
     /**
      * Parse function deals with interpolation of user payload and returns interpolated message.
     */
-    parse: Parse<P>;
+    parse: Parse<P, O>;
   };
 
   /** The parser params carried by a config's `parser`; `any` when unknown. */
   export type FromConfig<C> = C extends { parser: T<infer P> } ? P : any;
+
+  /**
+   * The parser output carried by a config's `parser`; `string` when unknown.
+   * `[unknown] extends [O]` catches both `any` and `unknown` – the former from
+   * a parser without a declared output (the `Output` default), the latter from
+   * an untyped `parser` value, where inference has no return type to read. A
+   * parser producing anything richer must declare its output explicitly (e.g.
+   * `Parser.T<Params, HtmlOutput>`).
+   */
+  export type OutputFromConfig<C> = C extends { parser: T<any, infer O> }
+    ? ([unknown] extends [O] ? string : O)
+    : string;
 }
 
 export namespace Translations {
@@ -225,23 +263,9 @@ export namespace Translations {
 
   export type SerializedTranslations = LocaleIndexed<DotNotation.Input>;
 
-  export type TranslationData<T = any> = Loader.LoaderModule & { data: T };
+  export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string> = (key: string, ...restParams: P) => O;
 
-  export type FetchTranslations = (loaders: Loader.LoaderModule[]) => Promise<SerializedTranslations>;
-
-  export type TranslationFunction<P extends Parser.Params = Parser.Params> = (key: string, ...restParams: P) => string;
-
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params> = (locale: Config.Locale, key: string, ...restParams: P) => string;
-
-  export type Translate = <P extends Parser.Params = Parser.Params>(props: {
-    parser: Parser.T<P>;
-    key: string;
-    params: P;
-    translations: SerializedTranslations;
-    locale: Locales[number] | undefined;
-    fallbackLocale?: Config.FallbackLocale;
-    fallbackValue?: Config.FallbackValue;
-  }) => string;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string> = (locale: Config.Locale, key: string, ...restParams: P) => O;
 
   export type Input<V = any> = { [K in any]: Input<V> | V };
 

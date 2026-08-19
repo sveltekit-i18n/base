@@ -96,7 +96,8 @@ Translation namespace identifier. This acts as a prefix for translation keys.
 }
 ```
 
-**⚠️ Common Pitfall:** Using dots in the `key` will cause lookup issues:
+**⚠️ Common Pitfall:** Using dots in the `key` will cause lookup issues (a
+config-time `logger.error` reports such keys, but the loader still runs):
 
 ```javascript
 // ❌ Bad
@@ -108,9 +109,12 @@ Translation namespace identifier. This acts as a prefix for translation keys.
 
 ##### `loader` (required)
 
-**Type:** `() => Promise<Record<any, any>>`
+**Type:** `(props: { locale: string; route: string }) => Promise<Record<any, any>>`
 
-Async function that returns translation data.
+Async function that returns translation data. It receives the load context —
+the sanitized `locale` this run fetches translations for and the `route` the
+load was triggered for. Loaders that don't need the context can simply take no
+parameters.
 
 **Loading from local files:**
 
@@ -122,14 +126,35 @@ Async function that returns translation data.
 }
 ```
 
-**Loading from API:**
+**Loading from API (using the load context):**
 
 ```javascript
 {
   locale: 'en',
   key: 'common',
-  loader: async () => {
-    const response = await fetch('/api/translations/en/common');
+  loader: async ({ locale }) => {
+    const response = await fetch(`/api/translations/${locale}/common`);
+    return await response.json();
+  },
+}
+```
+
+**⚠️ `route` is context, not a cache key.** A loader runs at most once per
+locale per freshness window (see [`cache`](#cache)) — its `key` is recorded as
+loaded and it is skipped on later routes. So a loader whose payload varies by
+`route` would serve the first route's data everywhere. Scope such data with
+[`routes`](#routes-optional) instead, one loader entry per route group, and use
+the `route` argument for diagnostics, or in a loader that is scoped to exactly
+one route:
+
+```javascript
+{
+  locale: 'en',
+  key: 'checkout',
+  routes: ['/checkout'],
+  loader: async ({ locale, route }) => {
+    console.debug(`loading ${locale} translations for ${route}`);
+    const response = await fetch(`/api/translations/${locale}/checkout`);
     return await response.json();
   },
 }
@@ -166,7 +191,7 @@ Async function that returns translation data.
 
 ##### `routes` (optional)
 
-**Type:** `Array<string | RegExp>`
+**Type:** `Array<string | RegExp | { test: (route: string) => boolean }>`
 
 Array of route patterns. Loader will only execute if current route matches one of these patterns.
 
@@ -209,6 +234,25 @@ This will match:
 - `/products/category/electronics`
 - `/shop`
 - `/shop/cart`
+
+**Custom matchers:**
+
+Any value with a `test` method works. It receives the bare route path (e.g.
+`/products/123`), so a matcher that expects a full URL has to be wrapped. Keep
+it pure — a matcher may be consulted more than once per load:
+
+```javascript
+{
+  locale: 'en',
+  key: 'products',
+  routes: [
+    { test: (route) => route.startsWith('/products') },
+    // A matcher built for full URLs has to be given an origin:
+    { test: (route) => productPattern.test(new URL(route, 'https://example.com')) },
+  ],
+  loader: async () => (await import('./en/products.json')).default,
+}
+```
 
 **No routes (global):**
 
@@ -318,7 +362,7 @@ const config = {
 
 ### `preprocess`
 
-**Type:** `'full' | 'preserveArrays' | 'none' | (input: Translations.Input) => any`  
+**Type:** `'full' | 'preserveArrays' | 'none' | (input: Translations.Input) => Translations.Input`  
 **Default:** `'full'`
 
 Defines how to transform loaded translation data.
@@ -398,49 +442,53 @@ No preprocessing – keep original structure.
 
 **Input/Output:** Same structure
 
-**Usage:**
+A lookup is a single own-property read of the locale's table, not a walk down a
+path, so without flattening only its **top-level** keys resolve. For
+loader-loaded data that top level is the loader `key`:
 
 ```javascript
-// Must match your JSON structure exactly
-i18n.t('user')           // Returns entire user object
-i18n.t('user.profile')   // Returns profile object
+// loaders: [{ key: 'user', locale: 'en', loader: /* the JSON above */ }]
+i18n.t('user')           // The whole namespace, exactly as the loader returned it
+i18n.t('user.profile')   // Not found – nothing flattened this key
 ```
 
-**Use Case:** When working with complex nested structures or when your parser handles nested objects.
+**Use Case:** When your parser walks the nested structure itself, or when you read `translations` directly.
 
 #### Custom Function
 
-Create your own preprocessing logic:
+Create your own preprocessing logic. Like `'none'`, a custom function bypasses
+the dot-notation flattening entirely – its return value is stored as-is, so
+keys are then looked up exactly as the function produced them (top level only,
+see [`'none'`](#none)).
+
+The function is called once per locale with that locale's table. Its top-level
+keys are the loader `key`s – or the keys you passed to `addTranslations()` –
+with each payload nested underneath.
 
 **Example 1: Add prefixes**
 
 ```javascript
 const config = {
-  preprocess: (input) => {
-    const output = {};
-    Object.keys(input).forEach(key => {
-      output[`app.${key}`] = input[key];
-    });
-    return output;
-  },
+  preprocess: (input) => Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [`app.${key}`, value]),
+  ),
 };
 
-// All keys will have 'app.' prefix
-i18n.t('app.greeting')
+// loaders: [{ key: 'common', ... }] – the namespace moves under 'app.common'
+i18n.t('app.common')
 ```
 
 **Example 2: Transform values**
 
 ```javascript
 const config = {
-  preprocess: (input) => {
-    return JSON.parse(
-      JSON.stringify(input).toUpperCase()
-    );
-  },
+  preprocess: (input) => JSON.parse(JSON.stringify(
+    input,
+    (_key, value) => (typeof value === 'string' ? value.toUpperCase() : value),
+  )),
 };
 
-// All translations will be uppercase
+// All translation values will be uppercase; keys stay untouched
 ```
 
 **Example 3: Merge with defaults**
@@ -749,15 +797,33 @@ const config = {
 **Type:** `Logger.T`  
 **Default:** `console`
 
-Custom logger instance.
+Custom logger instance. Every level method takes the prefixed `message` as its
+first argument. When the report was caused by a thrown value (e.g. a failed
+loader), the raw `error` follows as a second argument — unformatted and
+unprefixed, so your logger can render its stack or serialize it as it sees fit.
+Reports with no such value are called with the message alone, so `console`
+methods never print a trailing `undefined`.
+
+The shape matches the exported `Logger.T` type:
+
+```typescript
+type CustomLogger = {
+  error: (message: string, error?: unknown) => void;
+  warn: (message: string, error?: unknown) => void;
+  debug: (message: string, error?: unknown) => void;
+};
+```
+
+A logger may omit levels it does not care about — a missing method is skipped,
+never called.
 
 **Custom logger:**
 
 ```javascript
 const customLogger = {
-  log: (...args) => console.log('LOG:', ...args),
-  warn: (...args) => console.warn('WARN:', ...args),
   error: (...args) => console.error('ERROR:', ...args),
+  warn: (...args) => console.warn('WARN:', ...args),
+  debug: (...args) => console.debug('DEBUG:', ...args),
 };
 
 const config = {
@@ -775,12 +841,12 @@ import * as Sentry from '@sentry/browser';
 const config = {
   log: {
     logger: {
-      log: console.log,
-      warn: console.warn,
-      error: (message) => {
-        console.error(message);
-        Sentry.captureException(new Error(message));
+      error: (message, error) => {
+        console.error(message, error);
+        Sentry.captureException(error ?? new Error(message));
       },
+      warn: console.warn,
+      debug: console.debug,
     },
   },
 };
@@ -820,7 +886,10 @@ binding then stays in sync with the instance:
 
 ### `t(key, ...params)`
 
-**Type:** `(key: string, ...params: ParserParams) => string`
+**Type:** `(key: string, ...params: ParserParams) => ParserOutput`
+
+`ParserOutput` is inferred from the configured parser's `parse` return type and
+defaults to `string` (see [TypeScript](#typescript)).
 
 Translates `key` for the active locale.
 
@@ -840,7 +909,7 @@ updates when either changes. Outside templates it is an ordinary function call.
 
 ### `l(locale, key, ...params)`
 
-**Type:** `(locale: string, key: string, ...params: ParserParams) => string`
+**Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput`
 
 Like `t`, for an explicit locale — useful for rendering a language switcher in
 each language's own name.
@@ -1034,9 +1103,13 @@ Full TypeScript support with complete type definitions:
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
-import type { Config as ParserConfig } from '@sveltekit-i18n/parser-default';
 
-const config: Config<ParserConfig> = {
+// `Config.T` is generic over the parser's params (the rest parameters of
+// `t`/`l`) and, optionally, its output. Annotate only when the config lives on
+// its own — passed straight to `new I18n(...)`, both are inferred.
+type Params = [payload?: Record<string, unknown>];
+
+const config: Config.T<Params> = {
   parser: parser(),
   loaders: [
     {
@@ -1052,9 +1125,40 @@ export const i18n = new I18n(config);
 
 The library provides:
 - ✅ Complete type definitions for configuration
-- ✅ Typed methods and reactive properties (`t` returns `string`)
+- ✅ Typed methods and reactive properties (`t`/`l` output inferred from the parser)
 - ✅ Generic types for custom parser integration
 - ❌ Automatic translation key inference (planned for the type generator)
+
+### Parser params and output inference
+
+`new I18n(config)` infers both the parser's **params** (the rest parameters of
+`t`/`l`) and its **output** (their return type) from `config.parser.parse`:
+
+```typescript
+const richParser = {
+  // parse returns { html: string } instead of a string
+  parse: (value: unknown, params: unknown[], locale: string, key: string) => ({
+    html: renderSomehow(value, params),
+  }),
+};
+
+const i18n = new I18n({ parser: richParser, /* ... */ });
+
+i18n.t('home.title'); // typed { html: string }
+```
+
+Three cases yield `string`: a parser whose `parse` return type is `any`, one
+built against the untyped `Parser.T` default, and one the consumer has no types
+for at all. The common case stays ergonomic that way, and a parser producing
+anything richer has to declare its output explicitly (e.g. `Parser.T<Params,
+HtmlOutput>`).
+
+**Caveat for non-string outputs:** the fail-soft paths bypass the parser
+entirely and return a plain string — `''` when the key or the locale is
+missing, the key itself when no parser is configured yet (see
+[`fallbackValue`](#fallbackvalue)). That string is still typed as the parser's
+output, so a component consuming a rich output should tolerate it — either by
+setting a `fallbackValue` of the right shape, or by guarding the render.
 
 ### Extensions and the constructor's type
 
@@ -1082,9 +1186,12 @@ const withGreeting = (i18n: I18n) => Object.assign(i18n, {
 export const i18n = new I18n({ ...config, extensions: [withGreeting] });
 ```
 
-Without `extensions`, the expression is a plain `I18n<ParserParams>` — the
-exported `I18n` name is both the constructor value and the instance type, so
-`const i: I18n = new I18n(config)` works as before.
+Without `extensions`, the expression is a plain `I18n<ParserParams,
+ParserOutput>` — the exported `I18n` name is both the constructor value and the
+instance type. Bare `I18n` stands for the `string`-output instance, so
+`const i: I18n = new I18n(config)` fits a string parser; a rich-output parser
+needs its arguments spelled out (`I18n<Params, HtmlOutput>`), or no annotation
+at all, letting the constructor's inference stand.
 
 For type-safe translation keys, see [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
 
