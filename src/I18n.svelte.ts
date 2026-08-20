@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, read, sanitizeLocales, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, read, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Translations } from './types.js';
@@ -24,6 +24,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
   /** Replaced immutably on every change so `loading` recomputes. */
   #pending = $state<ReadonlySet<Promise<void>>>(new Set());
+
+  /** Locale normalization, as `config.sanitizeLocales` asks for it. */
+  #sanitize = $derived(sanitizerFactory(this.#config?.sanitizeLocales));
 
   // -- plain internal state ---------------------------------------------------
 
@@ -83,8 +86,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     const translationLocales = Object.keys(this.#translations);
 
     return Array.from(new Set([
-      ...sanitizeLocales(...loaderLocales),
-      ...sanitizeLocales(...translationLocales),
+      ...this.#sanitize(...loaderLocales),
+      ...this.#sanitize(...translationLocales),
     ]));
   });
 
@@ -115,7 +118,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   l: Translations.LocalTranslationFunction<ParserParams, ParserOutput> = (locale, key, ...params) => {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
-    const [sanitizedLocale = locale] = sanitizeLocales(locale);
+    const [sanitizedLocale = locale] = this.#sanitize(locale);
 
     return translate<ParserParams, ParserOutput>({
       parser,
@@ -146,8 +149,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
     if (log) setLogger(loggerFactory(log));
 
-    const [sanitizedInitLocale] = sanitizeLocales(initLocale);
-    const [sanitizedFallbackLocale] = sanitizeLocales(fallbackLocale);
+    const sanitize = sanitizerFactory(rest.sanitizeLocales);
+
+    const [sanitizedInitLocale] = sanitize(initLocale);
+    const [sanitizedFallbackLocale] = sanitize(fallbackLocale);
 
     logger.debug('Setting config.');
 
@@ -245,7 +250,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     if (this.#inert('invalidate')) return;
 
     if (locale !== undefined) {
-      const [sanitized] = sanitizeLocales(locale);
+      const [sanitized] = this.#sanitize(locale);
 
       if (sanitized !== undefined) {
         delete this.#loadedKeys[sanitized];
@@ -288,7 +293,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
     // `#locale` is already sanitized; the fallback is normalized the same way
     // the loaders key their data.
-    const locales = [this.#locale, ...sanitizeLocales(fallbackLocale)].filter((locale): locale is Config.Locale => !!locale);
+    const locales = [this.#locale, ...this.#sanitize(fallbackLocale)].filter((locale): locale is Config.Locale => !!locale);
 
     return locales.reduce<Translations.SerializedTranslations>((acc, locale) => {
       if (hasOwn(acc, locale)) return acc;
@@ -344,7 +349,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   ): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> {
     if (!this.#config || !locale) return [];
 
-    const [sanitizedLocale] = sanitizeLocales(locale);
+    const [sanitizedLocale] = this.#sanitize(locale);
     const filteredLoaders = this.#filterLoaders(sanitizedLocale, route);
 
     if (!filteredLoaders.length) return [];
@@ -384,7 +389,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
     logger.debug('Adding translations...');
 
-    const sanitized = sanitizeTranslationLocales(translations);
+    const sanitized = sanitizeTranslationLocales(translations, this.#sanitize);
 
     const translationLocales = Object.keys(sanitized);
 
@@ -463,7 +468,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     if (!all.length) return undefined;
 
     // Sanitized once per lookup rather than once per candidate locale.
-    const sanitized = sanitizeLocales(locale);
+    const sanitized = this.#sanitize(locale);
 
     const match = all.find((known) => sanitized.includes(known));
 
@@ -471,7 +476,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
     // Evaluated lazily: the fallback (and any non-standard warning it emits)
     // must not run when the requested locale resolves directly.
-    const sanitizedFallback = sanitizeLocales(fallbackLocale);
+    const sanitizedFallback = this.#sanitize(fallbackLocale);
 
     return all.find((known) => sanitizedFallback.includes(known));
   }
@@ -521,7 +526,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     const onRoute = new Set<Loader.Key>();
 
     loaders.forEach(({ key, locale, routes }) => {
-      if (sanitizeLocales(locale)[0] !== sanitizedLocale) return;
+      if (this.#sanitize(locale)[0] !== sanitizedLocale) return;
 
       (routes && !routes.some(testRoute(route)) ? offRoute : onRoute).add(key);
     });
@@ -534,13 +539,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   #filterLoaders(sanitizedLocale: Config.Locale, route: string): Loader.LoaderModule[] {
     const { loaders, fallbackLocale = '' } = this.#config ?? {};
 
-    const [sanitizedFallbackLocale] = sanitizeLocales(fallbackLocale);
+    const [sanitizedFallbackLocale] = this.#sanitize(fallbackLocale);
 
     const translationForLocale = read(this.#translations, sanitizedLocale);
     const translationForFallbackLocale = read(this.#translations, sanitizedFallbackLocale);
 
     return (loaders || [])
-      .map(({ locale, ...rest }) => ({ ...rest, locale: sanitizeLocales(locale)[0] }))
+      .map(({ locale, ...rest }) => ({ ...rest, locale: this.#sanitize(locale)[0] }))
       .filter(({ routes }) => !routes || (routes || []).some(testRoute(route)))
       .filter(({ key, locale }) => (locale === sanitizedLocale && (
         !translationForLocale || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedLocale) || []).includes(key)
@@ -567,7 +572,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     // Expiry is evaluated per load trigger, BEFORE the in-flight check. That
     // order is safe: a locale is stamped only once its data arrived, so a
     // shared in-flight load cannot be invalidated by its own duplicates.
-    this.#invalidateExpired(locale, sanitizeLocales(this.#config?.fallbackLocale)[0]);
+    this.#invalidateExpired(locale, this.#sanitize(this.#config?.fallbackLocale)[0]);
 
     // NUL never appears in a sanitized locale, so the key is unambiguous.
     const inflightKey = `${locale}\u0000${route}`;
