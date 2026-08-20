@@ -6,6 +6,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 
 - [Configuration](#configuration)
 - [Instance Properties and Methods](#instance-properties-and-methods)
+- [Server-Side Rendering](#server-side-rendering)
 - [Utilities](#utilities)
 - [TypeScript](#typescript)
 - [See Also](#see-also)
@@ -328,6 +329,9 @@ const config = {
 **Type:** `Translations.T` (optional)
 
 Synchronous translations that are available immediately, before any loaders execute.
+
+Locale keys are normalized the way [`sanitizeLocales()`](#sanitizelocaleslocales)
+normalizes them, so `EN` and `en` are one entry — the one `t()` reads.
 
 **Use Cases:**
 - Language names (same across all locales)
@@ -913,7 +917,8 @@ updates when either changes. Outside templates it is an ordinary function call.
 **Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput`
 
 Like `t`, for an explicit locale — useful for rendering a language switcher in
-each language's own name.
+each language's own name. The locale is normalized before the lookup, so
+`l('EN', ...)` and `l('en', ...)` read the same table.
 
 ---
 
@@ -992,8 +997,10 @@ gate the first render:
 **Type:** `Record<string, Record<string, any>>` (reactive)
 
 The locale-indexed tables — `rawTranslations` before preprocessing,
-`translations` after. Treat them as read-only; use `addTranslations()` to
-write.
+`translations` after. Indexed by the normalized locale
+([`sanitizeLocales()`](#sanitizelocaleslocales)), the same value
+[`locale`](#locale) reports. Treat them as read-only; use `addTranslations()`
+to write.
 
 ---
 
@@ -1002,7 +1009,7 @@ write.
 **Type:** `(locale: string, route?: string) => Promise<void>`
 
 Loads translations for a locale and route, and activates the locale once they
-resolved. The canonical SSR wiring:
+resolved.
 
 ```javascript
 // +layout.js
@@ -1013,6 +1020,10 @@ export const load = async ({ url }) => {
   return {};
 };
 ```
+
+The instance above is a module-level singleton, which on the server is shared
+by every request in the process — see
+[Server-Side Rendering](#server-side-rendering) for the per-request wiring.
 
 **Errors:** a loader that throws is caught and logged individually, so one
 broken loader does not fail the batch. Anything that throws afterwards — a
@@ -1059,7 +1070,9 @@ the rejection.
 
 Adds translations synchronously (static tables known ahead of time). Payload is
 preprocessed per `config.preprocess` and merged into the tables; already-added
-keys count as loaded, so matching loaders will not refire.
+keys count as loaded, so matching loaders will not refire. Locale keys are
+normalized ([`sanitizeLocales()`](#sanitizelocaleslocales)) before they are
+merged.
 
 ```javascript
 i18n.addTranslations({
@@ -1177,6 +1190,124 @@ Call it when a per-request or per-component instance goes out of scope:
 
 A module-level singleton lives as long as the app and needs no call. The method
 is idempotent — calling it twice is a no-op.
+
+---
+
+## Server-Side Rendering
+
+A module that creates an instance is evaluated **once per process** on the
+server, not once per request. A module-level singleton is therefore shared by
+every visitor being rendered concurrently: two requests for different locales
+overwrite each other's `locale` and translation tables, and one visitor's
+language can end up in another visitor's HTML.
+
+Create **one instance per request** instead, and hand its data to the client
+with [`snapshot()`](#snapshot).
+
+### 1. Export the config, not the instance
+
+```javascript
+// src/lib/translations/index.js
+import parser from '@sveltekit-i18n/parser-default';
+
+/** @type {import('@sveltekit-i18n/base').Config} */
+export const config = {
+  parser: parser(),
+  loaders: [/* ... */],
+};
+```
+
+### 2. Load on the server, per request
+
+```javascript
+// src/routes/+layout.server.js
+import { I18n } from '@sveltekit-i18n/base';
+import { config } from '$lib/translations';
+
+export const load = async ({ url, locals }) => {
+  const i18n = new I18n(config);
+
+  await i18n.loadTranslations(locals.locale, url.pathname);
+
+  return { locale: locals.locale, translations: i18n.snapshot() };
+};
+```
+
+`locals.locale` is whatever your `handle` hook resolved from the cookie, the URL
+or the `Accept-Language` header — [`sanitizeLocales()`](#sanitizelocaleslocales)
+normalizes such a value the way the instance does.
+
+### 3. Build the instance the app renders with
+
+```javascript
+// src/routes/+layout.js
+import { browser } from '$app/environment';
+import { I18n } from '@sveltekit-i18n/base';
+import { config } from '$lib/translations';
+
+// Assigned in the browser only — on the server this module-level binding
+// would be the shared state we are avoiding.
+let client;
+
+export const load = async ({ data, url }) => {
+  const i18n = client ?? new I18n({ ...config, translations: data.translations });
+
+  if (browser) client = i18n;
+
+  await i18n.loadTranslations(data.locale, url.pathname);
+
+  return { i18n };
+};
+```
+
+This `load` runs on the server for the SSR pass and again in the browser on
+hydration. Both start from the server's snapshot, so the loaders behind it do
+not run a second time; only data the snapshot left out — the route-scoped
+translations of pages the visitor has not opened yet — is fetched. Every later
+client-side navigation reuses the same instance, so its cache survives.
+
+### 4. Pass it down through context
+
+```svelte
+<!-- src/routes/+layout.svelte -->
+<script>
+  import { setContext } from 'svelte';
+
+  let { data, children } = $props();
+
+  setContext('i18n', data.i18n);
+</script>
+
+{@render children()}
+```
+
+```svelte
+<!-- any component -->
+<script>
+  import { getContext } from 'svelte';
+
+  const i18n = getContext('i18n');
+</script>
+
+<p>{i18n.t('common.greeting')}</p>
+```
+
+The instance is reactive, so components re-render on a locale change without
+any store subscription.
+
+### When a singleton is enough
+
+The shared-state problem exists only on the server. A module-level instance is
+safe when the server renders nothing visitor-specific:
+
+- the app is client-only (`export const ssr = false`), or
+- every request renders the same locale.
+
+Then the [Quick Start](../README.md#quick-start) wiring — one
+`export const i18n = new I18n(config)` imported wherever it is needed — is all
+you need. An instance with a shorter life than the app (a per-request one, or a
+component-scoped one) should be released with [`destroy()`](#destroy) when its
+owner goes away.
 
 ---
 
