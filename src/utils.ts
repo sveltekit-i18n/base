@@ -23,7 +23,7 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
 }: {
   parser: Parser.T<P, O>;
   key: string;
-  params: P;
+  params: Parser.Params;
   translations: Translations.SerializedTranslations;
   locale: Translations.Locales[number] | undefined;
   fallbackLocale?: Config.FallbackLocale;
@@ -66,7 +66,9 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     return text;
   }
 
-  return parser.parse(text, params, locale, key);
+  // A key schema narrows the rest params to one key's payload — still a `P`,
+  // but no longer provably so once the tuple has been rebuilt.
+  return parser.parse(text, params as P, locale, key);
 };
 
 // `Intl.Collator.supportedLocalesOf` is comparatively expensive and locales

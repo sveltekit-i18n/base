@@ -1,11 +1,11 @@
 import { fetchTranslations, hasOwn, mergeTranslations, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
-import type { Config, Extension, Loader, Parser, Translations } from './types.js';
+import type { Config, Extension, Loader, Parser, Schema, Translations } from './types.js';
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
-class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> {
+class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never> {
   // -- reactive state ---------------------------------------------------------
 
   #config = $state<Config.T<ParserParams, ParserOutput> | undefined>(undefined);
@@ -100,7 +100,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
    * tracked: the call reads the translation table and locale, so a component
    * using `{i18n.t('key')}` re-renders when either changes.
    */
-  t: Translations.TranslationFunction<ParserParams, ParserOutput> = (key, ...params) => {
+  t: Translations.TranslationFunction<ParserParams, ParserOutput, TranslationSchema> = (key, ...params) => {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
     return translate<ParserParams, ParserOutput>({
@@ -115,7 +115,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   };
 
   /** Like `t`, for an explicit locale. */
-  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput> = (locale, key, ...params) => {
+  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput, TranslationSchema> = (locale, key, ...params) => {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
     const [sanitizedLocale = locale] = this.#sanitize(locale);
@@ -635,7 +635,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 interface I18nConstructor {
   new <const C extends Config.T<any, any> = Config.T<any, any>>(
     config?: C
-  ): Extension.Piped<I18nCore<Parser.FromConfig<C>, Parser.OutputFromConfig<C>>, Extension.FromConfig<C>>;
+  ): Extension.Piped<I18nCore<Parser.FromConfig<C>, Parser.OutputFromConfig<C>, Schema.FromConfig<C>>, Extension.FromConfig<C>>;
 }
 
 // The raw class is deliberately not exported — every consumer constructs
@@ -643,7 +643,7 @@ interface I18nConstructor {
 // meanings: the value is the facade, the type is the un-piped instance.
 const I18n = I18nCore as unknown as I18nConstructor;
 
-type I18n<ParserParams extends Parser.Params = any, ParserOutput = string> = I18nCore<ParserParams, ParserOutput>;
+type I18n<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never> = I18nCore<ParserParams, ParserOutput, TranslationSchema>;
 
 export { I18n };
 export default I18n;

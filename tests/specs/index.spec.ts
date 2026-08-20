@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
-import type { I18n } from '../../src/index.js';
+import type { Config, I18n, Parser } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
@@ -1546,6 +1546,98 @@ describe('type inference', () => {
 
     expect(rich).toBeInstanceOf(i18n);
     expect(plain).toBeInstanceOf(i18n);
+  });
+
+  it('narrows `t`/`l` keys and params to a supplied key schema', async () => {
+    type TestSchema = {
+      'common.no_placeholder': never;
+      'common.void': undefined;
+      'common.placeholder': { value: string };
+      'common.optional': { value?: string };
+      'common.maybe': { value: string } | undefined;
+      'common.loose': any;
+    };
+
+    // Only the TYPE of the slot is read — the generator emits a bare object.
+    const schema = {} as TestSchema;
+    const instance = new i18n({ ...CONFIG, schema });
+
+    expectTypeOf(instance.t('common.placeholder', { value: 'a' })).toEqualTypeOf<string>();
+    expectTypeOf(instance.l('en', 'common.placeholder', { value: 'a' })).toEqualTypeOf<string>();
+
+    // A message without params takes no payload; an all-optional one may omit it.
+    instance.t('common.no_placeholder');
+    instance.t('common.void');
+    instance.t('common.optional');
+
+    // A payload the schema marks optional is omittable, not forbidden.
+    instance.t('common.maybe', { value: 'a' });
+    instance.t('common.maybe');
+
+    // An `any` slot stays unchecked rather than collapsing to "no payload".
+    instance.t('common.loose', { anything: true });
+    instance.t('common.loose');
+
+    // @ts-expect-error unknown translation key
+    instance.t('common.unknown');
+    // @ts-expect-error wrong payload shape
+    instance.t('common.placeholder', { value: 1 });
+    // @ts-expect-error missing payload
+    instance.t('common.placeholder');
+    // @ts-expect-error arguments past the payload the parser declares
+    instance.t('common.placeholder', { value: 'a' }, 'junk');
+    // @ts-expect-error wrong payload shape behind an optional union
+    instance.t('common.maybe', { value: 1 });
+    // @ts-expect-error payload passed to a message that takes none
+    instance.t('common.no_placeholder', { value: 'a' });
+    // @ts-expect-error payload passed to a message that takes none
+    instance.t('common.void', { value: 'a' });
+
+    // A key that is a union has to satisfy every key it might be.
+    const eitherKey: 'common.no_placeholder' | 'common.placeholder' = 'common.placeholder';
+
+    instance.t(eitherKey, { value: 'a' });
+    // @ts-expect-error missing payload behind a union of keys
+    instance.t(eitherKey);
+
+    // The slot is inert at runtime — the instance loads and translates as usual.
+    await instance.loadTranslations('EN', '/');
+    expect(instance.t('common.no_placeholder')).toBe('common.no_placeholder');
+  });
+
+  it('reads the key schema off an annotated config, and ignores an open one', () => {
+    type TestSchema = { 'common.placeholder': { value: string } };
+
+    // `Config.T` declares `schema` optional, so the annotated form has to match
+    // just as the inferred one does.
+    const config: Config.T<Parser.Params, string, TestSchema> = { ...CONFIG, schema: {} as TestSchema };
+    const annotated = new i18n(config);
+
+    annotated.t('common.placeholder', { value: 'a' });
+    // @ts-expect-error unknown translation key
+    annotated.t('common.unknown');
+
+    // A schema without a closed key set types nothing — keys stay plain strings
+    // rather than every call failing. The shape comes from an annotation, not
+    // an `as`: the slot accepts a bare object, so lint strips the assertion.
+    const openKeys: Record<string, { value: string }> = {};
+    const open = new i18n({ ...CONFIG, schema: openKeys });
+    const noKeys = new i18n({ ...CONFIG, schema: {} });
+
+    open.t('any.key', 'anything', 1);
+    noKeys.t('any.key', 'anything', 1);
+
+    expect(annotated).toBeInstanceOf(i18n);
+  });
+
+  it('leaves `t`/`l` untyped when no key schema is supplied', () => {
+    const instance = new i18n({ parser, log });
+
+    expectTypeOf(instance.t('any.key')).toEqualTypeOf<string>();
+    instance.t('any.key', 'anything', 1);
+    instance.l('en', 'any.key', 'anything', 1);
+
+    expect(instance).toBeInstanceOf(i18n);
   });
 
   it('falls back to a `string` output for an untyped parser', () => {
