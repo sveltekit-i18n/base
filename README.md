@@ -106,6 +106,12 @@ export const load = async ({ url }) => {
 };
 ```
 
+> **Rendering per-visitor locales on the server?** The instance above is a
+> module-level singleton — on the server it is shared by every request in the
+> process, so concurrent visitors overwrite each other's locale. Use one
+> instance per request and hand its data to the client with `snapshot()`:
+> see [Server-Side Rendering](./docs/README.md#server-side-rendering).
+
 ### 4. Use in components
 
 ```svelte
