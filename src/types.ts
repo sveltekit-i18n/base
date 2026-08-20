@@ -72,11 +72,11 @@ export namespace Config {
      */
     initLocale?: InitLocale;
     /**
-     * If you set this property, translations are automatically loaded not for current `$locale` only, but for this locale as well. In case there is no translation for current `$locale`, fallback locale translation is used instead of translation key placeholder. This is also used as a fallback when unknown locale is set.
+     * If you set this property, translations are automatically loaded not for current `locale` only, but for this locale as well. In case there is no translation for current `locale`, fallback locale translation is used instead of translation key placeholder. This is also used as a fallback when unknown locale is set.
      */
     fallbackLocale?: FallbackLocale;
     /**
-     * By default, translation key is returned in case no translation is found for given translation key. For example, `$t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
+     * By default, translation key is returned in case no translation is found for given translation key. For example, `t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
      */
     fallbackValue?: FallbackValue;
     /**
@@ -198,7 +198,7 @@ export namespace Loader {
 
   export type LoaderModule = {
     /**
-     * Represents the translation namespace. This key is used as a translation prefix so it should be module-unique. You can access your translation later using `$t('key.yourTranslation')`. It shouldn't include `.` (dot) character.
+     * Represents the translation namespace. This key is used as a translation prefix so it should be module-unique. You can access your translation later using `t('key.yourTranslation')`. It shouldn't include `.` (dot) character.
      */
     key: Key;
     /**
