@@ -1070,6 +1070,58 @@ i18n.addTranslations({
 
 ---
 
+### `snapshot()`
+
+**Type:** `() => Record<string, any>`
+
+Serializes what the instance currently holds for the **active locale** and the
+**`fallbackLocale`**, narrowed to the current route. The result is shaped like
+[`translations`](#translations), so the receiving instance hydrates by handing
+it straight to its constructor — the bookkeeping derived from it keeps the
+matching loaders from fetching the same data again:
+
+```javascript
+// +layout.server.js — one instance per request
+import { I18n } from '@sveltekit-i18n/base';
+import { config } from '$lib/translations';
+
+export const load = async ({ url, locals }) => {
+  const i18n = new I18n(config);
+
+  await i18n.loadTranslations(locals.locale, url.pathname);
+
+  return { locale: locals.locale, translations: i18n.snapshot() };
+};
+```
+
+```javascript
+// +layout.js — the client starts from the server's data
+import { I18n } from '@sveltekit-i18n/base';
+import { config } from '$lib/translations';
+
+export const load = async ({ data, url }) => {
+  const i18n = new I18n({ ...config, translations: data.translations });
+
+  await i18n.loadTranslations(data.locale, url.pathname);
+
+  return { i18n };
+};
+```
+
+What the payload leaves out:
+
+- **Other locales** — only the active locale and the fallback are serialized.
+- **Other routes** — a key claimed *only* by loaders whose `routes` do not match
+  the current route is dropped; the client loads it when it navigates there. A
+  key no loader claims (added through `addTranslations()`) is always kept.
+
+The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
+shape — so the receiving instance applies its own `config.preprocess`.
+Freshness is not transferred either: the [`cache`](#cache) window of a hydrated
+locale starts when the client receives the data, not when the server loaded it.
+
+---
+
 ### `invalidate(locale?)`
 
 **Type:** `(locale?: string) => void`

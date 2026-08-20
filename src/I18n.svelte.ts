@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, read, sanitizeLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, read, sanitizeLocales, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Translations } from './types.js';
@@ -113,12 +113,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   l: Translations.LocalTranslationFunction<ParserParams, ParserOutput> = (locale, key, ...params) => {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
+    const [sanitizedLocale = locale] = sanitizeLocales(locale);
+
     return translate<ParserParams, ParserOutput>({
       parser,
       key,
       params,
       translations: this.#translations,
-      locale,
+      locale: sanitizedLocale,
       fallbackLocale,
       ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
     });
@@ -261,6 +263,44 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     this.#addTranslations(translations);
   };
 
+  /**
+   * Serializes what this instance holds for the active locale and the fallback
+   * locale, narrowed to the current route: a key owned only by loaders that do
+   * not match the route is left out. The result is shaped like
+   * `config.translations`, so a client hydrates by handing it back to the
+   * constructor — the bookkeeping derived from it then keeps the matching
+   * loaders from fetching the same data again.
+   */
+  snapshot = (): Translations.SerializedTranslations => {
+    const { fallbackLocale } = this.#config ?? {};
+
+    const route = this.#route ?? '';
+
+    // `#locale` is already sanitized; the fallback is normalized the same way
+    // the loaders key their data.
+    const locales = [this.#locale, ...sanitizeLocales(fallbackLocale)].filter((locale): locale is Config.Locale => !!locale);
+
+    return locales.reduce<Translations.SerializedTranslations>((acc, locale) => {
+      if (hasOwn(acc, locale)) return acc;
+
+      const data = read(this.#rawTranslations, locale);
+
+      if (!data) return acc;
+
+      const offRoute = this.#offRouteKeys(locale, route);
+
+      const relevant = Object.keys(data)
+        .filter((key) => !offRoute.has(key))
+        .reduce((keep, key) => ({ ...keep, [key]: read(data, key) }), {});
+
+      // An empty entry would still stamp the locale's freshness on the client,
+      // starting its `cache` window on data it never received.
+      if (!Object.keys(relevant).length) return acc;
+
+      return { ...acc, [locale]: relevant };
+    }, {});
+  };
+
   // -- internals --------------------------------------------------------------
 
   /**
@@ -314,14 +354,16 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
     logger.debug('Adding translations...');
 
-    const translationLocales = Object.keys(translations);
+    const sanitized = sanitizeTranslationLocales(translations);
+
+    const translationLocales = Object.keys(sanitized);
 
     this.#rawTranslations = translationLocales.reduce(
       (acc, locale) => ({
         ...acc,
         [locale]: {
           ...(read(acc, locale) || {}),
-          ...read(translations, locale),
+          ...read(sanitized, locale),
         },
       }),
       this.#rawTranslations,
@@ -330,7 +372,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     this.#translations = translationLocales.reduce(
       (acc, locale) => {
         let dotnotate = true;
-        let input = read(translations, locale);
+        let input = read(sanitized, locale);
 
         if (typeof preprocess === 'function') {
           input = preprocess(input);
@@ -354,7 +396,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     translationLocales.forEach((locale) => {
       // A `null` payload for a locale must not take the whole call down —
       // every step above tolerates it, so this bookkeeping does too.
-      let localeKeys: Loader.Key[] | undefined = Object.keys(read(translations, locale) ?? {}).map((key) => `${key}`.split('.')[0]);
+      let localeKeys: Loader.Key[] | undefined = Object.keys(read(sanitized, locale) ?? {}).map((key) => `${key}`.split('.')[0]);
       if (keys) localeKeys = read(keys, locale);
 
       this.#loadedKeys[locale] = Array.from(new Set([
@@ -426,6 +468,28 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     if (requested !== undefined && requested !== locale) return;
 
     if (this.#locale !== locale) this.#locale = locale;
+  }
+
+  /**
+   * Loader keys of `sanitizedLocale` that only ever load on OTHER routes. A key
+   * claimed by a route-matching loader — or by no loader at all — is not
+   * attributable to another route and is therefore absent here.
+   */
+  #offRouteKeys(sanitizedLocale: Config.Locale, route: string): Set<Loader.Key> {
+    const { loaders = [] } = this.#config ?? {};
+
+    const offRoute = new Set<Loader.Key>();
+    const onRoute = new Set<Loader.Key>();
+
+    loaders.forEach(({ key, locale, routes }) => {
+      if (sanitizeLocales(locale)[0] !== sanitizedLocale) return;
+
+      (routes && !routes.some(testRoute(route)) ? offRoute : onRoute).add(key);
+    });
+
+    onRoute.forEach((key) => offRoute.delete(key));
+
+    return offRoute;
   }
 
   #filterLoaders(sanitizedLocale: Config.Locale, route: string): Loader.LoaderModule[] {

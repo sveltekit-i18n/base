@@ -129,6 +129,18 @@ export const sanitizeLocales = (...locales: any[]) => {
   });
 };
 
+// Every other locale-keyed surface (`locale`, `fallbackLocale`, loader data,
+// the loaded-key bookkeeping) is sanitized, so a table handed in under a raw
+// locale would be unreachable. Merged rather than replaced: two spellings of
+// one locale are one entry.
+export const sanitizeTranslationLocales = (input: Translations.SerializedTranslations): Translations.SerializedTranslations => (
+  Object.keys(input).reduce<Translations.SerializedTranslations>((acc, locale) => {
+    const [sanitized = locale] = sanitizeLocales(locale);
+
+    return { ...acc, [sanitized]: { ...read(acc, sanitized), ...read(input, locale) } };
+  }, {})
+);
+
 export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
   if (preserveArrays && Array.isArray(input)) {
     return input.map((v) => toDotNotation(v, preserveArrays));
@@ -171,13 +183,10 @@ export const serialize = (input: Array<Loader.LoaderModule & { data: any }>) => 
   return input.reduce((acc, { key, data, locale }) => {
     if (!data) return acc;
 
-    const [validLocale] = sanitizeLocales(locale);
-
-    const output = { ...(acc[validLocale] || {}), [key]: data };
-
+    // The locale is already sanitized — loaders are normalized before the fetch.
     return ({
       ...acc,
-      [validLocale]: output,
+      [locale]: { ...read(acc, locale), [key]: data },
     });
   }, {} as Translations.SerializedTranslations);
 };
