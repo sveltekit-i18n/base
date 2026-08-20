@@ -32,6 +32,7 @@ describe('i18n instance', () => {
     expect(instance).toHaveProperty('setRoute');
     expect(instance).toHaveProperty('invalidate');
     expect(instance).toHaveProperty('snapshot');
+    expect(instance).toHaveProperty('destroy');
     // The v2 SSR hand-off primitive is deleted from v3, not deprecated — pin
     // its absence so it cannot quietly return.
     expect(instance).not.toHaveProperty('getTranslationProps');
@@ -1223,6 +1224,89 @@ describe('i18n snapshot', () => {
     await client.setRoute('/about');
     expect(calls).toEqual({ about: 1 });
     expect(client.t('about.title')).toBe('About');
+  });
+});
+
+describe('i18n destroy', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  it('discards an in-flight load and clears the loading flag', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { key: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+      ],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    expect(instance.loading).toBe(true);
+
+    instance.destroy();
+    expect(instance.loading).toBe(false);
+
+    resolvers[0]?.({ greeting: 'late' });
+    await pending;
+
+    expect(calls).toBe(1);
+    expect(instance.rawTranslations).toEqual({});
+    expect(instance.locale).toBeUndefined();
+  });
+
+  it('ignores every further load and mutation', async () => {
+    let calls = 0;
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+    });
+
+    await instance.loadTranslations('en', '/');
+    expect(calls).toBe(1);
+
+    instance.destroy();
+
+    await instance.loadTranslations('en', '/about');
+    await instance.setLocale('cs');
+    await instance.setRoute('/about');
+    instance.invalidate();
+    instance.addTranslations({ en: { extra: { note: 'ignored' } } });
+
+    expect(calls).toBe(1);
+    expect(instance.locale).toBe('en');
+    expect(instance.rawTranslations.en).not.toHaveProperty('extra');
+  });
+
+  it('keeps reads working, so a tearing-down component still renders', async () => {
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
+    });
+
+    await instance.loadTranslations('en', '/');
+    instance.destroy();
+
+    expect(instance.t('common.greeting')).toBe('Hello');
+    expect(instance.l('en', 'common.greeting')).toBe('Hello');
+    expect(instance.snapshot()).toEqual({ en: { common: { greeting: 'Hello' } } });
+  });
+
+  it('is idempotent', async () => {
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    instance.destroy();
+    instance.destroy();
+
+    expect(instance.t('common.greeting')).toBe('Hello');
   });
 });
 

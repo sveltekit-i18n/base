@@ -1149,6 +1149,37 @@ refresh before the window elapses.
 
 ---
 
+### `destroy()`
+
+**Type:** `() => void`
+
+Detaches the instance from its loading lifecycle. Loads still in flight settle
+with their data discarded, [`loading`](#loading) drops to `false`, and every
+further load or mutation call (`loadTranslations`, `setLocale`, `setRoute`,
+`loadConfig`, `addTranslations`, `invalidate`) is ignored with a warning.
+
+Reads keep working — `t`, `l`, `locale`, `translations` and `snapshot()` still
+return the instance's last state, so a component that is still tearing down
+renders instead of breaking.
+
+Call it when a per-request or per-component instance goes out of scope:
+
+```svelte
+<script>
+  import { I18n } from '@sveltekit-i18n/base';
+  import { config } from '$lib/translations';
+
+  const i18n = new I18n(config);
+
+  $effect(() => () => i18n.destroy());
+</script>
+```
+
+A module-level singleton lives as long as the app and needs no call. The method
+is idempotent — calling it twice is a no-op.
+
+---
+
 ## Utilities
 
 Two helpers the instance uses internally are published separately, for the

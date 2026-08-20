@@ -37,6 +37,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   /** In-flight loads keyed by locale and route; duplicate triggers share the promise. */
   #inflight = new Map<string, Promise<void>>();
 
+  #destroyed = false;
+
   constructor(config?: Config.T<ParserParams, ParserOutput>) {
     if (config) void this.loadConfig(config);
 
@@ -182,6 +184,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
    * unhandled rejection; an awaiting caller still receives it.
    */
   loadConfig = (config: Config.T<ParserParams, ParserOutput>) => {
+    if (this.#inert('loadConfig')) return Promise.resolve();
+
     const promise = this.configLoader(config);
 
     promise.catch((error) => logError('Failed to load the i18n config.', error));
@@ -192,7 +196,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   // -- loading ----------------------------------------------------------------
 
   setLocale = (locale?: Config.Locale): Promise<void> => {
-    if (!locale) return Promise.resolve();
+    if (!locale || this.#inert('setLocale')) return Promise.resolve();
 
     if (locale !== this.#requestedLocale) {
       logger.debug(`Setting '${locale}' locale.`);
@@ -208,6 +212,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   };
 
   setRoute = (route: string): Promise<void> => {
+    if (this.#inert('setRoute')) return Promise.resolve();
+
     if (route !== this.#route) {
       logger.debug(`Setting '${route}' route.`);
 
@@ -220,7 +226,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   };
 
   loadTranslations = (locale: Config.Locale, route = this.#route ?? ''): Promise<void> => {
-    if (!locale) return Promise.resolve();
+    if (!locale || this.#inert('loadTranslations')) return Promise.resolve();
 
     this.#requestedLocale = locale;
     this.#route = route;
@@ -236,6 +242,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
    * discarded — it predates the invalidation.
    */
   invalidate = (locale?: Config.Locale): void => {
+    if (this.#inert('invalidate')) return;
+
     if (locale !== undefined) {
       const [sanitized] = sanitizeLocales(locale);
 
@@ -260,6 +268,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
   };
 
   addTranslations = (translations?: Translations.SerializedTranslations): void => {
+    if (this.#inert('addTranslations')) return;
+
     this.#addTranslations(translations);
   };
 
@@ -299,6 +309,26 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
       return { ...acc, [locale]: relevant };
     }, {});
+  };
+
+  /**
+   * Detaches the instance from its loading lifecycle: in-flight loads settle
+   * with their data discarded, `loading` drops to `false`, and every further
+   * load or mutation call is ignored with a warning. Reads (`t`, `l`, `locale`,
+   * `translations`, `snapshot`) keep working, so a component still tearing down
+   * renders its last state instead of breaking. Idempotent.
+   */
+  destroy = (): void => {
+    if (this.#destroyed) return;
+
+    logger.debug('Destroying the i18n instance.');
+
+    this.#destroyed = true;
+
+    // Severed rather than awaited — the identity guard in `#load` makes a
+    // settled load apply nothing once its entry is gone.
+    this.#inflight.clear();
+    this.#pending = new Set();
   };
 
   // -- internals --------------------------------------------------------------
@@ -408,6 +438,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
       // loads (other routes) must not extend the window.
       if (read(this.#loadedAt, locale) === undefined) this.#loadedAt[locale] = Date.now();
     });
+  }
+
+  /** Reports a call on a destroyed instance; `true` means "ignore the call". */
+  #inert(action: string): boolean {
+    if (!this.#destroyed) return false;
+
+    logger.warn(`Ignoring '${action}' — this i18n instance was destroyed.`);
+
+    return true;
   }
 
   #resolveLocale(inputLocale?: Config.Locale): Config.Locale | undefined {
