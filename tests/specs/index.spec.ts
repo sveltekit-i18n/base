@@ -519,6 +519,30 @@ describe('i18n instance', () => {
     expect(instance.t('common.home')).toBe('Home');
     expect(warnSpy).toHaveBeenCalledWith("[i18n]: Conflicting translations for 'common.home'. Keeping the value of the last loader.");
   });
+  it('merges data added to a namespace that already holds some', async () => {
+    const warnSpy = vi.fn();
+    const instance = new i18n({
+      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
+      initLocale: 'en',
+      loaders: [
+        { key: 'common', locale: 'en', loader: async () => ({ menu: { home: 'Home' } }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { common: { menu: { about: 'About' } } } });
+
+    expect(instance.t('common.menu.home')).toBe('Home');
+    expect(instance.t('common.menu.about')).toBe('About');
+    expect(instance.rawTranslations['en']['common']).toEqual({ menu: { home: 'Home', about: 'About' } });
+    expect(instance.snapshot()).toEqual({ en: { common: { menu: { home: 'Home', about: 'About' } } } });
+
+    instance.addTranslations({ en: { common: { menu: { home: 'Domov' } } } });
+
+    expect(instance.t('common.menu.home')).toBe('Domov');
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
     const instance = new i18n({

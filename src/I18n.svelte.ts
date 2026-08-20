@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, mergeTranslations, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Translations } from './types.js';
@@ -399,10 +399,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     this.#rawTranslations = translationLocales.reduce(
       (acc, locale) => ({
         ...acc,
-        [locale]: {
-          ...(read(acc, locale) || {}),
-          ...read(sanitized, locale),
-        },
+        [locale]: mergeTranslations(read(acc, locale) || {}, read(sanitized, locale) ?? {}, locale),
       }),
       this.#rawTranslations,
     );
@@ -422,10 +419,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
 
         return ({
           ...acc,
-          [locale]: {
-            ...(read(acc, locale) || {}),
-            ...(dotnotate ? toDotNotation(input, preprocess === 'preserveArrays') : input),
-          },
+          [locale]: mergeTranslations(
+            read(acc, locale) || {},
+            (dotnotate ? toDotNotation(input, preprocess === 'preserveArrays') : input) ?? {},
+            locale,
+          ),
         });
       },
       this.#translations,
