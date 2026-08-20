@@ -3,6 +3,8 @@ import i18n from '../../src/index.js';
 import type { I18n } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
+import * as publicUtils from '../../src/exports/utils.js';
+import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
 import { filterTranslationKeys } from '../utils/index.js';
 
@@ -1169,6 +1171,12 @@ describe('type inference', () => {
 });
 
 describe('utils', () => {
+  it('publishes the reusable helpers, and only those', () => {
+    expect(publicUtils.toDotNotation).toBe(toDotNotation);
+    expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);
+    expect(Object.keys(publicUtils).sort()).toEqual(['sanitizeLocales', 'toDotNotation']);
+    expectTypeOf(publicUtils.toDotNotation).toEqualTypeOf<DotNotation.T>();
+  });
   // The library logs through one module-level singleton, so a test that
   // asserts on its output installs a capturing logger and restores the
   // previous one afterwards — restoring anything else would silently change
