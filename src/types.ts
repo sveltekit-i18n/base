@@ -53,7 +53,7 @@ export namespace Config {
 
   export type SanitizeLocales = boolean | ((locale: Locale) => Locale);
 
-  export type T<P extends Parser.Params = Parser.Params, O = Parser.Output> = {
+  export type T<P extends Parser.Params = Parser.Params, O = Parser.Output, S = any> = {
     /**
      * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
      */
@@ -112,6 +112,24 @@ export namespace Config {
      * This property defines translation syntax you want to use.
      */
     parser: Parser.T<P, O>;
+    /**
+     * A key schema — a map of translation key to the payload its message
+     * expects (`never` for a message without parameters). Supplying it types
+     * `t`/`l`: keys autocomplete and a wrong payload is a type error. Only its
+     * TYPE is read, so a generated artifact may export a value that is empty
+     * at runtime — as long as that value is TYPED, e.g.
+     * `export const schema = {} as TranslationSchema`. A schema whose keys are not a
+     * closed set (an open index signature, or no keys at all) is ignored and
+     * keys stay plain strings. Read at construction time only: a later
+     * `loadConfig()` cannot retype the instance, and `config.extensions`
+     * erases the instance's type parameters entirely.
+     *
+     * @example
+     * import { schema } from './generated/i18n-schema.js';
+     *
+     * const i18n = new I18n({ ...config, schema });
+     */
+    schema?: S;
     /**
      * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next load trigger runs its loaders again. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS.
      *
@@ -275,14 +293,78 @@ export namespace Parser {
     : string;
 }
 
+export namespace Schema {
+  /**
+   * A schema types calls only when its keys form a specific, closed set. An
+   * untyped value, an empty object or an open index signature would otherwise
+   * reject every key or demand a payload for keys it knows nothing about, so
+   * they degrade to no schema at all.
+   */
+  type HasClosedKeys<S> = [keyof S & string] extends [never]
+    ? false
+    : string extends keyof S ? false : true;
+
+  /** The key schema carried by a config; `never` when there is none to use. */
+  export type FromConfig<C> = C extends { schema?: infer S extends object }
+    ? (HasClosedKeys<S> extends true ? S : never)
+    : never;
+
+  /** The keys a schema allows; any string when there is no schema. */
+  export type Key<S> = [S] extends [never] ? string : keyof S & string;
+
+  type IsAny<T> = 0 extends 1 & T ? true : false;
+
+  /**
+   * What satisfies every member of a union — see `Params`. An empty union stays
+   * `never`: no member means no payload, not an unconstrained one.
+   */
+  type UnionToIntersection<U> = [U] extends [never] ? never : (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
+
+  /**
+   * The parser's own params minus the payload slot the schema takes over. A
+   * params tuple that is unknown or open-ended contributes no trailing slots –
+   * keeping its rest open would let any number of junk arguments through.
+   */
+  type Trailing<P extends Parser.Params> = number extends P['length']
+    ? []
+    : P extends readonly [unknown?, ...infer R] ? R : [];
+
+  /**
+   * The payload argument, spliced into slot 0 of the parser's params so the
+   * parser's trailing slots (ICU `formats`, for instance) survive. A payload
+   * that carries no value marks a message without parameters; one with no
+   * REQUIRED property, or one the schema marks `Optional`, may be omitted.
+   * A schema value of `any` keeps the slot unchecked rather than forbidding it.
+   */
+  export type Payload<P extends Parser.Params, V, Optional extends boolean = false> = IsAny<V> extends true
+    ? [payload?: any, ...Trailing<P>]
+    : [V] extends [void | null]
+      ? [payload?: undefined, ...Trailing<P>]
+      // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+      : true extends Optional | ({} extends V ? true : never)
+        ? [payload?: V, ...Trailing<P>]
+        : [payload: V, ...Trailing<P>];
+
+  /**
+   * Rest params for `key` — the parser's own params when there is no schema.
+   * A union of keys takes the INTERSECTION of their payloads, since one call
+   * has to satisfy every key it might be.
+   */
+  export type Params<S, K extends string, P extends Parser.Params> = [S] extends [never]
+    ? P
+    : [K] extends [keyof S]
+      ? Payload<P, UnionToIntersection<Exclude<S[K & keyof S], undefined>>, undefined extends S[K & keyof S] ? true : false>
+      : P;
+}
+
 export namespace Translations {
   export type Locales<T = string> = T[];
 
   export type SerializedTranslations = LocaleIndexed<DotNotation.Input>;
 
-  export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string> = (key: string, ...restParams: P) => O;
+  export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(key: K, ...restParams: Schema.Params<S, K, P>) => O;
 
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string> = (locale: Config.Locale, key: string, ...restParams: P) => O;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(locale: Config.Locale, key: K, ...restParams: Schema.Params<S, K, P>) => O;
 
   export type Input<V = any> = { [K in any]: Input<V> | V };
 
