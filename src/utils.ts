@@ -210,6 +210,23 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
   return input;
 };
 
+// Loader properties are consumer code — an accessor may throw. Materialized
+// once at the config boundary, so a single unreadable loader costs only itself
+// instead of taking down every locale-keyed read downstream.
+export const resolveLoaders = (input: Loader.LoaderModule[] = []): Loader.LoaderModule[] => (
+  input.reduce<Loader.LoaderModule[]>((acc, descriptor) => {
+    try {
+      const { key, locale, loader, routes } = descriptor;
+
+      return [...acc, { key, locale, loader, routes }];
+    } catch (error) {
+      logError('Skipping a loader that cannot be read.', error);
+
+      return acc;
+    }
+  }, [])
+);
+
 export const serialize = (input: Array<Loader.LoaderModule & { data: any }>) => {
   return input.reduce((acc, { key, data, locale }) => {
     if (!data) return acc;
