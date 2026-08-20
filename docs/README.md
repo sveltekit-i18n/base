@@ -330,8 +330,8 @@ const config = {
 
 Synchronous translations that are available immediately, before any loaders execute.
 
-Locale keys are normalized the way [`sanitizeLocales()`](#sanitizelocaleslocales)
-normalizes them, so `EN` and `en` are one entry — the one `t()` reads.
+Locale keys are normalized per [`sanitizeLocales`](#sanitizelocales), so by
+default `EN` and `en` are one entry — the one `t()` reads.
 
 **Use Cases:**
 - Language names (same across all locales)
@@ -609,6 +609,67 @@ i18n.t('unknown.key')  // → ""
 - Hide missing translations in production
 - Show consistent placeholder
 - Debugging (default behavior shows missing keys)
+
+---
+
+### `sanitizeLocales`
+
+**Type:** `boolean | ((locale: string) => string)` (optional)  
+**Default:** `true`
+
+How locale identifiers are normalized before they key anything —
+[`translations`](#translations), [`loaders`](#loaders),
+[`initLocale`](#initlocale), [`fallbackLocale`](#fallbacklocale), the
+[translation tables](#translations--rawtranslations) and every locale you pass
+to `l()`, `setLocale()`, `loadTranslations()` or
+[`invalidate()`](#invalidatelocale).
+
+**Default (`true`) — ISO normalization:**
+
+```javascript
+const config = {
+  // sanitizeLocales: true — 'en-us', 'EN-US' and 'en-US' are one locale: 'en-US'
+};
+```
+
+Locales are resolved through `Intl`, so one locale is spelled one way no matter
+where the value came from — a URL segment, a cookie, an `Accept-Language`
+header. A locale `Intl` does not recognize is lowercased and reported through
+the [logger](#loglevel).
+
+**`false` — locales stay exactly as authored:**
+
+```javascript
+const config = {
+  sanitizeLocales: false,
+  translations: { CS: { greeting: 'Ahoj' } },
+};
+
+i18n.locale;  // → 'CS'
+```
+
+Nothing is normalized, so `CS` and `cs` are two different locales. Use this
+when your locale identifiers are not ISO codes, or when their exact spelling is
+part of your URLs.
+
+**A function — normalize your way:**
+
+```javascript
+const config = {
+  sanitizeLocales: (locale) => locale.toLowerCase(),  // 'en-US' -> 'en-us'
+};
+```
+
+The function receives every locale before it is used as a key, and its return
+value is what gets stored and reported by [`locale`](#locale) and
+[`locales`](#locales). It runs on lookups too, so keep it cheap and pure. A
+call that throws — or returns nothing usable — falls back to the locale as
+authored and is reported through the [logger](#loglevel).
+
+**Use Cases:**
+- **Default:** one spelling per locale, whatever the source
+- **`false`:** non-ISO locale identifiers, or spellings that have to round-trip
+- **Function:** a project-wide convention (e.g. always lowercase)
 
 ---
 
@@ -917,8 +978,9 @@ updates when either changes. Outside templates it is an ordinary function call.
 **Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput`
 
 Like `t`, for an explicit locale — useful for rendering a language switcher in
-each language's own name. The locale is normalized before the lookup, so
-`l('EN', ...)` and `l('en', ...)` read the same table.
+each language's own name. The locale is normalized before the lookup
+([`sanitizeLocales`](#sanitizelocales)), so by default `l('EN', ...)` and
+`l('en', ...)` read the same table.
 
 ---
 
@@ -998,7 +1060,7 @@ gate the first render:
 
 The locale-indexed tables — `rawTranslations` before preprocessing,
 `translations` after. Indexed by the normalized locale
-([`sanitizeLocales()`](#sanitizelocaleslocales)), the same value
+([`sanitizeLocales`](#sanitizelocales)), the same value
 [`locale`](#locale) reports. Treat them as read-only; use `addTranslations()`
 to write.
 
@@ -1071,8 +1133,7 @@ the rejection.
 Adds translations synchronously (static tables known ahead of time). Payload is
 preprocessed per `config.preprocess` and merged into the tables; already-added
 keys count as loaded, so matching loaders will not refire. Locale keys are
-normalized ([`sanitizeLocales()`](#sanitizelocaleslocales)) before they are
-merged.
+normalized ([`sanitizeLocales`](#sanitizelocales)) before they are merged.
 
 ```javascript
 i18n.addTranslations({
@@ -1367,6 +1428,10 @@ if (locale && locale !== i18n.locale) await i18n.setLocale(locale);
 Falsy inputs are dropped, so the result can be shorter than the argument list.
 A locale `Intl` does not recognize is lowercased and reported through the
 [logger](#loglevel) instead of throwing.
+
+This is the DEFAULT normalization only: an instance configured with
+[`sanitizeLocales`](#sanitizelocales) keys its locales its own way, so a value
+compared against [`locale`](#locale) has to go through that same transform.
 
 ---
 

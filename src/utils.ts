@@ -96,46 +96,77 @@ const rememberSanitizedLocale = (locale: string, sanitized: string) => {
   sanitizedLocaleCache.set(locale, sanitized);
 };
 
-export const sanitizeLocales = (...locales: any[]) => {
+type Sanitizer = (...locales: any[]) => Config.Locale[];
+
+const mapLocales = (transform: (locale: any) => Config.Locale): Sanitizer => (...locales) => {
   if (!locales.length) return [];
 
-  return locales.filter((locale) => !!locale).map((locale) => {
-    // Only a string is a faithful key for itself.
-    const cacheable = typeof locale === 'string';
+  return locales.filter((locale) => !!locale).map(transform);
+};
 
-    if (cacheable) {
-      const cached = recallSanitizedLocale(locale);
+export const sanitizeLocales = mapLocales((locale) => {
+  // Only a string is a faithful key for itself.
+  const cacheable = typeof locale === 'string';
 
-      if (cached !== undefined) return cached;
-    }
+  if (cacheable) {
+    const cached = recallSanitizedLocale(locale);
 
-    let current = `${locale}`.toLowerCase();
-    try {
-      const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
+    if (cached !== undefined) return cached;
+  }
 
-      if (!sanitized) throw new Error();
+  let current = `${locale}`.toLowerCase();
+  try {
+    const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
 
-      current = sanitized;
+    if (!sanitized) throw new Error();
 
-      if (cacheable) rememberSanitizedLocale(locale, current);
-    } catch {
-      // Deliberately not remembered: a locale Intl does not know yet can
-      // recover, and the warning stays tied to the call rather than to
-      // whichever logger was installed first.
-      logger.warn(`'${locale}' locale is non-standard.`);
-    }
+    current = sanitized;
 
-    return current;
-  });
+    if (cacheable) rememberSanitizedLocale(locale, current);
+  } catch {
+    // Deliberately not remembered: a locale Intl does not know yet can
+    // recover, and the warning stays tied to the call rather than to
+    // whichever logger was installed first.
+    logger.warn(`'${locale}' locale is non-standard.`);
+  }
+
+  return current;
+});
+
+// The normalization `config.sanitizeLocales` asks for. A custom transform is
+// consumer code and every table is keyed by what it returns, so a throwing or
+// empty-handed one degrades to the locale as authored.
+export const sanitizerFactory = (sanitize: Config.SanitizeLocales = true): Sanitizer => {
+  if (typeof sanitize === 'function') {
+    return mapLocales((locale) => {
+      const input: Config.Locale = `${locale}`;
+
+      try {
+        const transformed = sanitize(input);
+
+        if (transformed) return `${transformed}`;
+
+        logger.warn(`'sanitizeLocales' returned no locale for '${input}'.`);
+      } catch (error) {
+        logError(`'sanitizeLocales' failed for '${input}' locale.`, error);
+      }
+
+      return input;
+    });
+  }
+
+  if (!sanitize) return mapLocales((locale) => `${locale}`);
+
+  return sanitizeLocales;
 };
 
 // Every other locale-keyed surface (`locale`, `fallbackLocale`, loader data,
 // the loaded-key bookkeeping) is sanitized, so a table handed in under a raw
 // locale would be unreachable. Merged rather than replaced: two spellings of
 // one locale are one entry.
-export const sanitizeTranslationLocales = (input: Translations.SerializedTranslations): Translations.SerializedTranslations => (
+export const sanitizeTranslationLocales = (input: Translations.SerializedTranslations, sanitize: Sanitizer): Translations.SerializedTranslations => (
   Object.keys(input).reduce<Translations.SerializedTranslations>((acc, locale) => {
-    const [sanitized = locale] = sanitizeLocales(locale);
+    const [sanitized = locale] = sanitize(locale);
 
     return { ...acc, [sanitized]: { ...read(acc, sanitized), ...read(input, locale) } };
   }, {})

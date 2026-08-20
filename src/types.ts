@@ -51,6 +51,8 @@ export namespace Config {
 
   export type FallbackValue = any;
 
+  export type SanitizeLocales = boolean | ((locale: Locale) => Locale);
+
   export type T<P extends Parser.Params = Parser.Params, O = Parser.Output> = {
     /**
      * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
@@ -77,6 +79,21 @@ export namespace Config {
      * By default, translation key is returned in case no translation is found for given translation key. For example, `$t('unknown.key')` will result in `'unknown.key'` output. You can set this output value using this config prop.
      */
     fallbackValue?: FallbackValue;
+    /**
+     * Defines how locale identifiers are normalized before they key anything – `config.translations`, loaders, the translation tables, `locale`, `fallbackLocale` and every locale you pass in. `true` normalizes to the ISO form, `false` keeps each locale exactly as it was authored, and a function normalizes it your way.
+     *
+     * @default true
+     *
+     * @example true
+     * 'en-us' => 'en-US'
+     *
+     * @example false
+     * 'en-us' => 'en-us'
+     *
+     * @example (locale) => locale.toLowerCase()
+     * 'en-US' => 'en-us'
+     */
+    sanitizeLocales?: SanitizeLocales;
     /**
      * Preprocessor strategy or a custom function. Defines, how to transform the translation data immediately after the load. Note that a custom function (like `'none'`) bypasses the dot-notation flattening entirely – its return value is stored as-is, so keys are then looked up exactly as the function produced them.
      * @default 'full'

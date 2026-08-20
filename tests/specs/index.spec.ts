@@ -653,6 +653,93 @@ describe('i18n locale keys', () => {
   });
 });
 
+describe('i18n sanitizeLocales config', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  it('`false` keeps every locale exactly as it was authored', async () => {
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      sanitizeLocales: false,
+      initLocale: 'CS',
+      translations: { CS: { greeting: 'Ahoj' } },
+    });
+
+    await instance.loadTranslations('CS');
+
+    expect(instance.locale).toBe('CS');
+    expect(instance.locales).toEqual(['CS']);
+    expect(Object.keys(instance.translations)).toEqual(['CS']);
+    expect(instance.t('greeting')).toBe('Ahoj');
+    expect(instance.l('CS', 'greeting')).toBe('Ahoj');
+  });
+
+  it('`false` keeps spellings of one locale apart', () => {
+    const instance = new i18n({ parser: valueParser, log, sanitizeLocales: false });
+
+    instance.addTranslations({ CS: { greeting: 'Ahoj' }, cs: { farewell: 'Ahoj' } });
+
+    expect(instance.rawTranslations).toStrictEqual({ CS: { greeting: 'Ahoj' }, cs: { farewell: 'Ahoj' } });
+  });
+
+  it('a custom transform keys loaders, tables and the active locale', async () => {
+    let calls = 0;
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      sanitizeLocales: (locale) => locale.toUpperCase(),
+      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+    });
+
+    await instance.loadTranslations('en');
+
+    expect(calls).toBe(1);
+    expect(instance.locale).toBe('EN');
+    expect(instance.locales).toEqual(['EN']);
+    expect(Object.keys(instance.translations)).toEqual(['EN']);
+    expect(instance.t('common.greeting')).toBe('Hello');
+
+    // The bookkeeping is keyed through the same transform, so an authored
+    // locale reaches the entry the load created.
+    instance.invalidate('en');
+    await instance.loadTranslations('EN');
+
+    expect(calls).toBe(2);
+  });
+
+  it('normalizes `initLocale` and `fallbackLocale` the way the INCOMING config asks', async () => {
+    // They are normalized before the config is applied, so they must not be
+    // read through the strategy the instance is still configured with.
+    const instance = new i18n();
+
+    await instance.loadConfig({
+      parser: valueParser,
+      log,
+      sanitizeLocales: false,
+      initLocale: 'EN',
+      fallbackLocale: 'CS',
+      translations: { CS: { greeting: 'Ahoj' }, EN: { farewell: 'Ahoj' } },
+    });
+
+    expect(instance.locale).toBe('EN');
+    expect(instance.t('greeting')).toBe('Ahoj');
+  });
+
+  it('a throwing transform falls back to the locale as authored', async () => {
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      sanitizeLocales: () => { throw new Error('nope'); },
+      translations: { en: { greeting: 'Hello' } },
+    });
+
+    await expect(instance.loadTranslations('en')).resolves.toBeUndefined();
+
+    expect(instance.locale).toBe('en');
+    expect(instance.t('greeting')).toBe('Hello');
+  });
+});
+
 describe('i18n extensions', () => {
   it('constructs the plain instance when no extensions are configured', () => {
     // Assignability doubles as the type-level assertion: without extensions
