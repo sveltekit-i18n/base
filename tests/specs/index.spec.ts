@@ -31,6 +31,7 @@ describe('i18n instance', () => {
     expect(instance).toHaveProperty('setLocale');
     expect(instance).toHaveProperty('setRoute');
     expect(instance).toHaveProperty('invalidate');
+    expect(instance).toHaveProperty('snapshot');
     // The v2 SSR hand-off primitive is deleted from v3, not deprecated — pin
     // its absence so it cannot quietly return.
     expect(instance).not.toHaveProperty('getTranslationProps');
@@ -600,6 +601,57 @@ describe('i18n instance', () => {
   });
 });
 
+describe('i18n locale keys', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  it('`addTranslations` normalizes the locale key so `t` reaches the data', async () => {
+    const instance = new i18n({ parser: valueParser, log, initLocale: 'EN', translations: { EN: { greeting: 'Hello' } } });
+
+    await instance.loadTranslations('EN');
+
+    expect(instance.locale).toBe('en');
+    expect(Object.keys(instance.translations)).toEqual(['en']);
+    expect(instance.t('greeting')).toBe('Hello');
+  });
+
+  it('`addTranslations` merges spellings that normalize to the same locale', () => {
+    const instance = new i18n({ parser: valueParser, log });
+
+    instance.addTranslations({ EN: { greeting: 'Hello' }, en: { farewell: 'Bye' } });
+
+    expect(instance.rawTranslations).toStrictEqual({ en: { greeting: 'Hello', farewell: 'Bye' } });
+  });
+
+  it('`l` reaches the table through a non-canonical locale', () => {
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { greeting: 'Hello' } } });
+
+    expect(instance.l('EN', 'greeting')).toBe('Hello');
+  });
+
+  it('a non-canonical `config.translations` key still suppresses its loader', async () => {
+    let calls = 0;
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      translations: { EN: { common: { greeting: 'Hello' } } },
+      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+    });
+
+    await instance.loadTranslations('en');
+
+    expect(calls).toBe(0);
+    expect(instance.t('common.greeting')).toBe('Hello');
+  });
+
+  it('`snapshot` carries data added under a non-canonical locale', async () => {
+    const instance = new i18n({ parser: valueParser, log, translations: { EN: { common: { greeting: 'Hello' } } } });
+
+    await instance.loadTranslations('EN');
+
+    expect(instance.snapshot()).toEqual({ en: { common: { greeting: 'Hello' } } });
+  });
+});
+
 describe('i18n extensions', () => {
   it('constructs the plain instance when no extensions are configured', () => {
     // Assignability doubles as the type-level assertion: without extensions
@@ -1080,6 +1132,97 @@ describe('i18n cache and invalidation', () => {
 
     await instance.loadTranslations('en');
     expect(newCalls).toBe(1);
+  });
+});
+
+describe('i18n snapshot', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  const countingLoaders = (calls: Record<string, number>) => [
+    { key: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
+    { key: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
+    { key: 'about', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { title: 'About' }; } },
+    { key: 'common', locale: 'cs', loader: async () => { calls.cs = (calls.cs ?? 0) + 1; return { greeting: 'Ahoj' }; } },
+  ];
+
+  it('returns nothing before anything loaded', () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    expect(instance.snapshot()).toEqual({});
+  });
+
+  it('narrows the active locale to the current route', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    await instance.loadTranslations('en', '/about');
+    await instance.setRoute('/');
+
+    // '/about' data is still held, but it belongs to another route — sending
+    // it would let the client hydrate keys its own loaders never claim back.
+    expect(instance.snapshot()).toEqual({
+      en: {
+        common: { greeting: 'Hello' },
+        home: { title: 'Home' },
+      },
+    });
+  });
+
+  it('keeps keys no loader claims', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { extra: { note: 'kept' } } });
+
+    expect(instance.snapshot().en).toHaveProperty('extra');
+  });
+
+  it('includes the fallback locale', async () => {
+    const instance = new i18n({ parser: valueParser, log, fallbackLocale: 'cs', loaders: countingLoaders({}) });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(Object.keys(instance.snapshot()).sort()).toEqual(['cs', 'en']);
+  });
+
+  it('is pre-preprocess, so the receiving instance applies its own', async () => {
+    const instance = new i18n({ parser: valueParser, log, preprocess: 'none', loaders: countingLoaders({}) });
+
+    await instance.loadTranslations('en', '/');
+
+    // Nested, not dot-notated — `rawTranslations` shape, not `translations`.
+    expect(instance.snapshot().en.common).toEqual({ greeting: 'Hello' });
+  });
+
+  it('hydrates a fresh instance through `config.translations` without refetching', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Record<string, number> = {};
+    const client = new i18n({ parser: valueParser, log, translations: server.snapshot(), loaders: countingLoaders(calls) });
+
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({});
+    expect(client.t('common.greeting')).toBe('Hello');
+    expect(client.t('home.title')).toBe('Home');
+  });
+
+  it('leaves the loaders of other routes to run on navigation', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    await server.loadTranslations('en', '/about');
+    await server.setRoute('/');
+
+    const calls: Record<string, number> = {};
+    const client = new i18n({ parser: valueParser, log, translations: server.snapshot(), loaders: countingLoaders(calls) });
+
+    await client.loadTranslations('en', '/');
+    expect(calls).toEqual({});
+
+    await client.setRoute('/about');
+    expect(calls).toEqual({ about: 1 });
+    expect(client.t('about.title')).toBe('About');
   });
 });
 

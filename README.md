@@ -305,6 +305,7 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `setRoute(route)` – update the current route
 - `loadConfig(config)` – (re)configure the instance
 - `addTranslations(translations)` – add synchronous translations
+- `snapshot()` – serialize the active locale (and the fallback) for the current route, shaped like `config.translations` so the receiving instance hydrates from it
 - `invalidate(locale?)` – mark loaded translations stale (one locale, or all); loaders run again on the next load trigger, and a load still in flight for an invalidated locale settles with its data discarded
 
 ### Utilities
