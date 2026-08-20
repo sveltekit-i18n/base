@@ -275,6 +275,12 @@ it pure — a matcher may be consulted more than once per load:
 
 **💡 Tip:** Keep common translations small and use route-based loading for page-specific content to optimize performance.
 
+**Loader descriptors are read once.** `locale`, `key`, `loader` and `routes`
+are captured when the config is applied, so a property implemented as a getter
+is not re-evaluated on later loads. A descriptor that throws while being read
+is reported through the [logger](#loglevel) and dropped — the remaining loaders
+keep working, and [`locales`](#locales) lists the ones that resolved.
+
 #### Complete Loaders Example
 
 ```javascript

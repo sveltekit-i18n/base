@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, read, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Translations } from './types.js';
@@ -154,6 +154,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
     const [sanitizedInitLocale] = sanitize(initLocale);
     const [sanitizedFallbackLocale] = sanitize(fallbackLocale);
 
+    const loaders = resolveLoaders(rest.loaders);
+
     logger.debug('Setting config.');
 
     this.#config = {
@@ -161,13 +163,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string> 
       fallbackLocale: sanitizedFallbackLocale,
       translations,
       ...rest,
+      loaders,
     };
 
     // Report-only: the loader still runs, but `.` is the dot-notation
     // separator, so a dotted key collides with the flattened namespace.
     // `String` rather than a template literal — interpolating a Symbol throws,
     // and a config-time report must not abort the rest of the config load.
-    (rest.loaders ?? []).forEach(({ key }) => {
+    loaders.forEach(({ key }) => {
       const name = key == null ? '' : String(key);
 
       if (name.includes('.')) {

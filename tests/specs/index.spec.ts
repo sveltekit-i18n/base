@@ -577,6 +577,26 @@ describe('i18n instance', () => {
 
     expect(errorSpy).not.toHaveBeenCalled();
   });
+  it('drops a loader whose accessor throws and keeps the resolvable ones', async () => {
+    const errorSpy = vi.fn();
+    const boom = new Error('locale accessor');
+    const instance = new i18n({
+      parser,
+      log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
+      loaders: [
+        { key: 'broken', get locale(): string { throw boom; }, loader: async () => ({ greeting: 'Ahoj' }) },
+        { key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+      ],
+    });
+
+    // A public read returns the resolvable subset instead of propagating.
+    expect(instance.locales).toEqual(['en']);
+    expect(errorSpy).toHaveBeenCalledWith('[i18n]: Skipping a loader that cannot be read.', boom);
+
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.translations['en']['common.greeting']).toBe('Hello');
+  });
   it('reports a loader key containing a `.` character but keeps the loader', async () => {
     const errorSpy = vi.fn();
     const instance = new i18n();
