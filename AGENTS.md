@@ -290,7 +290,7 @@ not RCE/XSS.
   `serialize` and `#getTranslationProps` are plain objects and stay correct only
   while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
-  batch; a missing config/parser must not throw on `t.get()`/`l.get()`.
+  batch; a missing config/parser must not throw on `t()`/`l()`.
 - **`route` reaches `RegExp.test()` and is visitor-controlled** (`url.pathname`)
   — dev-supplied route regexes are a ReDoS surface. Don't add regex handling
   that worsens it; flag it if touched.
