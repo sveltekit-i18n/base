@@ -227,14 +227,38 @@ export const resolveLoaders = (input: Loader.LoaderModule[] = []): Loader.Loader
   }, [])
 );
 
+const isMergeable = (value: any): boolean => !!value && typeof value === 'object' && !Array.isArray(value);
+
+// Loaders sharing a `(locale, key)` namespace — route-scoped chunks of one
+// namespace — all contribute to it instead of the last one settling winning.
+// Plain objects merge branch by branch; anything else is a leaf, and a leaf
+// collision has no merge to perform, so the later loader's value is kept.
+const mergeTranslations = (target: any, source: any, path: string): any => {
+  if (!isMergeable(target) || !isMergeable(source)) {
+    logger.warn(`Conflicting translations for '${path}'. Keeping the value of the last loader.`);
+
+    return source;
+  }
+
+  return Object.keys(source).reduce((acc, key) => ({
+    ...acc,
+    [key]: hasOwn(acc, key) ? mergeTranslations(read(acc, key), read(source, key), `${path}.${key}`) : read(source, key),
+  }), target);
+};
+
 export const serialize = (input: Array<Loader.LoaderModule & { data: any }>) => {
   return input.reduce((acc, { key, data, locale }) => {
     if (!data) return acc;
 
     // The locale is already sanitized — loaders are normalized before the fetch.
+    const namespaces = read(acc, locale);
+
     return ({
       ...acc,
-      [locale]: { ...read(acc, locale), [key]: data },
+      [locale]: {
+        ...namespaces,
+        [key]: hasOwn(namespaces, key) ? mergeTranslations(read(namespaces, key), data, `${key}`) : data,
+      },
     });
   }, {} as Translations.SerializedTranslations);
 };
