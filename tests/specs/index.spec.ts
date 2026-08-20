@@ -486,6 +486,39 @@ describe('i18n instance', () => {
     expect(instance.t('common.greeting')).toBe('Hello');
     expect(errorSpy).toHaveBeenCalled();
   });
+  it('merges loaders sharing a locale and key instead of keeping the last one', async () => {
+    const instance = new i18n({
+      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      log,
+      loaders: [
+        { key: 'common', locale: 'en', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+        { key: 'common', locale: 'en', loader: async () => ({ menu: { about: 'About' }, greeting: 'Hello' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.t('common.menu.home')).toBe('Home');
+    expect(instance.t('common.menu.about')).toBe('About');
+    expect(instance.t('common.greeting')).toBe('Hello');
+    expect(instance.rawTranslations['en']['common']).toEqual({ menu: { home: 'Home', about: 'About' }, greeting: 'Hello' });
+  });
+  it('keeps the last loader value on a leaf conflict and reports it', async () => {
+    const warnSpy = vi.fn();
+    const instance = new i18n({
+      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
+      loaders: [
+        { key: 'common', locale: 'en', loader: async () => ({ home: { title: 'Title' } }) },
+        { key: 'common', locale: 'en', loader: async () => ({ home: 'Home' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.t('common.home')).toBe('Home');
+    expect(warnSpy).toHaveBeenCalledWith("[i18n]: Conflicting translations for 'common.home'. Keeping the value of the last loader.");
+  });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
     const instance = new i18n({

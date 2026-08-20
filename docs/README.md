@@ -84,7 +84,6 @@ The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`).
 Translation namespace identifier. This acts as a prefix for translation keys.
 
 **Rules:**
-- Should be unique within a locale
 - Cannot contain dots (`.`)
 - Use descriptive names (`common`, `home`, `auth`, etc.)
 
@@ -108,6 +107,20 @@ config-time `logger.error` reports such keys, but the loader still runs):
 // ✅ Good
 { key: 'home' }
 ```
+
+**Sharing a key.** Several loaders may declare the same `locale` and `key`:
+
+- Their data is **merged** where they fill in different parts of the
+  namespace — every loader contributes its own branches.
+- A value is **replaced** where the same translation is declared twice (or one
+  loader's object meets another's string). The loader declared later in
+  `loaders` wins and the collision is reported through the
+  [logger](#loglevel).
+
+Merging applies to loaders that run together. A key is still loaded once per
+locale, so once one loader has supplied `common`, every loader declaring that
+key is skipped — splitting a namespace into `routes`-scoped chunks therefore
+keeps only the chunk whose route triggered the first load.
 
 ##### `loader` (required)
 
