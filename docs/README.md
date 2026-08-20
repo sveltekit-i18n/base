@@ -117,10 +117,42 @@ config-time `logger.error` reports such keys, but the loader still runs):
   `loaders` wins and the collision is reported through the
   [logger](#loglevel).
 
-Merging applies to loaders that run together. A key is still loaded once per
-locale, so once one loader has supplied `common`, every loader declaring that
-key is skipped — splitting a namespace into `routes`-scoped chunks therefore
-keeps only the chunk whose route triggered the first load.
+**A key is loaded only once per locale.** Loaders sharing a key therefore merge
+only when they run in the same load — when their `routes` all match the route
+that triggered it:
+
+```javascript
+loaders: [
+  { locale: 'en', key: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', key: 'common', loader: async () => ({ menu: { about: 'About' } }) },
+]
+// both loaders run when '/' is loaded
+// i18n.t('common.menu.home')  => 'Home'
+// i18n.t('common.menu.about') => 'About'
+```
+
+As soon as one loader has supplied `common`, every other `common` loader is
+skipped — including one that never had the chance to run, because its `routes`
+did not match.
+
+**⚠️ Common Pitfall:** Splitting one namespace into `routes`-scoped chunks. Give
+each route a key of its own instead:
+
+```javascript
+// ❌ Bad — a visitor landing on '/about' loads `common` from the second loader,
+// and moving to '/' no longer runs the first one
+loaders: [
+  { locale: 'en', key: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', key: 'common', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
+]
+// i18n.t('common.menu.home') => not loaded
+
+// ✅ Good
+loaders: [
+  { locale: 'en', key: 'home', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', key: 'about', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
+]
+```
 
 ##### `loader` (required)
 
@@ -1153,6 +1185,10 @@ Adds translations synchronously (static tables known ahead of time). Payload is
 preprocessed per `config.preprocess` and merged into the tables; already-added
 keys count as loaded, so matching loaders will not refire. Locale keys are
 normalized ([`sanitizeLocales`](#sanitizelocales)) before they are merged.
+
+Merging goes branch by branch, so a payload for a namespace that already holds
+data adds to it instead of replacing it; a leaf declared twice takes the
+incoming value.
 
 ```javascript
 i18n.addTranslations({
