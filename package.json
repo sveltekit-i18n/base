@@ -10,6 +10,11 @@
       "svelte": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./utils": {
+      "types": "./dist/exports/utils.d.ts",
+      "svelte": "./dist/exports/utils.js",
+      "default": "./dist/exports/utils.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

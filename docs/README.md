@@ -6,6 +6,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 
 - [Configuration](#configuration)
 - [Instance Properties and Methods](#instance-properties-and-methods)
+- [Utilities](#utilities)
 - [TypeScript](#typescript)
 - [See Also](#see-also)
 
@@ -1093,6 +1094,65 @@ next load trigger starts a fresh fetch instead of joining it.
 Works independently of `config.cache`: with the default infinite cache it is
 the way to pick up runtime content changes; with a finite cache it forces a
 refresh before the window elapses.
+
+---
+
+## Utilities
+
+Two helpers the instance uses internally are published separately, for the
+cases where consumer code has to match the library's own behavior:
+
+```javascript
+import { sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+```
+
+The rest of the internals stays private – the subpath exports these two, plus
+the `DotNotation` type they are described with.
+
+### `toDotNotation(input, preserveArrays?)`
+
+**Type:** `<I>(input: I, preserveArrays?: boolean) => DotNotation.Output<I>`
+
+The flattening behind [`preprocess`](#preprocess). A custom `preprocess`
+function *replaces* the built-in flattening, so call this when you want to
+transform the input and still end up with dot notation:
+
+```javascript
+import { toDotNotation } from '@sveltekit-i18n/base/utils';
+
+const defaults = { common: { error: 'An error occurred' } };
+
+const config = {
+  preprocess: (input) => toDotNotation({ ...defaults, ...input }),
+};
+
+// i18n.t('common.error')
+```
+
+Pass `true` as the second argument to keep arrays intact – the
+[`'preserveArrays'`](#preprocess) behavior.
+
+---
+
+### `sanitizeLocales(...locales)`
+
+**Type:** `(...locales: any[]) => string[]`
+
+Normalizes locales the way the instance does before storing them, so a value
+coming from a URL, a cookie or an `Accept-Language` header can be compared
+against [`locale`](#locale) and [`locales`](#locales):
+
+```javascript
+import { sanitizeLocales } from '@sveltekit-i18n/base/utils';
+
+const [locale] = sanitizeLocales(page.params.lang); // 'en-us' -> 'en-US'
+
+if (locale && locale !== i18n.locale) await i18n.setLocale(locale);
+```
+
+Falsy inputs are dropped, so the result can be shorter than the argument list.
+A locale `Intl` does not recognize is lowercased and reported through the
+[logger](#loglevel) instead of throwing.
 
 ---
 

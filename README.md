@@ -307,6 +307,17 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `addTranslations(translations)` – add synchronous translations
 - `invalidate(locale?)` – mark loaded translations stale (one locale, or all); loaders run again on the next load trigger, and a load still in flight for an invalidated locale settles with its data discarded
 
+### Utilities
+
+Two helpers the instance uses internally ship from a separate subpath, for code that has to match the library's own behavior:
+
+```javascript
+import { sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+```
+
+- `toDotNotation(input, preserveArrays?)` – the flattening behind [`preprocess`](#preprocess), for a custom `preprocess` that still wants dot notation
+- `sanitizeLocales(...locales)` – normalizes a locale from a URL, cookie or `Accept-Language` header the way the instance does, so it can be compared against `locale`
+
 Full API documentation: [docs/README.md](./docs/README.md)
 
 ## Documentation

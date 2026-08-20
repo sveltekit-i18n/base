@@ -58,6 +58,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `src/index.ts` | entry — re-exports the class and public types |
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
 | `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
+| `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite |

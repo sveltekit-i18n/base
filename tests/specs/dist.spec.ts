@@ -50,4 +50,16 @@ describe('published artifact', () => {
     expect(table.plain).toBe('ok');
     expect(({} as any).boom).toBe(undefined); // Object.prototype untouched
   });
+
+  it('serves the reusable helpers from the shipped subpath', async () => {
+    // Imported by package name, through the `exports` map — the subpath the
+    // consumer writes, not the file path it happens to resolve to. The
+    // specifier is a variable so that TypeScript leaves the self-reference to
+    // Node instead of demanding a `rootDir`.
+    const specifier = '@sveltekit-i18n/base/utils';
+    const { sanitizeLocales, toDotNotation } = await import(specifier);
+
+    expect(toDotNotation({ user: { name: 'Name' } })).toEqual({ 'user.name': 'Name' });
+    expect(sanitizeLocales('en-us', null)).toEqual(['en-US']);
+  });
 });
