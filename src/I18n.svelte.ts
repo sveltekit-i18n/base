@@ -5,7 +5,7 @@ import type { Config, Extension, Loader, Parser, Schema, Translations } from './
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
-class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never> {
+class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never, LocaleUnion extends string = string> {
   // -- reactive state ---------------------------------------------------------
 
   #config = $state<Config.T<ParserParams, ParserOutput> | undefined>(undefined);
@@ -59,11 +59,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * a fire-and-forget `setLocale()` — the value therefore updates once the
    * locale's translations resolved, not synchronously on assignment.
    */
-  get locale(): Config.Locale | undefined {
+  get locale(): Config.LocaleInput<LocaleUnion> | undefined {
     return this.#locale;
   }
 
-  set locale(value: Config.Locale | undefined) {
+  set locale(value: Config.LocaleInput<LocaleUnion> | undefined) {
     if (value) void this.setLocale(value);
   }
 
@@ -77,7 +77,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   loading: boolean = $derived(this.#pending.size > 0);
 
-  locales: Config.Locale[] = $derived.by(() => {
+  locales: Config.LocaleInput<LocaleUnion>[] = $derived.by(() => {
     if (!this.#config) return [];
 
     const { loaders = [] } = this.#config;
@@ -115,7 +115,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   };
 
   /** Like `t`, for an explicit locale. */
-  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput, TranslationSchema> = (locale, key, ...params) => {
+  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput, TranslationSchema, LocaleUnion> = (locale, key, ...params) => {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
     const [sanitizedLocale = locale] = this.#sanitize(locale);
@@ -203,7 +203,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- loading ----------------------------------------------------------------
 
-  setLocale = (locale?: Config.Locale): Promise<void> => {
+  setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
     if (!locale || this.#inert('setLocale')) return Promise.resolve();
 
     if (locale !== this.#requestedLocale) {
@@ -233,7 +233,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return Promise.resolve();
   };
 
-  loadTranslations = (locale: Config.Locale, route = this.#route ?? ''): Promise<void> => {
+  loadTranslations = (locale: Config.LocaleInput<LocaleUnion>, route = this.#route ?? ''): Promise<void> => {
     if (!locale || this.#inert('loadTranslations')) return Promise.resolve();
 
     this.#requestedLocale = locale;
@@ -249,7 +249,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * flight for an invalidated locale is severed: it settles, but its data is
    * discarded — it predates the invalidation.
    */
-  invalidate = (locale?: Config.Locale): void => {
+  invalidate = (locale?: Config.LocaleInput<LocaleUnion>): void => {
     if (this.#inert('invalidate')) return;
 
     if (locale !== undefined) {
@@ -627,15 +627,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 /**
  * A class declaration cannot annotate its constructor's return type, so the
  * extension pipe's construction-time type lives on this construct signature
- * instead: parser params and output are inferred from `config.parser`, and
- * the returned surface is the instance type folded through the
- * `config.extensions` tuple (`const` keeps it a tuple without `as const` at
- * the call site).
+ * instead: parser params and output are inferred from `config.parser`, locales
+ * are narrowed to the ones the config names, and the returned surface is the
+ * instance type folded through the `config.extensions` tuple
+ * (`const` keeps it a tuple without `as const` at the call site).
  */
 interface I18nConstructor {
   new <const C extends Config.T<any, any> = Config.T<any, any>>(
     config?: C
-  ): Extension.Piped<I18nCore<Parser.FromConfig<C>, Parser.OutputFromConfig<C>, Schema.FromConfig<C>>, Extension.FromConfig<C>>;
+  ): Extension.Piped<
+    I18nCore<Parser.FromConfig<C>, Parser.OutputFromConfig<C>, Schema.FromConfig<C>, Config.LocalesFromConfig<C>>,
+    Extension.FromConfig<C>
+  >;
 }
 
 // The raw class is deliberately not exported — every consumer constructs
@@ -643,7 +646,7 @@ interface I18nConstructor {
 // meanings: the value is the facade, the type is the un-piped instance.
 const I18n = I18nCore as unknown as I18nConstructor;
 
-type I18n<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never> = I18nCore<ParserParams, ParserOutput, TranslationSchema>;
+type I18n<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never, LocaleUnion extends string = string> = I18nCore<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>;
 
 export { I18n };
 export default I18n;
