@@ -215,7 +215,7 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
 // Loader properties are consumer code — an accessor may throw. Materialized
 // once at the config boundary, so a single unreadable loader costs only itself
 // instead of taking down every locale-keyed read downstream.
-export const resolveLoaders = (input: Loader.LoaderModule[] = []): Loader.LoaderModule[] => (
+export const resolveLoaders = (input: readonly Loader.LoaderModule[] = []): Loader.LoaderModule[] => (
   input.reduce<Loader.LoaderModule[]>((acc, descriptor) => {
     try {
       const { key, locale, loader, routes } = descriptor;

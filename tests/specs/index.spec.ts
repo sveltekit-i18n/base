@@ -1680,6 +1680,94 @@ describe('type inference', () => {
     expect(extract(42)).toEqual([]);
     expect([detailed, nameless]).toHaveLength(2);
   });
+
+  it('reads the locales a config names off every slot that carries one', () => {
+    const config = {
+      parser,
+      log,
+      initLocale: 'en',
+      fallbackLocale: 'de',
+      translations: { cs: { greeting: 'Ahoj' } },
+      loaders: [{ locale: 'sk', key: 'common', routes: ['/about'], loader: async () => ({}) }],
+    } as const;
+
+    // Every config slot that names a locale feeds the same union — the one the
+    // instance takes and reports. A loader's `routes` is frozen by the same
+    // `as const` and must not reject the literal config.
+    expectTypeOf<Config.LocalesFromConfig<typeof config>>().toEqualTypeOf<'en' | 'de' | 'cs' | 'sk'>();
+
+    // The union stays open: a custom `sanitizeLocales` may map an arbitrary
+    // input onto a known locale, so an unlisted one is still accepted.
+    expectTypeOf<Config.LocaleInput<'en' | 'de'>>().toEqualTypeOf<'en' | 'de' | (string & {})>();
+    expectTypeOf<Config.LocaleInput>().toEqualTypeOf<string>();
+
+    expect(new i18n(config)).toBeInstanceOf(i18n);
+  });
+
+  it('leaves locale inputs open when the config names no literal locale', () => {
+    // An annotated config erases the literals, and so does a widened one.
+    const annotated: Config.T = { parser, log, initLocale: 'en' };
+    const widened = { parser, log, initLocale: 'en' };
+
+    expectTypeOf<Config.LocalesFromConfig<typeof annotated>>().toEqualTypeOf<string>();
+    expectTypeOf<Config.LocalesFromConfig<typeof widened>>().toEqualTypeOf<string>();
+
+    const instance = new i18n(annotated);
+
+    void instance.setLocale('anything');
+    void instance.l('anything', 'key');
+
+    expect(instance).toBeInstanceOf(i18n);
+    expect(new i18n(widened)).toBeInstanceOf(i18n);
+  });
+
+  it('degrades the locale union to plain strings when one source is dynamic', () => {
+    const dynamicLocales: string[] = ['cs', 'sk'];
+
+    const config = {
+      parser,
+      log,
+      initLocale: 'en',
+      loaders: dynamicLocales.map((locale) => ({ locale, key: 'common', loader: async () => ({}) })),
+    } as const;
+
+    // A half-known union would complete `'en'` while silently hiding every
+    // locale the dynamic source names.
+    expectTypeOf<Config.LocalesFromConfig<typeof config>>().toEqualTypeOf<string>();
+
+    expect(new i18n(config)).toBeInstanceOf(i18n);
+  });
+
+  it('narrows locale inputs and reads while keeping the instance assignable', () => {
+    const instance = new i18n({ parser, log, initLocale: 'en', fallbackLocale: 'de' });
+
+    type Narrowed = 'en' | 'de' | (string & {});
+
+    expectTypeOf<Parameters<typeof instance.setLocale>[0]>().toEqualTypeOf<Narrowed | undefined>();
+    expectTypeOf<Parameters<typeof instance.loadTranslations>[0]>().toEqualTypeOf<Narrowed>();
+    expectTypeOf<Parameters<typeof instance.invalidate>[0]>().toEqualTypeOf<Narrowed | undefined>();
+    expectTypeOf<Parameters<typeof instance.l>[0]>().toEqualTypeOf<Narrowed>();
+
+    // Reads carry the same union: the locale the instance reports is the one
+    // it was asked for, sanitized.
+    expectTypeOf(instance.locale).toEqualTypeOf<Narrowed | undefined>();
+    expectTypeOf(instance.locales).toEqualTypeOf<Narrowed[]>();
+
+    // A locale outside the union still passes — narrowing drives completion,
+    // it does not close the input.
+    void instance.setLocale('sv');
+    void instance.loadTranslations('sv');
+    instance.invalidate('sv');
+    void instance.l('sv', 'key');
+    instance.locale = 'sv';
+
+    // The union stays open in both directions, so narrowing never makes the
+    // instance type invariant.
+    const untyped: I18n = instance;
+    const renarrowed: I18n<any, string, never, 'en' | 'de'> = untyped;
+
+    expect(renarrowed).toBeInstanceOf(i18n);
+  });
 });
 
 describe('utils', () => {

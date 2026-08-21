@@ -45,6 +45,36 @@ export namespace Logger {
 export namespace Config {
   export type Locale = Translations.Locales[number];
 
+  /**
+   * A locale as the public surface takes and reports it: the locales the config
+   * spells, plus any other string. The set is a completion hint, never a
+   * constraint — a locale can arrive from a URL, a cookie or an
+   * `Accept-Language` header, and a custom `sanitizeLocales` may map an
+   * arbitrary input onto a known one.
+   */
+  export type LocaleInput<L extends string = string> = L | (string & {});
+
+  /** A locale-valued config property; `never` unless it carries a literal. */
+  type LocaleProp<C, K extends string> = C extends { [P in K]: infer L extends string } ? L : never;
+
+  type LocaleSources<C> =
+    | (C extends { loaders: readonly { locale: infer L extends string }[] } ? L : never)
+    | (C extends { translations: infer T } ? keyof T & string : never)
+    | LocaleProp<C, 'initLocale'>
+    | LocaleProp<C, 'fallbackLocale'>;
+
+  type ResolveLocales<L> = L extends string ? L : never;
+
+  /**
+   * The locales a config type spells – loader locales, `initLocale`,
+   * `fallbackLocale` and the keys of `translations`. Plain `Locale` when it
+   * spells none, and plain `Locale` as soon as ONE source is dynamic: a
+   * half-known set would complete some locales while silently hiding the rest.
+   */
+  export type LocalesFromConfig<C> = [LocaleSources<C>] extends [never]
+    ? Locale
+    : ResolveLocales<LocaleSources<C>>;
+
   export type InitLocale = Locale | undefined;
 
   export type FallbackLocale = Locale | undefined;
@@ -57,7 +87,7 @@ export namespace Config {
     /**
      * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
      */
-    loaders?: Loader.LoaderModule[];
+    loaders?: readonly Loader.LoaderModule[];
     /**
      * Locale-indexed translations, which should be in place before loaders will trigger. It's useful for static pages and synchronous translations – for example locally defined language names which are the same for all of the language mutations.
      *
@@ -230,7 +260,7 @@ export namespace Loader {
     /**
     * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
     */
-    routes?: Route[];
+    routes?: readonly Route[];
   };
 
   /**
@@ -439,7 +469,7 @@ export namespace Translations {
 
   export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(key: K, ...restParams: Schema.Params<S, K, P>) => O;
 
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(locale: Config.Locale, key: K, ...restParams: Schema.Params<S, K, P>) => O;
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never, L extends string = string> = <K extends Schema.Key<S>>(locale: Config.LocaleInput<L>, key: K, ...restParams: Schema.Params<S, K, P>) => O;
 
   export type Input<V = any> = { [K in any]: Input<V> | V };
 
