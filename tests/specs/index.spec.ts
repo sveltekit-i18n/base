@@ -1651,6 +1651,35 @@ describe('type inference', () => {
 
     expect(instance).toBeInstanceOf(i18n);
   });
+
+  it('describes extracted params without pulling an extractor into the core', () => {
+    // `name` is the only thing a message always yields; everything else is a
+    // refinement a parser may or may not be able to prove.
+    const minimal: Parser.ParamSpec = { name: 'value' };
+    const detailed: Parser.ParamSpec = {
+      name: 'count',
+      kind: ['number', 'string'],
+      values: ['one', 'other'],
+      optional: true,
+      when: [{ param: 'gender', branch: 'female' }],
+    };
+
+    // An extractor is built from the same options the runtime parser takes, and
+    // reads a translation value – not a parser instance.
+    const factory: Parser.ExtractParamsFactory<{ modifiers?: string[] }> = () =>
+      (message, context) => (typeof message === 'string' && context?.key ? [minimal] : []);
+    const extract: Parser.ExtractParams = factory({ modifiers: [] });
+
+    // @ts-expect-error a spec without a name says nothing a generator can use
+    const nameless: Parser.ParamSpec = { kind: 'string' };
+
+    expectTypeOf(extract).parameters.toEqualTypeOf<[Parser.Value, (Parser.ExtractContext | undefined)?]>();
+    expectTypeOf(extract).returns.toEqualTypeOf<readonly Parser.ParamSpec[]>();
+
+    expect(extract('a message', { key: 'a.key', locale: 'en' })).toEqual([minimal]);
+    expect(extract(42)).toEqual([]);
+    expect([detailed, nameless]).toHaveLength(2);
+  });
 });
 
 describe('utils', () => {
