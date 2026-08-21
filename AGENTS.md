@@ -252,7 +252,10 @@ chat (§3).
   prototype while keeping the same pollution safety (see `toDotNotation`).
   Long-lived internal state may be written in place only when it is
   null-prototype and never exposed (see `#loadedKeys` in §11) — never a plain
-  object indexed by consumer input.
+  object indexed by consumer input. The locale-indexed folds in `serialize` and
+  `#getTranslationProps` keep the spread form deliberately, even though it is
+  quadratic in the number of locales: the counts are small, and only a
+  measurement showing otherwise justifies moving them to the accumulator form.
 - Keep `I18n.svelte.ts` for orchestration; put pure, testable logic in
   `utils.ts`.
 - Log through the module `logger` (`logger.error/warn/debug`), never raw
