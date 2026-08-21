@@ -27,7 +27,7 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 ✅ **Route-aware** – Automatic loading based on SvelteKit routes  
 ✅ **Component-scoped** – Multiple translation instances with custom definitions  
 ✅ **Extensible** – Pipe the instance through [extensions](#extensions) to reshape or augment its surface  
-✅ **TypeScript** – Full type support  
+✅ **TypeScript** – Locales inferred from your config, keys and payloads from a [`schema`](#schema)  
 ✅ **Zero dependencies** – Lightweight and fast
 
 ## Installation
@@ -64,7 +64,7 @@ npm install @sveltekit-i18n/parser-icu
 import { I18n } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-default';
 
-/** @type {import('@sveltekit-i18n/base').Config} */
+/** @type {import('@sveltekit-i18n/base').Config.T} */
 const config = {
   parser: parser({ /* parser options */ }),
   loaders: [
@@ -186,6 +186,8 @@ loaders: [
 ]
 ```
 
+Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
+
 ### `translations`
 
 Synchronous translations loaded immediately:
@@ -236,6 +238,21 @@ preprocess: 'full' // 'full' | 'preserveArrays' | 'none' | custom function
 - `'preserveArrays'`: Flattens objects but preserves arrays
 - `'none'`: No preprocessing
 - Custom function: `(input) => transformedOutput`
+
+### `schema`
+
+A map of translation key to the payload its message expects (`never` for a message that takes none). Supplying it types `t`/`l` — keys autocomplete, an unknown key is a type error, and the payload argument is checked. Only its type is read, so the value can stay empty at runtime:
+
+```typescript
+type TranslationSchema = {
+  'common.greeting': { name: string };
+  'common.farewell': never;
+};
+
+const i18n = new I18n({ ...config, schema: {} as TranslationSchema });
+```
+
+Hand-write it for a small set of messages, or point the slot at a generated artifact. A schema whose keys are not a closed set is ignored, and keys stay plain strings. See [`schema`](./docs/README.md#schema) for the full rules.
 
 ### `cache`
 
@@ -350,6 +367,17 @@ const config: Config.T<Params> = {
   loaders: [/* ... */],
 };
 ```
+
+Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `invalidate`, `l`, `locale`, `locales`):
+
+```typescript
+const i18n = new I18n({ parser: parser(), initLocale: 'en', fallbackLocale: 'de' });
+
+i18n.setLocale('en'); // 'en' | 'de' autocomplete here
+i18n.setLocale('sv'); // still accepted — the union is a hint, not a constraint
+```
+
+The locales survive only when the config reaches the constructor as a literal — inline, as above, or a separate object with `as const`. An annotated or separately widened config, and any config with one dynamic locale source (`loaders: locales.map(...)`), leaves them plain `string`. See [TypeScript](./docs/README.md#typescript) for both.
 
 ## Related Packages
 

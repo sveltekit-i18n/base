@@ -54,11 +54,15 @@ const config = {
 
 ### `loaders`
 
-**Type:** `Loader.LoaderModule[]` (optional)
+**Type:** `readonly Loader.LoaderModule[]` (optional)
 
 Array of loader configurations that define how and when translations should be loaded.
 
 #### Loader Properties
+
+Both `loaders` and a loader's `routes` are typed as **readonly** arrays, so a
+whole config frozen with `as const` — routed loaders included — is accepted (see
+[Locale completion](#locale-completion)).
 
 Each loader object can have:
 
@@ -238,7 +242,7 @@ one route:
 
 ##### `routes` (optional)
 
-**Type:** `Array<string | RegExp | { test: (route: string) => boolean }>`
+**Type:** `readonly (string | RegExp | { test: (route: string) => boolean })[]`
 
 Array of route patterns. Loader will only execute if current route matches one of these patterns.
 
@@ -717,10 +721,97 @@ value is what gets stored and reported by [`locale`](#locale) and
 call that throws — or returns nothing usable — falls back to the locale as
 authored and is reported through the [logger](#loglevel).
 
+Because normalization may map an arbitrary input onto a known locale, the locale
+union TypeScript completes on the instance stays open — see
+[Locale completion](#locale-completion).
+
 **Use Cases:**
 - **Default:** one spelling per locale, whatever the source
 - **`false`:** non-ISO locale identifiers, or spellings that have to round-trip
 - **Function:** a project-wide convention (e.g. always lowercase)
+
+---
+
+### `schema`
+
+**Type:** `{ [translationKey]: PayloadType }` (optional)
+
+A map of each translation key to the payload its message expects — the slot a
+generated schema artifact fills. Supplying it types [`t()`](#tkey-params) and
+[`l()`](#llocale-key-params): keys autocomplete, an unknown key is a type error,
+and the payload argument is checked against the key's entry.
+
+**Only the type is read.** Nothing reads this value at runtime, so the artifact
+may be empty as long as it is typed:
+
+```typescript
+type TranslationSchema = {
+  'common.greeting': { name: string };  // payload required
+  'common.about': never;                // message takes no parameters
+  'home.title': { title?: string };     // nothing required — payload optional
+};
+
+const i18n = new I18n({
+  ...config,
+  schema: {} as TranslationSchema,
+});
+```
+
+**Accepted calls:**
+
+```typescript
+i18n.t('common.greeting', { name: 'Alice' });
+i18n.t('common.about');
+i18n.t('home.title');
+```
+
+**Rejected calls:**
+
+```typescript
+i18n.t('common.headline');                  // unknown translation key
+i18n.t('common.greeting');                  // missing payload
+i18n.t('common.greeting', { name: 42 });    // wrong payload shape
+i18n.t('common.about', { title: 'About' }); // payload for a message that takes none
+```
+
+**Payload rules:**
+
+- `never`, `undefined`, `void` or `null` — the message takes no parameters, so
+  the payload argument is omitted, and passing one is a type error.
+- A payload with no **required** property (`{ name?: string }`), or one the
+  schema itself marks optional (`{ value: string } | undefined`) — the argument
+  may be omitted.
+- `any` — the payload slot stays unchecked. That is not the same as "no
+  payload": anything passes, nothing is demanded.
+- A **union of keys** (`t(condition ? 'a' : 'b', …)`) takes the
+  **intersection** of their payloads — one call has to satisfy every key it
+  might be.
+
+The payload occupies slot 0 of the parser's params, so a parser's **trailing**
+slots survive: an ICU `formats` argument still type-checks after the payload.
+
+**⚠️ A schema whose keys are not a closed set is ignored.** An open index
+signature (`Record<string, …>`), or a schema with no keys at all, would reject
+every key or demand a payload for keys it knows nothing about — so keys stay
+plain strings instead and calls are typed as if no schema were supplied:
+
+```typescript
+new I18n({ ...config, schema: {} });
+new I18n({ ...config, schema: {} as Record<string, { value: string }> });
+```
+
+**⚠️ Construction time only.** The type is read off the config the constructor
+receives: a later [`loadConfig()`](#loadconfigconfig) cannot retype an existing
+instance, and [`extensions`](#extensions) erase the instance's type parameters
+altogether — an extended surface is typed by the extension, not by the schema.
+
+No generator ships in this package: the schema is a type you hand-write for a
+small project, or a generated artifact for a large one (see
+[Message parameter extraction](#message-parameter-extraction) for the
+build-time contract a generator reads messages through). The types the slot is
+resolved through are exported from the package root as the `Schema` namespace —
+`Schema.FromConfig`, `Schema.Key`, `Schema.Params` and `Schema.Payload` — for
+generators and wrapper packages; application code only supplies `schema`.
 
 ---
 
@@ -1006,7 +1097,9 @@ binding then stays in sync with the instance:
 **Type:** `(key: string, ...params: ParserParams) => ParserOutput`
 
 `ParserOutput` is inferred from the configured parser's `parse` return type and
-defaults to `string` (see [TypeScript](#typescript)).
+defaults to `string` (see [TypeScript](#typescript)). That is the un-narrowed
+signature: a [`schema`](#schema) narrows `key` to its keys and `params` to the
+payload that key declares.
 
 Translates `key` for the active locale.
 
@@ -1029,7 +1122,9 @@ updates when either changes. Outside templates it is an ordinary function call.
 **Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput`
 
 Like `t`, for an explicit locale — useful for rendering a language switcher in
-each language's own name. The locale is normalized before the lookup
+each language's own name. A [`schema`](#schema) narrows `key` and `params` just
+as it does on `t`, and the locales the config names complete `locale` (see
+[Locale completion](#locale-completion)). The locale is normalized before the lookup
 ([`sanitizeLocales`](#sanitizelocales)), so by default `l('EN', ...)` and
 `l('en', ...)` read the same table.
 
@@ -1168,7 +1263,7 @@ requested locale, if one is known.
 
 ### `loadConfig(config)`
 
-**Type:** `(config: Config) => Promise<void>`
+**Type:** `(config: Config.T) => Promise<void>`
 
 (Re)configures the instance — same as passing the config to the constructor.
 Safe to call fire-and-forget: a failure is reported through the logger and the
@@ -1179,7 +1274,7 @@ the rejection.
 
 ### `configLoader(config)`
 
-**Type:** `(config: Config) => Promise<void>`
+**Type:** `(config: Config.T) => Promise<void>`
 
 The overridable seam a config is applied through. `loadConfig()` delegates to
 it, and the constructor goes through `loadConfig()`, so a wrapper package that
@@ -1342,7 +1437,7 @@ with [`snapshot()`](#snapshot).
 // src/lib/translations/index.js
 import parser from '@sveltekit-i18n/parser-default';
 
-/** @type {import('@sveltekit-i18n/base').Config} */
+/** @type {import('@sveltekit-i18n/base').Config.T} */
 export const config = {
   parser: parser(),
   loaders: [/* ... */],
@@ -1537,7 +1632,8 @@ The library provides:
 - ✅ Complete type definitions for configuration
 - ✅ Typed methods and reactive properties (`t`/`l` output inferred from the parser)
 - ✅ Generic types for custom parser integration
-- ❌ Automatic translation key inference (planned for the type generator)
+- ✅ Typed translation keys and payloads, from a [`schema`](#schema) you supply
+- ❌ Generating that schema from your translation files — the slot ships, not the generator
 
 ### Parser params and output inference
 
@@ -1570,6 +1666,156 @@ missing, the key itself when no parser is configured yet (see
 output, so a component consuming a rich output should tolerate it — either by
 setting a `fallbackValue` of the right shape, or by guarding the render.
 
+### Locale completion
+
+`new I18n(config)` also reads the locales the config **names** and completes
+them on the instance. Every config slot carrying one feeds the same union: each
+loader's `locale`, [`initLocale`](#initlocale),
+[`fallbackLocale`](#fallbacklocale) and the keys of
+[`translations`](#translations).
+
+```typescript
+const i18n = new I18n({
+  parser: parser(),
+  initLocale: 'en',
+  fallbackLocale: 'de',
+  translations: { cs: { greeting: 'Ahoj' } },
+  loaders: [{ locale: 'sk', key: 'common', loader: async () => ({}) }],
+});
+
+i18n.locale;  // 'en' | 'de' | 'cs' | 'sk' | (string & {}) | undefined
+```
+
+The union narrows **inputs** — `setLocale()`, `loadTranslations()`,
+`invalidate()`, the first argument of `l()`, and assignment to
+[`locale`](#locale) — and the **reads** [`locale`](#locale) and
+[`locales`](#locales). The [translation tables](#translations--rawtranslations)
+are not narrowed: they stay plain `string`-keyed records.
+
+**The union is open** — `Config.LocaleInput<L>` is `L | (string & {})`, so it
+drives completion without closing the input. A locale can arrive from a URL, a
+cookie or an `Accept-Language` header, and
+[`sanitizeLocales`](#sanitizelocales) may map an arbitrary input onto a known
+one. With the default normalization, an unlisted spelling compiles and lands on
+the locale it normalizes to:
+
+```typescript
+await i18n.setLocale('EN');
+
+i18n.locale;  // → 'en'
+```
+
+Staying open also keeps the narrowed instance assignable in both directions, so
+narrowing never makes the instance type invariant:
+
+```typescript
+const plain: I18n = i18n;
+const narrowed: I18n<any, string, never, 'en' | 'de'> = plain;
+```
+
+**The literals survive** when the config reaches the constructor as a literal
+type:
+
+```typescript
+new I18n({ parser: parser(), initLocale: 'en' });  // inline
+
+const frozen = { parser: parser(), initLocale: 'en' } as const;
+new I18n(frozen);                                  // `as const`
+
+const checked = { parser: parser(), initLocale: 'en' } as const satisfies Config.T<Params>;
+new I18n(checked);                                 // `as const satisfies`
+```
+
+**They are lost** — the union degrades to plain `string` — when the config is
+annotated (`const config: Config.T<Params> = { initLocale: 'en', … }`, since
+the annotation, not the literal, is the type the constructor sees), or when it
+is assigned separately without `as const` (`const config = { initLocale: 'en' }`
+widens `initLocale` to `string`).
+
+**⚠️ One dynamic source degrades the whole union.** A config that builds its
+loaders from a runtime array yields `string` even where it also names a
+literal:
+
+```typescript
+const locales: string[] = ['cs', 'sk'];
+
+const config = {
+  parser: parser(),
+  initLocale: 'en',
+  loaders: locales.map((locale) => ({ locale, key: 'common', loader: async () => ({}) })),
+} as const;
+
+// Config.LocalesFromConfig<typeof config> is `string`, not `'en'`
+```
+
+A half-known set would complete `'en'` while silently **hiding** every locale
+the dynamic source names — worse than completing nothing at all.
+
+`Config.LocaleInput<L>` and `Config.LocalesFromConfig<C>` are both exported, for
+code that has to spell the union it works with.
+
+### Message parameter extraction
+
+A [`schema`](#schema) maps each key to a payload, and something has to derive
+that payload from the messages themselves. `Parser.ExtractParams` is the
+**build-time** half of the parser contract: given a translation value, it
+reports the parameters that message expects, and a schema generator turns those
+reports into the schema artifact. **The core never calls it** — nothing in this
+package extracts anything at runtime.
+
+It is deliberately **not** a member of `Parser.T`. A message scanner attached to
+the runtime parser object could never be shaken out of a browser bundle, so a
+parser ships it from its **own subpath** instead, as an `ExtractParamsFactory`
+taking the same options the runtime parser takes — options decide what a message
+means (a custom modifier, a disabled tag syntax), so a generator has to build
+the extractor the way the app builds its parser:
+
+```typescript
+import type { Parser } from '@sveltekit-i18n/base';
+
+// Your parser exposes this from its own subpath:
+declare const extractParamsFactory: Parser.ExtractParamsFactory<{ modifiers?: string[] }>;
+
+const extract: Parser.ExtractParams = extractParamsFactory({ modifiers: [] });
+
+// Whatever the parser's own message syntax is:
+const params: readonly Parser.ParamSpec[] = extract('Hello {name}!', { key: 'common.greeting' });
+```
+
+A value that is not a message the parser recognizes yields `[]` rather than
+throwing — translation leaves are arbitrary data. The second argument
+(`Parser.ExtractContext`, `{ key?, locale? }`) is diagnostic only; neither
+official parser needs it to extract.
+
+**`Parser.ParamSpec` fields:**
+
+- **`name`** (required) — the key the payload is read by, already unescaped. It
+  is not necessarily a valid identifier, so a generator has to quote it.
+- **`kind`** — `'unknown' | 'string' | 'number' | 'boolean' | 'date' |
+  'function'`, or an array of them when the message uses the parameter in
+  several ways and any of them is valid. `'unknown'` is the **top** of this
+  lattice, not a conflict marker: merging it with anything yields the other
+  kind. `'date'` covers date and time formatting and means `Date | number`.
+  `'function'` is a rich-text callback, the shape ICU tags require. `'boolean'`
+  is there for parsers that can prove it — neither official parser can, since
+  both compare stringified values.
+- **`values`** — values the message names explicitly. A **hint** for authoring
+  tools, never an exhaustive set: both official parsers fall back to a default
+  branch for anything unlisted, so it must not be used to close a union. It is
+  omitted where the listed values are not values at all (numeric thresholds,
+  plural categories) or mean the opposite (an inequality's operands).
+- **`optional`** — whether the message renders without the parameter; defaults
+  to `false`. A parameter only some selector branches use is optional:
+  over-approximating trades a missed error for never demanding a parameter the
+  caller's branch has no use for.
+- **`when`** — the selector branches the parameter lives under, outermost first
+  (`{ param, branch }[]`). It lets a generator emit a discriminated payload
+  instead of the flat `optional: true` approximation; a generator that does not
+  care can ignore it.
+
+No official parser ships an extractor yet — these types are the contract one
+will ship against.
+
 ### Extensions and the constructor's type
 
 `new I18n(config)` is typed through a construct signature that folds the
@@ -1596,14 +1842,17 @@ const withGreeting = (i18n: I18n) => Object.assign(i18n, {
 export const i18n = new I18n({ ...config, extensions: [withGreeting] });
 ```
 
-Without `extensions`, the expression is a plain `I18n<ParserParams,
-ParserOutput>` — the exported `I18n` name is both the constructor value and the
-instance type. Bare `I18n` stands for the `string`-output instance, so
-`const i: I18n = new I18n(config)` fits a string parser; a rich-output parser
-needs its arguments spelled out (`I18n<Params, HtmlOutput>`), or no annotation
-at all, letting the constructor's inference stand.
+Without `extensions`, the expression is a plain
+`I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>` — the
+exported `I18n` name is both the constructor value and the instance type. The
+trailing two parameters default to no schema and open locales, so bare `I18n`
+stands for the `string`-output, un-narrowed instance:
+`const i: I18n = new I18n(config)` fits a string parser, while a rich-output
+parser needs its arguments spelled out (`I18n<Params, HtmlOutput>`), or no annotation at all,
+letting the constructor's inference stand.
 
-For type-safe translation keys, see [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+For type-safe translation keys, supply a [`schema`](#schema); the wider
+TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
 
 ---
 
