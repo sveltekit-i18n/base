@@ -49,7 +49,7 @@ npm install @sveltekit-i18n/parser-icu
 
 ### 1. Create translation files
 
-```json
+```jsonc
 // src/lib/translations/en/common.json
 {
   "greeting": "Hello, {{name}}!",
