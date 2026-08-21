@@ -102,7 +102,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   expiry nor `invalidate` ever removes displayed translations or starts a
   load by itself. Don't break load-once semantics.
 - **Parser is injected, never imported.** `translate()` calls
-  `config.parser.parse(value, params, locale, key)`.
+  `config.parser.parse(value, params, locale, key)`. `Parser.ExtractParams` is
+  the build-time half of that contract and deliberately not a member of
+  `Parser.T` — a message scanner on the runtime parser object could never be
+  shaken out of a browser bundle — so a parser ships it from its own subpath
+  and the core never calls it.
 - **`config.extensions` is a construction-time pipe.** The constructor returns
   the instance folded through the extensions left to right, so
   `new I18n(config)` evaluates to the last extension's output; `loadConfig()`
@@ -111,7 +115,28 @@ translation state, loading, caching, route matching, and preprocessing — but
   local `I18nCore` class (a construct signature folds the type through the
   tuple); the same exported name is also the instance TYPE. The raw class is
   deliberately not exported. Extensions run after the synchronous prefix of
-  the config load — they receive a configured instance.
+  the config load — they receive a configured instance. Piping ERASES the
+  instance's type parameters: an extended surface is typed by the extension,
+  so neither `config.schema` nor the locale union survives it.
+- **`config.schema` types `t`/`l`, at construction time and type-only.** It
+  narrows keys and payloads from the config that reaches the constructor; only
+  its TYPE is read, so the slot may hold an empty value
+  (`{} as TranslationSchema`), and a schema whose keys are not a closed set
+  degrades to plain `string` keys rather than rejecting every call. This package ships the
+  slot, not the generator that fills it — never document a CLI or a plugin as
+  if it shipped here.
+- **Locales ride a fourth class type parameter**
+  (`I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>`), not an
+  intersection. The loader locales, `initLocale`, `fallbackLocale` and
+  `translations` keys a config spells narrow the inputs (`setLocale`,
+  `loadTranslations`, `invalidate`, `l`, assigning `locale`) and the reads
+  (`locale`, `locales`) alike; the translation tables stay `string`-keyed. The
+  union stays OPEN (`L | (string & {})`) — a completion hint, never a
+  constraint, since a locale can arrive from a URL, a cookie or an
+  `Accept-Language` header — and that openness is what keeps a narrowed
+  instance assignable to and from a plain `I18n`. One dynamic source degrades
+  the whole union to `string`: a half-known set would complete some locales
+  while silently hiding the rest.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep

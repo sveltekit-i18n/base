@@ -905,6 +905,25 @@ describe('i18n extensions', () => {
     expect(calls).not.toHaveBeenCalled();
     expect(instance.t('common.key')).toBe('common.key');
   });
+  it('a configured extension erases the constructed type parameters', () => {
+    // `Config.T['extensions']` types every element `(input: any) => any`, so an
+    // extension that annotates neither side collapses the construction: the
+    // pipe reports what the extension's TYPE says, and that type says `any`.
+    const erased = new i18n({ parser, log, initLocale: 'en', fallbackLocale: 'de', extensions: [(input) => input] });
+
+    expectTypeOf(erased).toBeAny();
+
+    // An extension annotated with the bare instance type hands the bare
+    // instance back: the locale union the config spelled - and any schema - is
+    // gone.
+    const widened = new i18n({ parser, log, initLocale: 'en', fallbackLocale: 'de', extensions: [(input: I18n) => input] });
+
+    expectTypeOf(widened).toEqualTypeOf<I18n>();
+    expectTypeOf(widened.locale).toEqualTypeOf<Config.LocaleInput<string> | undefined>();
+    expectTypeOf(widened.locale).not.toEqualTypeOf<'en' | 'de' | (string & {}) | undefined>();
+
+    expect(widened).toBeInstanceOf(i18n);
+  });
 });
 
 describe('i18n loading concurrency', () => {
