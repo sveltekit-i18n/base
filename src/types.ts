@@ -286,7 +286,7 @@ export namespace Translations {
 
   export type Input<V = any> = { [K in any]: Input<V> | V };
 
-  export type LocaleIndexed<V, L extends string = string> = { [locale in Locales<L>[number]]: V };
+  export type LocaleIndexed<V> = { [locale: string]: V };
 
-  export type T<V = any, L extends string = string> = LocaleIndexed<Input<V>, L>;
+  export type T<V = any> = LocaleIndexed<Input<V>>;
 }
