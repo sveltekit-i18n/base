@@ -291,6 +291,81 @@ export namespace Parser {
   export type OutputFromConfig<C> = C extends { parser: T<any, infer O> }
     ? ([unknown] extends [O] ? string : O)
     : string;
+
+  /**
+   * What a message parameter accepts, as far as a message can say.
+   *
+   * `'unknown'` is the top of this lattice, not a conflict marker: merging it
+   * with anything yields the other kind. `'date'` covers both date and time
+   * formatting and means `Date | number`. `'function'` is a rich-text callback,
+   * the shape ICU tags require. `'boolean'` is here for parsers that can prove
+   * it – neither official parser can, since both compare stringified values.
+   */
+  export type ParamKind = 'unknown' | 'string' | 'number' | 'boolean' | 'date' | 'function';
+
+  /**
+   * One parameter a message expects. Produced by a parser's build-time
+   * extractor and consumed by a schema generator, never by the core.
+   */
+  export type ParamSpec = {
+    /**
+     * Name the payload is keyed by, already unescaped. It is not necessarily a
+     * valid identifier, so a generator has to quote it.
+     */
+    name: string;
+    /**
+     * What the parameter accepts; defaults to `'unknown'`. Several kinds mean
+     * the message uses the parameter in several ways and any of them is valid.
+     */
+    kind?: ParamKind | readonly ParamKind[];
+    /**
+     * Values the message names explicitly – a hint for authoring tools, never
+     * an exhaustive set. Both official parsers fall back to a default branch
+     * for anything unlisted, so this must not be used to close a union. Omit it
+     * where the listed values are not values at all (numeric thresholds, plural
+     * categories) or mean the opposite (an inequality's operands).
+     */
+    values?: readonly string[];
+    /**
+     * Whether the message renders without it; defaults to `false`. A parameter
+     * that only some selector branches use is optional – over-approximating
+     * here trades a missed error for never demanding a parameter the caller's
+     * branch has no use for.
+     */
+    optional?: boolean;
+    /**
+     * Selector branches this parameter lives under, outermost first. Lets a
+     * generator emit a discriminated payload instead of the flat
+     * `optional: true` approximation; a generator that doesn't care can ignore it.
+     */
+    when?: readonly { param: string; branch: string }[];
+  };
+
+  /** Diagnostic context for an extractor. Neither official parser needs it to extract. */
+  export type ExtractContext = {
+    key?: Key;
+    locale?: Locale;
+  };
+
+  /**
+   * Reports the parameters a message expects. This is the BUILD-TIME half of
+   * the parser contract and is deliberately not a member of `T`: a message
+   * scanner attached to the runtime parser object could never be shaken out of
+   * a browser bundle. A parser ships it from its own subpath instead, and the
+   * core never calls it.
+   *
+   * Values that are not messages the parser recognizes yield no parameters
+   * rather than throwing – translation leaves are arbitrary data.
+   */
+  export type ExtractParams = (message: Value, context?: ExtractContext) => readonly ParamSpec[];
+
+  /**
+   * Builds an `ExtractParams` from the same options the runtime parser takes.
+   * Options decide what a message means – a custom modifier or a disabled tag
+   * syntax changes which parameters exist – so a generator has to construct the
+   * extractor the way the app constructs its parser.
+   */
+  export type ExtractParamsFactory<O = unknown> = (options?: O) => ExtractParams;
 }
 
 export namespace Schema {
