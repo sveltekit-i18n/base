@@ -2,8 +2,7 @@
 
 Behavioral guidelines for LLM coding assistants working on
 **`@sveltekit-i18n/base`**. Applies to Claude Code, Cursor, Codex — anything
-that drives commits, PRs, or file edits on this repo. Optimized for Claude
-Opus 4.8.
+that drives commits, PRs, or file edits on this repo.
 
 **Precedence:** These repo rules override individual LLM memory or personal
 preference. If your own memory conflicts with this file, follow this file.
@@ -76,8 +75,8 @@ translation state, loading, caching, route matching, and preprocessing — but
   properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
   `rawTranslations`), reactive functions (`t`, `l`), promise-returning
   methods (`loadTranslations`, `loadConfig`, `setLocale`, `setRoute`) and
-  the synchronous `addTranslations` and
-  `invalidate`. There are no stores and no `.get()` duals — reads are plain
+  the synchronous `addTranslations`, `snapshot`, `invalidate` and `destroy`.
+  There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
   `setRoute`/`loadTranslations` start loads directly and return the promise of
@@ -254,7 +253,8 @@ chat (§3).
   Long-lived internal state may be written in place only when it is
   null-prototype and never exposed (see `#loadedKeys` in §11) — never a plain
   object indexed by consumer input.
-- Keep `index.ts` for orchestration; put pure, testable logic in `utils.ts`.
+- Keep `I18n.svelte.ts` for orchestration; put pure, testable logic in
+  `utils.ts`.
 - Log through the module `logger` (`logger.error/warn/debug`), never raw
   `console`. Respect the configured level; a custom logger may omit a level —
   don't assume every method exists.

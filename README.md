@@ -306,7 +306,7 @@ log: {
 
 Load-triggering methods return the promise of the matching load — concurrent duplicate triggers share one in-flight load (and its promise) instead of fetching twice.
 
-- `loadTranslations(locale, route)` – load translations for locale and route
+- `loadTranslations(locale, route?)` – load translations for locale and route; `route` defaults to the current one
 - `setLocale(locale)` – request a locale; loads once a route is known
 - `setRoute(route)` – update the current route
 - `loadConfig(config)` – (re)configure the instance
