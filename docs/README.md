@@ -1607,12 +1607,14 @@ Full TypeScript support with complete type definitions:
 
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-default';
+import parser, { type Parser } from '@sveltekit-i18n/parser-default';
 
 // `Config.T` is generic over the parser's params (the rest parameters of
 // `t`/`l`) and, optionally, its output. Annotate only when the config lives on
-// its own — passed straight to `new I18n(...)`, both are inferred.
-type Params = [payload?: Record<string, unknown>];
+// its own — passed straight to `new I18n(...)`, both are inferred. Take the
+// tuple from the parser rather than spelling it by hand: a hand-written one
+// silently drops the slots the parser declares beyond the payload.
+type Params = Parser.Params;
 
 const config: Config.T<Params> = {
   parser: parser(),
