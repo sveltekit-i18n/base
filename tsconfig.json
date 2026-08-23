@@ -9,8 +9,9 @@
     // Declaration files of build tooling (vite, rolldown) target newer lib
     // levels than this package; the subject of this gate is our code.
     "skipLibCheck": true,
-    // tsup inherits this as the published bundle's language level; the suite
-    // compiles with the same config, so tests and artifact share one semantics.
+    // svelte-package transpiles each module with this config, so this is the
+    // published language level; the suite compiles with the same config, so
+    // tests and artifact share one semantics.
     "target": "es2022",
     "moduleResolution": "bundler",
     "noEmit": true,
