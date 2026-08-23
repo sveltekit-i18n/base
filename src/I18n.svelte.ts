@@ -50,7 +50,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // A constructor may return a substitute object: the instance is folded
     // through `config.extensions` left to right, so `new I18n(config)`
     // evaluates to the last extension's output. The extensions run after the
-    // synchronous part of `configLoader` — they receive a configured instance.
+    // synchronous part of the config load — they receive a configured instance.
     return (config?.extensions ?? []).reduce<any>((acc, extension) => extension(acc), this);
   }
 
@@ -126,11 +126,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- configuration ----------------------------------------------------------
 
-  /**
-   * Applies a config. Overridable extension seam — `sveltekit-i18n` wires its
-   * default parser by extending this method.
-   */
-  async configLoader(config: Config.T<ParserParams, ParserOutput>) {
+  /** Applies a config. The public entry is `loadConfig`. */
+  async #configLoader(config: Config.T<ParserParams, ParserOutput>) {
     if (!config) {
       logger.error('No config provided!');
       return;
@@ -187,7 +184,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   loadConfig = (config: Config.T<ParserParams, ParserOutput>) => {
     if (this.#inert('loadConfig')) return Promise.resolve();
 
-    const promise = this.configLoader(config);
+    const promise = this.#configLoader(config);
 
     promise.catch((error) => logError('Failed to load the i18n config.', error));
 
