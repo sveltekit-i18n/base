@@ -5,6 +5,8 @@ import type { Config, Extension, Loader, Parser, Schema, Translations } from './
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
+type LoadedKeys = Translations.LocaleIndexed<Loader.Key[]>;
+
 class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never, LocaleUnion extends string = string> {
   // -- reactive state ---------------------------------------------------------
 
@@ -32,7 +34,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // Null prototype: these tables are indexed by user-supplied locales, and a
   // plain object would resolve a '__proto__' assignment via the setter.
-  #loadedKeys: Loader.IndexedKeys = Object.create(null);
+  #loadedKeys: LoadedKeys = Object.create(null);
 
   /** When each locale first received data — drives the `cache` expiry. */
   #loadedAt: Translations.LocaleIndexed<number> = Object.create(null);
@@ -349,7 +351,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   async #getTranslationProps(
     locale: Config.Locale,
     route: string,
-  ): Promise<[Translations.SerializedTranslations, Loader.IndexedKeys] | []> {
+  ): Promise<[Translations.SerializedTranslations, LoadedKeys] | []> {
     if (!this.#config || !locale) return [];
 
     const [sanitizedLocale] = this.#sanitize(locale);
@@ -363,7 +365,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const loadedKeys = Object.entries(rawTranslations).reduce(
       (acc, [translationLocale, data]) => ({ ...acc, [translationLocale]: Object.keys(data ?? {}) }),
-      {} as Loader.IndexedKeys,
+      {} as LoadedKeys,
     );
 
     const keys = filteredLoaders
@@ -372,7 +374,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
         // sibling `nav` loader as loaded.
         (loadedKey) => `${loadedKey}` === key || `${loadedKey}`.startsWith(`${key}.`),
       ))
-      .reduce<Loader.IndexedKeys>((acc, { key, locale: loaderLocale }) => ({
+      .reduce<LoadedKeys>((acc, { key, locale: loaderLocale }) => ({
         ...acc,
         [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), key],
       }), {});
@@ -385,7 +387,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * `keys` carries the exact loader keys of a load; without it (the public
    * `addTranslations` path) loaded keys derive from the data's top-level keys.
    */
-  #addTranslations(translations?: Translations.SerializedTranslations, keys?: Loader.IndexedKeys): void {
+  #addTranslations(translations?: Translations.SerializedTranslations, keys?: LoadedKeys): void {
     if (!translations) return;
 
     const { preprocess } = this.#config ?? {};

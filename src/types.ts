@@ -269,8 +269,6 @@ export namespace Loader {
 
   export type Route = string | RegExp | RouteMatcher;
 
-  export type IndexedKeys = Translations.LocaleIndexed<Key[]>;
-
   /** The load context every loader is called with. */
   export type Props = {
     /**
