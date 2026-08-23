@@ -259,6 +259,8 @@ export namespace Loader {
     loader: T;
     /**
     * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    *
+    * Named capture groups in a route `RegExp` are reserved: today they match exactly as any other group does, but a future minor may read their matches as load parameters and re-run the loader when those change. Use a non-capturing group (`(?:...)`) where you only need grouping.
     */
     routes?: readonly Route[];
   };

@@ -286,6 +286,13 @@ This will match:
 - `/shop`
 - `/shop/cart`
 
+**⚠️ Named capture groups are reserved.** A named group in a route `RegExp` —
+`/^\/article\/(?<articleId>[^/]+)/` — matches today exactly as any other group
+does, and the loader still runs at most once per locale per freshness window.
+A future minor may read those matches as load parameters and re-run the loader
+when they change, so don't rely on named groups staying inert. Use a
+non-capturing group (`(?:...)`) where you only need grouping.
+
 **Custom matchers:**
 
 Any value with a `test` method works. It receives the bare route path (e.g.
