@@ -873,8 +873,14 @@ Locale's translations older than `cache`? → drop its loaded state
    ↓
 Loaders not marked as loaded run again
    ↓
-Fresh data replaces the stale keys; freshness is stamped per locale
+Fresh data merges over the stale keys; freshness is stamped per locale
 ```
+
+**Expiry refreshes, it never removes.** A refetch merges leaf by leaf into what
+is already displayed, so a message the source dropped since the first load stays
+until the instance is recreated. The same holds for
+[`invalidate()`](#invalidatelocale) — both drop the bookkeeping that would
+prevent a refetch, neither clears the tables.
 
 **💡 Tip:** For event-driven refreshes (a CMS webhook, a manual "reload
 translations" action), keep the infinite default and call
