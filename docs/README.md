@@ -1291,22 +1291,6 @@ the rejection.
 
 ---
 
-### `configLoader(config)`
-
-**Type:** `(config: Config.T) => Promise<void>`
-
-The overridable seam a config is applied through. `loadConfig()` delegates to
-it, and the constructor goes through `loadConfig()`, so a wrapper package that
-subclasses the instance can inject its own defaults and have them apply to
-`new I18n(config)` as well — `sveltekit-i18n` wires its default parser this
-way.
-
-Application code calls [`loadConfig()`](#loadconfigconfig) instead: the public
-entry adds the destroyed-instance guard and marks the rejection handled, and
-this method does neither.
-
----
-
 ### `addTranslations(translations)`
 
 **Type:** `(translations: Record<string, any>) => void`
