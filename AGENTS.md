@@ -115,9 +115,15 @@ translation state, loading, caching, route matching, and preprocessing — but
   local `I18nCore` class (a construct signature folds the type through the
   tuple); the same exported name is also the instance TYPE. The raw class is
   deliberately not exported. Extensions run after the synchronous prefix of
-  the config load — they receive a configured instance. Piping ERASES the
-  instance's type parameters: an extended surface is typed by the extension,
-  so neither `config.schema` nor the locale union survives it.
+  the config load — they receive a configured instance. An extension typed by a
+  fixed return type ERASES the instance's type parameters: that surface is typed
+  by the extension, so neither `config.schema` nor the locale union survives it.
+  An extension whose output depends on its input declares that with an
+  `Extension.Operator` — an interface expressing `output` through
+  `this['input']`, applied by `Extension.Apply` and carried as a type-only brand
+  by `Extension.Generic`. A generic FUNCTION signature cannot carry that
+  dependency: reading one instantiates its type parameters at their constraints,
+  so the pipe would fold `unknown` and erase the surface outright.
 - **`config.schema` types `t`/`l`, at construction time and type-only.** It
   narrows keys and payloads from the config that reaches the constructor; only
   its TYPE is read, so the slot may hold an empty value

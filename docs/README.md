@@ -809,8 +809,10 @@ new I18n({ ...config, schema: {} as Record<string, { value: string }> });
 
 **⚠️ Construction time only.** The type is read off the config the constructor
 receives: a later [`loadConfig()`](#loadconfigconfig) cannot retype an existing
-instance, and [`extensions`](#extensions) erase the instance's type parameters
-altogether — an extended surface is typed by the extension, not by the schema.
+instance, and an [`extension`](#extensions) typed by a fixed return type erases
+the instance's type parameters altogether — that surface is typed by the
+extension, not by the schema. An extension typed by an `Extension.Operator`
+keeps them (see [Extensions and the constructor's type](#extensions-and-the-constructors-type)).
 
 No generator ships in this package: the schema is a type you hand-write for a
 small project, or a generated artifact for a large one (see
@@ -946,7 +948,9 @@ const minimal = (i18n) => ({
   `instance`.
 - **Typed end to end.** The type of `new I18n(config)` folds through the
   `extensions` tuple, so the expression's type is the last extension's return
-  type (see [TypeScript](#typescript)).
+  type. An extension whose output shape depends on the surface it receives
+  declares that dependency with an `Extension.Operator` (see
+  [TypeScript](#typescript)).
 
 Official extensions live in the
 [extensions](https://github.com/sveltekit-i18n/extensions) repository.
@@ -1850,6 +1854,40 @@ const withGreeting = (i18n: I18n) => Object.assign(i18n, {
 // Typed as I18n & { greet: (name: string) => string }:
 export const i18n = new I18n({ ...config, extensions: [withGreeting] });
 ```
+
+**Keeping the surface an extension was handed.** The extension above spells its
+input as the bare `I18n`, so that is what the pipe folds on: the
+[`schema`](#schema) and the locale union the config narrowed are gone from the
+result. Making the function generic (`<I>(i18n: I) => I & { … }`) does not help
+— reading a generic signature instantiates its type parameters at their
+constraints, so the pipe would fold `unknown` and erase the surface entirely.
+
+Declare the dependency as an `Extension.Operator` instead. It is an interface
+with an `input` and an `output`, and the output is expressed through `this`:
+
+```typescript
+import { I18n, type Extension } from '@sveltekit-i18n/base';
+
+interface WithGreeting extends Extension.Operator {
+  readonly output: this['input'] & { greet: (name: string) => string };
+}
+
+const withGreeting: Extension.Generic<WithGreeting> = (i18n: I18n) => Object.assign(i18n, {
+  greet: (name: string) => i18n.t('common.greeting', { name }),
+});
+
+// Typed as the narrowed instance & { greet: … } — schema and locales intact:
+export const i18n = new I18n({ ...config, extensions: [withGreeting] });
+
+i18n.t('common.greeting', { name: 'World' }); // still key- and payload-checked
+```
+
+`Extension.Generic<O>` is `Extension.T` carrying `O` as a type-only brand, so
+the function itself is written as usual — the annotation is the only difference.
+The pipe applies each operator to the surface reaching it, so operators compose:
+a stores adapter layered over a greeting extension sees both. An extension
+without an operator keeps the old behavior and contributes its declared return
+type.
 
 Without `extensions`, the expression is a plain
 `I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>` — the

@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
-import type { Config, I18n, Parser } from '../../src/index.js';
+import type { Config, Extension, I18n, Parser } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
@@ -923,6 +923,41 @@ describe('i18n extensions', () => {
     expectTypeOf(widened.locale).not.toEqualTypeOf<'en' | 'de' | (string & {}) | undefined>();
 
     expect(widened).toBeInstanceOf(i18n);
+  });
+  it('an `Operator`-typed extension threads the constructed surface through the pipe', () => {
+    interface WithFirst extends Extension.Operator {
+      readonly output: this['input'] & { first: true };
+    }
+    interface WithSecond extends Extension.Operator {
+      readonly output: this['input'] & { second: true };
+    }
+
+    const withFirst: Extension.Generic<WithFirst> = (input: I18n) => Object.assign(input, { first: true as const });
+    const withSecond: Extension.Generic<WithSecond> = (input: I18n) => Object.assign(input, { second: true as const });
+
+    type Schema = { 'common.key': { count: number } };
+
+    const instance = new i18n({
+      parser,
+      log,
+      initLocale: 'en',
+      fallbackLocale: 'de',
+      schema: {} as Schema,
+      translations: { en: { 'common.key': 'value' } },
+      extensions: [withFirst, withSecond],
+    });
+
+    // Both operators applied, in order, to the surface each was handed.
+    expect(instance.first).toBe(true);
+    expect(instance.second).toBe(true);
+    expect(instance).toBeInstanceOf(i18n);
+
+    // The instance the operators were folded over survives whole: the locale
+    // union the config spelled and the schema that narrows `t` are both intact.
+    expectTypeOf(instance.locale).toEqualTypeOf<'en' | 'de' | (string & {}) | undefined>();
+    expect(instance.t('common.key', { count: 1 })).toBe('common.key');
+    // @ts-expect-error the schema still closes the key set behind the pipe
+    instance.t('common.missing');
   });
 });
 
