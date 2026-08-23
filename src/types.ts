@@ -189,6 +189,8 @@ export namespace Config {
   };
 }
 
+declare const operator: unique symbol;
+
 export namespace Extension {
   export type Input = any;
 
@@ -201,16 +203,53 @@ export namespace Extension {
    */
   export type T<I = Input, O = Output> = (input: I) => O;
 
+  /**
+   * The build-time half of an extension whose output shape depends on the
+   * surface it receives. Extend it and express the result through `this`:
+   *
+   * ```ts
+   * interface WithStores extends Extension.Operator {
+   *   readonly output: this['input'] & { subscribe(): void };
+   * }
+   * ```
+   *
+   * A plain `(input: I) => O` pair cannot carry that dependency. Reading a
+   * generic signature instantiates its type parameters at their constraints,
+   * so the pipe would fold the constraint rather than the instance and the
+   * surface it was handed would be erased.
+   */
+  export interface Operator {
+    readonly input: unknown;
+    readonly output: unknown;
+  }
+
+  /** Applies an `Operator` to the surface reaching it. */
+  export type Apply<O extends Operator, Instance> = (O & { readonly input: Instance })['output'];
+
+  /**
+   * An extension typed by an `Operator` instead of by a fixed return type.
+   * The brand is type-only and optional, so the function is written as usual:
+   *
+   * ```ts
+   * const withStores: Extension.Generic<WithStores> = (i18n) => ...;
+   * ```
+   */
+  export type Generic<O extends Operator> = T & { readonly [operator]?: O };
+
   /** The `extensions` tuple carried by a config; `[]` when absent. */
   export type FromConfig<C> = C extends { extensions: infer E extends readonly T[] } ? E : [];
 
   /**
    * Folds a surface type through an extension tuple, left to right — the
-   * construction-time type of `new I18n(config)`. A non-tuple `extensions`
-   * array (or none at all) degrades to the plain instance type.
+   * construction-time type of `new I18n(config)`. An `Operator`-branded
+   * extension is applied to the surface reaching it; a plain one contributes
+   * its declared return type, erasing what came before. A non-tuple
+   * `extensions` array (or none at all) degrades to the plain instance type.
    */
-  export type Piped<Instance, Extensions> = Extensions extends readonly [T<any, infer O>, ...infer Rest]
-    ? Piped<O, Rest>
+  export type Piped<Instance, Extensions> = Extensions extends readonly [infer Head, ...infer Rest]
+    ? Piped<Head extends { readonly [operator]?: infer O extends Operator }
+      ? Apply<O, Instance>
+      : Head extends T<any, infer Out> ? Out : Instance, Rest>
     : Instance;
 }
 
