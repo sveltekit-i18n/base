@@ -677,6 +677,55 @@ describe('i18n instance', () => {
     expect(() => instance.t('common.key')).not.toThrow();
     expect(() => instance.l('en', 'common.key')).not.toThrow();
   });
+
+  it('refreshes the `t`/`l` identity when the config, the tables or the locale change', async () => {
+    const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+    const instance = new i18n({ parser: valueParser, log, initLocale: 'en' });
+
+    const initialT = instance.t;
+    const initialL = instance.l;
+
+    instance.addTranslations({ en: { greeting: 'Hello' }, cs: { greeting: 'Ahoj' } });
+
+    expect(instance.t).not.toBe(initialT);
+    expect(instance.l).not.toBe(initialL);
+
+    const loadedT = instance.t;
+
+    await instance.setLocale('cs');
+
+    expect(instance.t).not.toBe(loadedT);
+
+    const localeT = instance.t;
+    const localeL = instance.l;
+
+    await instance.loadConfig({
+      parser: { parse: (text: any, _params: any, _locale: any, key: string) => `[${text ?? key}]` },
+      log,
+    });
+
+    expect(instance.t).not.toBe(localeT);
+    expect(instance.l).not.toBe(localeL);
+  });
+
+  it('keeps destructured `t`/`l` translating against live state', async () => {
+    const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+    const instance = new i18n({ parser: valueParser, log, initLocale: 'en' });
+
+    // Snapshotted before any data exists: the reads happen when it is CALLED,
+    // so it must keep up with everything that lands afterwards.
+    const { t, l } = instance;
+
+    instance.addTranslations({ en: { greeting: 'Hello' }, cs: { greeting: 'Ahoj' } });
+    await instance.setLocale('en');
+
+    expect(t('greeting')).toBe('Hello');
+    expect(l('cs', 'greeting')).toBe('Ahoj');
+
+    await instance.setLocale('cs');
+
+    expect(t('greeting')).toBe('Ahoj');
+  });
 });
 
 describe('i18n locale keys', () => {

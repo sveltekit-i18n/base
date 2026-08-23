@@ -1093,9 +1093,11 @@ export const i18n = new I18n(config);
 
 Do not destructure value properties off the instance — a destructured value is
 a one-time snapshot. `t` and `l` are functions and stay reactive even when
-destructured, because their tracked reads happen at call time. To use
-destructured value reads in a component, destructure through `$derived` — each
-binding then stays in sync with the instance:
+destructured, because their tracked reads happen at call time. Their identity
+is refreshed whenever the config, the translations or the locale change, so a
+component that only holds the reference — passing `t` to a child, say — is
+tracked as well. To use destructured value reads in a component, destructure
+through `$derived` — each binding then stays in sync with the instance:
 
 ```svelte
 <script>

@@ -98,40 +98,31 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   );
 
   /**
-   * Translates `key` for the active locale. Reactive wherever reads are
-   * tracked: the call reads the translation table and locale, so a component
-   * using `{i18n.t('key')}` re-renders when either changes.
+   * Translates `key` for the active locale. Reactive on two levels: the
+   * returned function reads the tables at CALL time, so a destructured `t`
+   * keeps translating against live state, and its identity is refreshed
+   * whenever the config, the tables or the locale change, so merely holding
+   * the reference is tracked too.
    */
-  t: Translations.TranslationFunction<ParserParams, ParserOutput, TranslationSchema> = (key, ...params) => {
-    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
+  t: Translations.TranslationFunction<ParserParams, ParserOutput, TranslationSchema> = $derived.by(() => {
+    void this.#config;
+    void this.#translations;
+    void this.#locale;
 
-    return translate<ParserParams, ParserOutput>({
-      parser,
-      key,
-      params,
-      translations: this.#translations,
-      locale: this.#locale,
-      fallbackLocale,
-      ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
-    });
-  };
+    return (key, ...params) => this.#translate(this.#locale, key, params);
+  });
 
   /** Like `t`, for an explicit locale. */
-  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput, TranslationSchema, LocaleUnion> = (locale, key, ...params) => {
-    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
+  l: Translations.LocalTranslationFunction<ParserParams, ParserOutput, TranslationSchema, LocaleUnion> = $derived.by(() => {
+    void this.#config;
+    void this.#translations;
 
-    const [sanitizedLocale = locale] = this.#sanitize(locale);
+    return (locale, key, ...params) => {
+      const [sanitizedLocale = locale] = this.#sanitize(locale);
 
-    return translate<ParserParams, ParserOutput>({
-      parser,
-      key,
-      params,
-      translations: this.#translations,
-      locale: sanitizedLocale,
-      fallbackLocale,
-      ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
-    });
-  };
+      return this.#translate(sanitizedLocale, key, params);
+    };
+  });
 
   // -- configuration ----------------------------------------------------------
 
@@ -342,6 +333,20 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   };
 
   // -- internals --------------------------------------------------------------
+
+  #translate(locale: Config.Locale | undefined, key: string, params: Parser.Params): ParserOutput {
+    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
+
+    return translate<ParserParams, ParserOutput>({
+      parser,
+      key,
+      params,
+      translations: this.#translations,
+      locale,
+      fallbackLocale,
+      ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
+    });
+  }
 
   /**
    * Resolves loader data for a locale and route WITHOUT applying it. Returns
