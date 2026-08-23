@@ -1574,6 +1574,7 @@ describe('type inference', () => {
       'common.placeholder': { value: string };
       'common.optional': { value?: string };
       'common.maybe': { value: string } | undefined;
+      'common.plural': { mode: 'few'; count: number } | { mode: 'many'; total: number };
       'common.loose': any;
     };
 
@@ -1593,6 +1594,11 @@ describe('type inference', () => {
     instance.t('common.maybe', { value: 'a' });
     instance.t('common.maybe');
 
+    // A discriminated payload stays a union — every branch is a valid call.
+    instance.t('common.plural', { mode: 'few', count: 3 });
+    instance.t('common.plural', { mode: 'many', total: 12 });
+    instance.l('en', 'common.plural', { mode: 'few', count: 3 });
+
     // An `any` slot stays unchecked rather than collapsing to "no payload".
     instance.t('common.loose', { anything: true });
     instance.t('common.loose');
@@ -1611,6 +1617,10 @@ describe('type inference', () => {
     instance.t('common.no_placeholder', { value: 'a' });
     // @ts-expect-error payload passed to a message that takes none
     instance.t('common.void', { value: 'a' });
+    // @ts-expect-error branches of a discriminated payload cannot be mixed
+    instance.t('common.plural', { mode: 'few', total: 12 });
+    // @ts-expect-error missing payload behind a discriminated union
+    instance.t('common.plural');
 
     // A key that is a union has to satisfy every key it might be.
     const eitherKey: 'common.no_placeholder' | 'common.placeholder' = 'common.placeholder';

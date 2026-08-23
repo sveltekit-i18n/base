@@ -422,10 +422,21 @@ export namespace Schema {
   type IsAny<T> = 0 extends 1 & T ? true : false;
 
   /**
-   * What satisfies every member of a union — see `Params`. An empty union stays
-   * `never`: no member means no payload, not an unconstrained one.
+   * What satisfies every key in `K` — see `Params`. The fold runs over the
+   * KEYS, so each key's own payload reaches the intersection whole; folding
+   * over the payloads instead would collapse a single key's discriminated
+   * union to `never` and type the message as parameterless. A key that carries
+   * no payload contributes nothing rather than erasing the others, and an
+   * empty union stays `never`: no member means no payload, not an
+   * unconstrained one.
    */
-  type UnionToIntersection<U> = [U] extends [never] ? never : (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
+  type BoxedPayload<S, K extends string> = K extends keyof S
+    ? [Exclude<S[K], undefined>] extends [never] ? never : (payload: Exclude<S[K], undefined>) => void
+    : never;
+
+  type PayloadOf<S, K extends string> = [BoxedPayload<S, K>] extends [never]
+    ? never
+    : BoxedPayload<S, K> extends (payload: infer V) => void ? V : never;
 
   /**
    * The parser's own params minus the payload slot the schema takes over. A
@@ -460,7 +471,7 @@ export namespace Schema {
   export type Params<S, K extends string, P extends Parser.Params> = [S] extends [never]
     ? P
     : [K] extends [keyof S]
-      ? Payload<P, UnionToIntersection<Exclude<S[K & keyof S], undefined>>, undefined extends S[K & keyof S] ? true : false>
+      ? Payload<P, PayloadOf<S, K>, undefined extends S[K & keyof S] ? true : false>
       : P;
 }
 
