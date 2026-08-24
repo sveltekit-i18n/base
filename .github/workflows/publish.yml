@@ -73,3 +73,16 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --tag ${{ inputs.tag }}
+
+      # Last: publishing is irreversible, so a release must never announce a
+      # version that failed to reach the registry.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          case "$TAG" in
+            *-*) PRERELEASE=--prerelease ;;
+            *)   PRERELEASE= ;;
+          esac
+          gh release create "$TAG" --title "$TAG" --generate-notes $PRERELEASE
