@@ -40,7 +40,7 @@ You'll also need a parser:
 
 ```bash
 # Choose one:
-npm install @sveltekit-i18n/parser-default
+npm install @sveltekit-i18n/parser-curly
 npm install @sveltekit-i18n/parser-icu
 # or create your own
 ```
@@ -62,7 +62,7 @@ npm install @sveltekit-i18n/parser-icu
 ```javascript
 // src/lib/translations/index.js
 import { I18n } from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-default';
+import parser from '@sveltekit-i18n/parser-curly';
 
 /** @type {import('@sveltekit-i18n/base').Config.T} */
 const config = {
@@ -356,7 +356,7 @@ Full API documentation: [docs/README.md](./docs/README.md)
 
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-default';
+import parser from '@sveltekit-i18n/parser-curly';
 
 // The parser's params – the rest parameters of `t`/`l`. Annotate only when the
 // config lives on its own; `new I18n({ ... })` infers them.
@@ -381,8 +381,8 @@ The locales survive only when the config reaches the constructor as a literal �
 
 ## Related Packages
 
-- [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) – Complete solution with default parser
-- [@sveltekit-i18n/parser-default](https://github.com/sveltekit-i18n/parsers/tree/master/parser-default) – Default message parser
+- [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) – Complete solution with the curly braces parser
+- [@sveltekit-i18n/parser-curly](https://github.com/sveltekit-i18n/parsers/tree/master/parser-curly) – Curly braces message parser
 - [@sveltekit-i18n/parser-icu](https://github.com/sveltekit-i18n/parsers/tree/master/parser-icu) – ICU message format parser
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 

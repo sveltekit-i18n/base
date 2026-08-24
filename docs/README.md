@@ -17,7 +17,7 @@ When creating an i18n instance, you can configure it with these options:
 
 ```typescript
 import { I18n } from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-default';
+import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
   parser: parser(),
@@ -39,7 +39,7 @@ Message parser instance that handles interpolation of variables into translation
 **Example:**
 
 ```javascript
-import parser from '@sveltekit-i18n/parser-default';
+import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
   parser: parser({
@@ -1438,7 +1438,7 @@ with [`snapshot()`](#snapshot).
 
 ```javascript
 // src/lib/translations/index.js
-import parser from '@sveltekit-i18n/parser-default';
+import parser from '@sveltekit-i18n/parser-curly';
 
 /** @type {import('@sveltekit-i18n/base').Config.T} */
 export const config = {
@@ -1610,7 +1610,7 @@ Full TypeScript support with complete type definitions:
 
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
-import parser, { type Parser } from '@sveltekit-i18n/parser-default';
+import parser, { type Parser } from '@sveltekit-i18n/parser-curly';
 
 // `Config.T` is generic over the parser's params (the rest parameters of
 // `t`/`l`) and, optionally, its output. Annotate only when the config lives on

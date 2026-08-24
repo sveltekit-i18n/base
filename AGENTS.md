@@ -20,8 +20,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 **not** message interpolation, which a pluggable parser provides. Three repos:
 
 - **`base`** (here) — core, parser-agnostic, zero runtime deps.
-- **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-default`.
-- **`parsers`** — `parser-default`, `parser-icu`.
+- **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-curly`.
+- **`parsers`** — `parser-curly`, `parser-icu`.
 - **`extensions`** — official extensions for the `config.extensions` pipe
   (e.g. `extension-stores`).
 
