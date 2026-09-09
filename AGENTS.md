@@ -21,7 +21,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 
 - **`base`** (here) — core, parser-agnostic, zero runtime deps.
 - **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-curly`.
-- **`parsers`** — `parser-curly`, `parser-icu`.
+- **`parsers`** — `parser-curly` (the [Curly Message
+  Format](https://github.com/curly-message/spec)), `parser-icu` (ICU).
 - **`extensions`** — official extensions for the `config.extensions` pipe
   (e.g. `extension-stores`).
 
