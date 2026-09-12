@@ -10,8 +10,6 @@ export const hasOwn = (obj: any, key: PropertyKey): boolean => obj != null && Ob
 // property, otherwise undefined. Centralizes the prototype-safe table lookup.
 export const read = <T = any>(obj: any, key: PropertyKey): T | undefined => (hasOwn(obj, key) ? obj[key] : undefined);
 
-// The fail-soft paths return placeholder strings (`''`, the key itself) even
-// for a parser with a non-string output — hence the `as unknown as O` casts.
 export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Output>({
   parser,
   key,
@@ -28,15 +26,15 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
   locale: Translations.Locales[number] | undefined;
   fallbackLocale?: Config.FallbackLocale;
   fallbackValue?: Config.FallbackValue;
-}): O => {
+}): Translations.Translated<O> => {
   if (!key) {
     logger.warn(`No translation key provided ('${locale}' locale). Skipping translation...`);
-    return '' as unknown as O;
+    return '';
   }
 
   if (!locale) {
     logger.warn(`No locale provided for '${key}' key. Skipping translation...`);
-    return '' as unknown as O;
+    return '';
   }
 
   const localeTranslations = read(translations, locale);
@@ -61,7 +59,7 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     // so keep it at debug to avoid flooding logs on the render path.
     logger.debug(`No parser configured. Returning raw value for '${key}' key.`);
     // Mirror the missing-translation contract: fall back to the key itself.
-    if (text === undefined) return key as unknown as O;
+    if (text === undefined) return key;
 
     return text;
   }

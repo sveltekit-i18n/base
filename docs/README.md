@@ -1113,12 +1113,17 @@ through `$derived` — each binding then stays in sync with the instance:
 
 ### `t(key, ...params)`
 
-**Type:** `(key: string, ...params: ParserParams) => ParserOutput`
+**Type:** `(key: string, ...params: ParserParams) => ParserOutput | string`
 
 `ParserOutput` is inferred from the configured parser's `parse` return type and
-defaults to `string` (see [TypeScript](#typescript)). That is the un-narrowed
-signature: a [`schema`](#schema) narrows `key` to its keys and `params` to the
-payload that key declares.
+defaults to `string` (see [TypeScript](#typescript)). The `| string` is the
+miss: an empty key, no active locale or a config carrying no parser yet returns
+a plain string without the parser ever being called, so a parser declaring a
+rich output is handed both. For a parser returning a string — every parser this
+project ships — the union collapses and the type is `string`.
+
+That is the un-narrowed signature: a [`schema`](#schema) narrows `key` to its
+keys and `params` to the payload that key declares.
 
 Translates `key` for the active locale.
 
@@ -1138,7 +1143,7 @@ updates when either changes. Outside templates it is an ordinary function call.
 
 ### `l(locale, key, ...params)`
 
-**Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput`
+**Type:** `(locale: string, key: string, ...params: ParserParams) => ParserOutput | string`
 
 Like `t`, for an explicit locale — useful for rendering a language switcher in
 each language's own name. A [`schema`](#schema) narrows `key` and `params` just
@@ -1655,7 +1660,7 @@ const richParser = {
 
 const i18n = new I18n({ parser: richParser, /* ... */ });
 
-i18n.t('home.title'); // typed { html: string }
+i18n.t('home.title'); // typed { html: string } | string
 ```
 
 Three cases yield `string`: a parser whose `parse` return type is `any`, one
@@ -1664,12 +1669,13 @@ for at all. The common case stays ergonomic that way, and a parser producing
 anything richer has to declare its output explicitly (e.g. `Parser.T<Params,
 HtmlOutput>`).
 
-**Caveat for non-string outputs:** the fail-soft paths bypass the parser
-entirely and return a plain string — `''` when the key or the locale is
-missing, the key itself when no parser is configured yet (see
-[`fallbackValue`](#fallbackvalue)). That string is still typed as the parser's
-output, so a component consuming a rich output should tolerate it — either by
-setting a `fallbackValue` of the right shape, or by guarding the render.
+**Why the `| string`:** the fail-soft paths bypass the parser entirely and
+return a plain string — `''` when the key or the locale is missing, the key
+itself when no parser is configured yet (see
+[`fallbackValue`](#fallbackvalue)). The signature says so rather than asserting
+the parser's output through those paths, so a consumer of a rich output has to
+narrow before using it. A `fallbackValue` of the right shape covers the miss
+that has one; the others stay strings whatever the config says.
 
 ### Locale completion
 
