@@ -106,8 +106,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   `config.parser.parse(value, params, locale, key)`. `Parser.ExtractParams` is
   the build-time half of that contract and deliberately not a member of
   `Parser.T` — a message scanner on the runtime parser object could never be
-  shaken out of a browser bundle — so a parser ships it from its own subpath
-  and the core never calls it.
+  shaken out of a browser bundle — so a parser ships it as a separate export
+  (which ESM and `sideEffects: false` let a bundle drop) and the core never
+  calls it.
 - **`config.extensions` is a construction-time pipe.** The constructor returns
   the instance folded through the extensions left to right, so
   `new I18n(config)` evaluates to the last extension's output; `loadConfig()`

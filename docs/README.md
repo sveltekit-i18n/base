@@ -1770,15 +1770,16 @@ package extracts anything at runtime.
 
 It is deliberately **not** a member of `Parser.T`. A message scanner attached to
 the runtime parser object could never be shaken out of a browser bundle, so a
-parser ships it from its **own subpath** instead, as an `ExtractParamsFactory`
-taking the same options the runtime parser takes — options decide what a message
-means (a custom modifier, a disabled tag syntax), so a generator has to build
-the extractor the way the app builds its parser:
+parser ships it as a **separate export** instead — given ESM and
+`sideEffects: false`, a bundle that never reaches it drops it. It is an
+`ExtractParamsFactory` taking the same options the runtime parser takes: options
+decide what a message means (a custom modifier, a disabled tag syntax), so a
+generator has to build the extractor the way the app builds its parser:
 
 ```typescript
 import type { Parser } from '@sveltekit-i18n/base';
 
-// Your parser exposes this from its own subpath:
+// Your parser exposes this as an export of its own:
 declare const extractParamsFactory: Parser.ExtractParamsFactory<{ modifiers?: string[] }>;
 
 const extract: Parser.ExtractParams = extractParamsFactory({ modifiers: [] });

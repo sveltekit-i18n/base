@@ -420,8 +420,8 @@ export namespace Parser {
    * Reports the parameters a message expects. This is the BUILD-TIME half of
    * the parser contract and is deliberately not a member of `T`: a message
    * scanner attached to the runtime parser object could never be shaken out of
-   * a browser bundle. A parser ships it from its own subpath instead, and the
-   * core never calls it.
+   * a browser bundle. A parser ships it as a separate export instead – one a
+   * bundle that never reaches it drops – and the core never calls it.
    *
    * Values that are not messages the parser recognizes yield no parameters
    * rather than throwing – translation leaves are arbitrary data.
