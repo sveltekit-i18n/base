@@ -66,7 +66,7 @@ import parser from '@sveltekit-i18n/parser-curly';
 
 /** @type {import('@sveltekit-i18n/base').Config.T} */
 const config = {
-  parser: parser({ /* parser options */ }),
+  parser: parser({ onReport: null, /* other parser options */ }),
   loaders: [
     {
       locale: 'en',
@@ -134,7 +134,7 @@ import i18n from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-icu';
 
 const config = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [/* ... */],
 };
 ```
@@ -363,7 +363,7 @@ import parser from '@sveltekit-i18n/parser-curly';
 type Params = [payload?: Record<string, unknown>];
 
 const config: Config.T<Params> = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [/* ... */],
 };
 ```
@@ -371,7 +371,7 @@ const config: Config.T<Params> = {
 Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `invalidate`, `l`, `locale`, `locales`):
 
 ```typescript
-const i18n = new I18n({ parser: parser(), initLocale: 'en', fallbackLocale: 'de' });
+const i18n = new I18n({ parser: parser({ onReport: null }), initLocale: 'en', fallbackLocale: 'de' });
 
 i18n.setLocale('en'); // 'en' | 'de' autocomplete here
 i18n.setLocale('sv'); // still accepted — the union is a hint, not a constraint
