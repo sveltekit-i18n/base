@@ -21,7 +21,7 @@ import { I18n } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [/* ... */],
   // ... other options
 };
@@ -44,10 +44,16 @@ import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
   parser: parser({
-    // parser-specific options
+    onReport: null,
+    // other parser-specific options
   }),
 };
 ```
+
+What the factory takes is the parser's business, not the core's. Both official
+parsers require `onReport` to be stated — `null` included — so that silence
+about parser diagnostics is a decision rather than an omission; the samples in
+this document state `null` because they have nowhere to route a report.
 
 **See:** [Parsers documentation](https://github.com/sveltekit-i18n/parsers)
 
@@ -342,7 +348,7 @@ keep working, and [`locales`](#locales) lists the ones that resolved.
 
 ```javascript
 const config = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [
     // Common translations (all pages)
     {
@@ -1448,7 +1454,7 @@ import parser from '@sveltekit-i18n/parser-curly';
 
 /** @type {import('@sveltekit-i18n/base').Config.T} */
 export const config = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [/* ... */],
 };
 ```
@@ -1712,7 +1718,7 @@ import parser, { type Parser } from '@sveltekit-i18n/parser-curly';
 type Params = Parser.Params;
 
 const config: Config.T<Params> = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   loaders: [
     {
       locale: 'en',
@@ -1774,7 +1780,7 @@ loader's `locale`, [`initLocale`](#initlocale),
 
 ```typescript
 const i18n = new I18n({
-  parser: parser(),
+  parser: parser({ onReport: null }),
   initLocale: 'en',
   fallbackLocale: 'de',
   translations: { cs: { greeting: 'Ahoj' } },
@@ -1815,12 +1821,12 @@ const narrowed: I18n<any, string, never, 'en' | 'de'> = plain;
 type:
 
 ```typescript
-new I18n({ parser: parser(), initLocale: 'en' });  // inline
+new I18n({ parser: parser({ onReport: null }), initLocale: 'en' });  // inline
 
-const frozen = { parser: parser(), initLocale: 'en' } as const;
+const frozen = { parser: parser({ onReport: null }), initLocale: 'en' } as const;
 new I18n(frozen);                                  // `as const`
 
-const checked = { parser: parser(), initLocale: 'en' } as const satisfies Config.T<Params>;
+const checked = { parser: parser({ onReport: null }), initLocale: 'en' } as const satisfies Config.T<Params>;
 new I18n(checked);                                 // `as const satisfies`
 ```
 
@@ -1838,7 +1844,7 @@ literal:
 const locales: string[] = ['cs', 'sk'];
 
 const config = {
-  parser: parser(),
+  parser: parser({ onReport: null }),
   initLocale: 'en',
   loaders: locales.map((locale) => ({ locale, key: 'common', loader: async () => ({}) })),
 } as const;
