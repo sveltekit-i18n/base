@@ -517,9 +517,17 @@ export namespace Translations {
 
   export type SerializedTranslations = LocaleIndexed<DotNotation.Input>;
 
-  export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(key: K, ...restParams: Schema.Params<S, K, P>) => O;
+  /**
+   * What `t`/`l` yield. The parser's output on the paths that reach the parser,
+   * and a plain string on the ones that cannot: an empty key, no locale, or a
+   * config carrying no parser. `O` is `string` for every parser that returns
+   * one, which collapses the union everywhere it is not needed.
+   */
+  export type Translated<O> = O | string;
 
-  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never, L extends string = string> = <K extends Schema.Key<S>>(locale: Config.LocaleInput<L>, key: K, ...restParams: Schema.Params<S, K, P>) => O;
+  export type TranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never> = <K extends Schema.Key<S>>(key: K, ...restParams: Schema.Params<S, K, P>) => Translated<O>;
+
+  export type LocalTranslationFunction<P extends Parser.Params = Parser.Params, O = string, S = never, L extends string = string> = <K extends Schema.Key<S>>(locale: Config.LocaleInput<L>, key: K, ...restParams: Schema.Params<S, K, P>) => Translated<O>;
 
   export type Input<V = any> = { [K in any]: Input<V> | V };
 

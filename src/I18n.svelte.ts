@@ -331,7 +331,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- internals --------------------------------------------------------------
 
-  #translate(locale: Config.Locale | undefined, key: string, params: Parser.Params): ParserOutput {
+  #translate(locale: Config.Locale | undefined, key: string, params: Parser.Params): Translations.Translated<ParserOutput> {
     const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
 
     return translate<ParserParams, ParserOutput>({

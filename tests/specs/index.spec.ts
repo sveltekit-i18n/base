@@ -1637,8 +1637,10 @@ describe('type inference', () => {
     const rich = new i18n({ parser: richParser, log });
     const plain = new i18n({ parser, log });
 
-    // A parser declaring a rich output surfaces it on `t`/`l`.
-    expectTypeOf(rich.t('key')).toEqualTypeOf<{ html: string }>();
+    // A parser declaring a rich output surfaces it on `t`/`l`, alongside the
+    // string the miss paths yield without ever reaching the parser.
+    expectTypeOf(rich.t('key')).toEqualTypeOf<{ html: string } | string>();
+    expectTypeOf(rich.l('en', 'key')).toEqualTypeOf<{ html: string } | string>();
 
     // An undeclared parser output (`any`) still surfaces as `string`.
     expectTypeOf(plain.t('key')).toEqualTypeOf<string>();
@@ -1649,6 +1651,23 @@ describe('type inference', () => {
 
     expect(rich).toBeInstanceOf(i18n);
     expect(plain).toBeInstanceOf(i18n);
+  });
+
+  it('yields a string from the paths a rich parser never reaches', () => {
+    const richParser = { parse: (_value: unknown, _params: unknown[], _locale: string, key: string) => ({ html: key }) };
+
+    const rich = new i18n({ parser: richParser, log, initLocale: 'en', translations: { en: { key: 'x' } } });
+
+    // Reaches the parser, so the declared output is what comes back.
+    expect(rich.t('key')).toEqual({ html: 'key' });
+
+    // No key: nothing to parse.
+    expect(rich.t('')).toBe('');
+
+    // No locale: nothing to parse either.
+    const localeless = new i18n({ parser: richParser, log });
+
+    expect(localeless.t('key')).toBe('');
   });
 
   it('narrows `t`/`l` keys and params to a supplied key schema', async () => {
