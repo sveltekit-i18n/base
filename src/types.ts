@@ -320,17 +320,32 @@ export namespace Parser {
 
   export type Output = any;
 
+  /**
+   * Called on the `t`/`l` path and nowhere else – never during loading,
+   * preprocessing, serialization or hydration. What it returns reaches the
+   * caller of `t`/`l` and nothing else: the core does not inspect, transform
+   * or serialize it.
+   */
   export type Parse<P extends Parser.Params = Parser.Params, O = Output> = (
     /**
-     * Translation value from the definitions.
-    */
+     * Translation value from the definitions, read as an own property and
+     * already preprocessed. Arbitrary data – a string in the ordinary case,
+     * whatever a loader returned otherwise, and `undefined` when the key
+     * resolves to no translation in the active locale nor in the fallback.
+     * Must not throw on any of them.
+     */
     value: Value,
     /**
-     * Array of rest parameters given by user (e.g. payload variables etc...)
+     * The rest arguments of the `t`/`l` call. An argumentless call passes `[]`,
+     * never `undefined`; the core neither validates nor fills it in, and a
+     * `schema` narrows it at the type level only.
      */
     params: P,
     /**
-     * Locale of translated message.
+     * Locale of translated message, normalized by `sanitizeLocales` where that
+     * yields one and as the caller spelled it otherwise. Never `undefined` –
+     * with no locale there is nothing to look up and this is not called at
+     * all.
      */
     locale: Locale,
     /**
@@ -341,8 +356,13 @@ export namespace Parser {
 
   export type T<P extends Parser.Params = Parser.Params, O = Output> = {
     /**
-     * Parse function deals with interpolation of user payload and returns interpolated message.
-    */
+     * Parse function deals with interpolation of user payload and returns
+     * interpolated message. The message FORMAT is the parser's own – syntax,
+     * missing-parameter rendering, pluralization, formatting and escaping are
+     * out of the core's contract and differ between parsers. What the contract
+     * requires is that none of them throws: a parser is a public edge and this
+     * package fails soft at its edges.
+     */
     parse: Parse<P, O>;
   };
 

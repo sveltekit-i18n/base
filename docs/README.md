@@ -8,6 +8,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 - [Instance Properties and Methods](#instance-properties-and-methods)
 - [Server-Side Rendering](#server-side-rendering)
 - [Utilities](#utilities)
+- [The parser contract](#the-parser-contract)
 - [TypeScript](#typescript)
 - [See Also](#see-also)
 
@@ -1606,6 +1607,92 @@ A locale `Intl` does not recognize is lowercased and reported through the
 This is the DEFAULT normalization only: an instance configured with
 [`sanitizeLocales`](#sanitizelocales) keys its locales its own way, so a value
 compared against [`locale`](#locale) has to go through that same transform.
+
+---
+
+## The parser contract
+
+A parser is the only part of translation this package does not own. It receives
+a translation value and returns the message a consumer renders. What follows is
+what base guarantees a parser, what it requires back, and what it deliberately
+leaves to the message format.
+
+An adapter is a parser. `parse` may delegate to an implementation this project
+has nothing to do with — `@sveltekit-i18n/parser-curly` is a thin adapter over
+the [Curly Message Format](https://github.com/curly-message/spec)'s reference
+implementation, and `@sveltekit-i18n/parser-icu` wraps `intl-messageformat`.
+The contract binds the adapter, not the engine behind it.
+
+### What base guarantees before `parse` is called
+
+`config.parser.parse(value, params, locale, key)`, always with four arguments,
+in that order:
+
+- **`value`** — the translation the tables hold for `key`, read as an **own**
+  property, after [`preprocess`](#preprocess). It is arbitrary data: a string
+  in the ordinary case, but whatever a loader returned otherwise, and
+  `undefined` when the key resolves to no translation in the active locale nor
+  in [`fallbackLocale`](#fallbacklocale).
+- **`params`** — the rest arguments of the `t`/`l` call, as an array. An
+  argumentless call passes `[]`, never `undefined`. Base does not read into it,
+  does not validate it and does not fill it in; a [`schema`](#schema) narrows
+  it at the type level only.
+- **`locale`** — the locale the lookup resolved against, normalized by
+  [`sanitizeLocales`](#sanitizelocales) where that yields one and as the caller
+  spelled it otherwise. Never `undefined`: with no locale there is nothing to
+  look up, and `parse` is not called at all.
+- **`key`** — the serialized dot-notation path (`home.content.title`), the key
+  as the caller spelled it.
+
+Base calls `parse` on the `t`/`l` path and nowhere else. It is never called
+during loading, preprocessing, serialization or hydration.
+
+### What every parser must do
+
+Regardless of format:
+
+- **An undefined message must not throw.** `value === undefined` means the key
+  resolved to nothing. Both shipped parsers echo `key`, which is what makes a
+  missing translation visible instead of blank; a parser is free to answer
+  otherwise, but it has to answer.
+- **Undefined or surplus params must not throw.** `params` is whatever the call
+  site passed. A message naming a parameter the payload omits is a normal
+  event, not an error.
+- **Errors stay inside `parse`.** A throwing parser propagates out of `t`,
+  which is a render. Contain the failure and return something renderable —
+  this package fails soft at its edges and a parser is one of them.
+
+### What the format decides, and base does not
+
+Out of contract, and expected to differ between parsers: the message syntax
+itself; what a missing parameter renders as; whether a parameter has a default;
+pluralization and selection rules; number, date and currency formatting; and
+escaping. A consumer switching parsers is switching message formats, and these
+are the things that change.
+
+### What comes back
+
+`parse` may return anything. `ParserOutput` is a class type parameter, so a
+parser declaring a richer return type surfaces it on `t`/`l` (see
+[Parser params and output inference](#parser-params-and-output-inference)); a
+parser that declares none means `string`.
+
+Base does not inspect, transform, validate or serialize what `parse` returns.
+The value is handed to the caller of `t`/`l` and reaches nothing else — in
+particular [`translations`](#translations--rawtranslations),
+`rawTranslations` and [`snapshot()`](#snapshot) all carry the translation
+tables, before and after preprocessing, and never parser output. A rich return
+type therefore has no effect on the SSR payload or on hydration.
+
+The one qualification is the miss: the paths that never reach the parser return
+a plain string, which is why `t`/`l` are typed `ParserOutput | string`. See
+[`t(key, ...params)`](#tkey-params).
+
+### The build-time half
+
+A parser may also ship a message scanner for schema generation. It is not part
+of `Parser.T` and the core never calls it — see
+[Message parameter extraction](#message-parameter-extraction).
 
 ---
 
