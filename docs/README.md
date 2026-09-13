@@ -1636,9 +1636,10 @@ in that order:
 
 - **`value`** — the translation the tables hold for `key`, read as an **own**
   property, after [`preprocess`](#preprocess). It is arbitrary data: a string
-  in the ordinary case, but whatever a loader returned otherwise, and
-  `undefined` when the key resolves to no translation in the active locale nor
-  in [`fallbackLocale`](#fallbacklocale).
+  in the ordinary case, but whatever a loader returned otherwise. Never
+  `undefined`: a key resolving to no translation in the active locale nor in
+  [`fallbackLocale`](#fallbacklocale) is answered by base itself, and `parse`
+  is not called at all.
 - **`params`** — the rest arguments of the `t`/`l` call, as an array. An
   argumentless call passes `[]`, never `undefined`. Base does not read into it,
   does not validate it and does not fill it in; a [`schema`](#schema) narrows
@@ -1657,10 +1658,11 @@ during loading, preprocessing, serialization or hydration.
 
 Regardless of format:
 
-- **An undefined message must not throw.** `value === undefined` means the key
-  resolved to nothing. Both shipped parsers echo `key`, which is what makes a
-  missing translation visible instead of blank; a parser is free to answer
-  otherwise, but it has to answer.
+- **An undefined message must not throw.** Base does not hand one over — a key
+  resolving to nothing is answered by [`fallbackValue`](#fallbackvalue), which
+  defaults to the key echoed verbatim, and that is what makes a missing
+  translation visible instead of blank. A parser called directly still has to
+  answer rather than throw.
 - **Undefined or surplus params must not throw.** `params` is whatever the call
   site passed. A message naming a parameter the payload omits is a normal
   event, not an error.
@@ -1763,11 +1765,11 @@ anything richer has to declare its output explicitly (e.g. `Parser.T<Params,
 HtmlOutput>`).
 
 **Why the `| string`:** the fail-soft paths bypass the parser entirely and
-return a plain string — `''` when the key or the locale is missing, the key
-itself when no parser is configured yet (see
-[`fallbackValue`](#fallbackvalue)). The signature says so rather than asserting
-the parser's output through those paths, so a consumer of a rich output has to
-narrow before using it. A `fallbackValue` of the right shape covers the miss
+return a plain string — `''` when the key or the locale is missing, and the key
+itself when the translation is missing and no
+[`fallbackValue`](#fallbackvalue) is configured. The signature says so rather
+than asserting the parser's output through those paths, so a consumer of a rich
+output has to narrow before using it. A `fallbackValue` of the right shape covers the miss
 that has one; the others stay strings whatever the config says.
 
 ### Locale completion
