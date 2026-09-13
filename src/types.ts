@@ -329,10 +329,11 @@ export namespace Parser {
   export type Parse<P extends Parser.Params = Parser.Params, O = Output> = (
     /**
      * Translation value from the definitions, read as an own property and
-     * already preprocessed. Arbitrary data – a string in the ordinary case,
-     * whatever a loader returned otherwise, and `undefined` when the key
-     * resolves to no translation in the active locale nor in the fallback.
-     * Must not throw on any of them.
+     * already preprocessed. Arbitrary data – a string in the ordinary case and
+     * whatever a loader returned otherwise. Never `undefined`: a key resolving
+     * to no translation in the active locale nor in the fallback is answered
+     * by `fallbackValue`, and this is not called. Must not throw on whatever
+     * does arrive.
      */
     value: Value,
     /**

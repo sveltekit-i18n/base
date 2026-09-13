@@ -368,6 +368,18 @@ describe('i18n instance', () => {
 
     expect(instance.t(key)).toBe(key);
   });
+  it('answers a missing translation itself rather than asking the parser', async () => {
+    const parse = vi.fn(() => 'PARSED');
+
+    const instance = new i18n({ ...CONFIG, parser: { parse } });
+
+    await instance.loadTranslations(initLocale);
+
+    const key = 'unknown.key';
+
+    expect(instance.t(key)).toBe(key);
+    expect(parse).not.toHaveBeenCalled();
+  });
   it('treats `Object.prototype` keys as missing translations', async () => {
     const fallbackValue = 'CUSTOM_FALLBACK_VALUE';
 

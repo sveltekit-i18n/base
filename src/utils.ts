@@ -52,14 +52,16 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
       return rest.fallbackValue;
     }
     logger.warn(`No translation nor fallback found for '${key}' .`);
+
+    // There is nothing to interpolate, so no parser is asked to. Echoing the
+    // key is what makes a missing translation visible instead of blank.
+    return key;
   }
 
   if (!parser || typeof parser.parse !== 'function') {
     // Reached on every call while no parser is set (e.g. before config loads),
     // so keep it at debug to avoid flooding logs on the render path.
     logger.debug(`No parser configured. Returning raw value for '${key}' key.`);
-    // Mirror the missing-translation contract: fall back to the key itself.
-    if (text === undefined) return key;
 
     return text;
   }
