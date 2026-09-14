@@ -30,10 +30,18 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 ✅ **TypeScript** – Locales inferred from your config, keys and payloads from a [`schema`](#schema)  
 ✅ **Zero dependencies** – Lightweight and fast
 
+## Requirements
+
+Svelte 5 or newer, and one of Node 22+, Bun 1.2+ or Deno 2+. The package is
+ESM-only and imports no `node:` module, so every runtime that runs your
+SvelteKit build runs it.
+
 ## Installation
 
 ```bash
 npm install @sveltekit-i18n/base
+# bun add @sveltekit-i18n/base
+# deno add npm:@sveltekit-i18n/base
 ```
 
 You'll also need a parser:
