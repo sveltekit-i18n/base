@@ -258,8 +258,11 @@ differently.**
 
 ## 8. PRs
 
-- **Open a PR only when explicitly asked.** Keep it narrowly scoped; list
-  out-of-scope follow-ups under `## Notes` rather than expanding silently.
+- **Every branch headed for `master` gets a PR.** Open it once the branch is
+  pushed and green — that is the default, not something to ask about. Skip it
+  only when the user says so, or when the branch is not ready to be reviewed.
+  Keep it narrowly scoped; list out-of-scope follow-ups under `## Notes` rather
+  than expanding silently.
 - Title ≤ 70 chars, describes the overarching scope. Body: a short summary +
   what was tested (real results: build/test/audit), and the linked issue via
   closing keywords (`Closes #N` / `Fixes #N`) when one exists.
