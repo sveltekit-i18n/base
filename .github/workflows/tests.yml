@@ -40,3 +40,58 @@ jobs:
         run: npm run test:dist
         env:
           tests: true
+
+  # The package declares no runtime API of its own, so these legs exist to keep
+  # that true. Dependencies still install through npm: the alternative runtimes
+  # run the suite, they do not manage the tree.
+  Runtimes:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # `bun x` resolves the binary but runs it on Node; `--bun` is what
+          # puts the suite on Bun's own runtime.
+          - runtime: bun
+            test: bun --bun x vitest run
+          # Deno reaches an npm binary by path, not through `node_modules/.bin`.
+          - runtime: deno
+            test: deno run -A node_modules/vitest/vitest.mjs run
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # `latest`, not the floor `engines` declares: Vitest needs a newer Bun
+      # than the package itself does.
+      - name: Setup Bun
+        if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Deno
+        if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: ${{ matrix.test }}
+        env:
+          tests: true
+
+      - name: Test dist
+        run: ${{ matrix.test }} --config vitest.dist.config.ts
+        env:
+          tests: true

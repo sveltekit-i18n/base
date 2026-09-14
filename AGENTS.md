@@ -36,7 +36,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node` |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
-| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows |
+| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg |
 
 ## Commands
 
@@ -158,7 +158,11 @@ translation state, loading, caching, route matching, and preprocessing — but
    exports. Consumers read `i18n.translations['en']['key']`, call
    `i18n.t('key')` in templates, and await the load methods.
 3. **Parser-agnostic.** No imports from `@sveltekit-i18n/parser-*`.
-4. **ESM-only (single ESM artifact, no CJS), npm-only, Node 22+.**
+4. **ESM-only (single ESM artifact, no CJS), npm for development.** The
+   package targets Node 22+, Bun 1.2+ and Deno 2+: the source imports no
+   `node:` module and touches no platform API beyond `Intl` (the network is
+   the consumer's loader), and the CI runtime legs exist to keep that true.
+   Reaching for a runtime-specific API is a blocking change — stop and ask.
 5. **`dist/` is generated** — never hand-edit; never commit unrelated `dist`
    churn.
 
