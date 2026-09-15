@@ -1656,7 +1656,7 @@ leaves to the message format.
 
 An adapter is a parser. `parse` may delegate to an implementation this project
 has nothing to do with — `@sveltekit-i18n/parser-curly` is a thin adapter over
-the [Curly Message Format](https://github.com/curly-message/spec)'s reference
+the [Curly Message Format](https://curlymessage.dev)'s reference
 implementation, and `@sveltekit-i18n/parser-icu` wraps `intl-messageformat`.
 The contract binds the adapter, not the engine behind it.
 
