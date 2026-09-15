@@ -405,6 +405,11 @@ For issues specific to base functionality, create a ticket [here](https://github
 
 See [Releases](https://github.com/sveltekit-i18n/base/releases) for version history.
 
+## Sponsor
+
+You can support the maintenance of this package through
+[GitHub Sponsors](https://github.com/sponsors/sveltekit-i18n).
+
 ## License
 
 MIT
