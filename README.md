@@ -355,6 +355,7 @@ Full API documentation: [docs/README.md](./docs/README.md)
 
 ## Documentation
 
+- 🌐 [sveltekit-i18n.github.io](https://sveltekit-i18n.github.io) – The documentation site, with a live playground
 - 📖 [Full API Documentation](./docs/README.md) – Complete reference
 - 📚 [Main Library Docs](https://github.com/sveltekit-i18n/lib/tree/master/docs/INDEX.md) – Guides, tutorials, and best practices
 - 🎨 [Parsers](https://github.com/sveltekit-i18n/parsers) – Available parsers and how to create your own
