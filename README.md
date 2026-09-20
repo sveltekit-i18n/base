@@ -50,7 +50,8 @@ You'll also need a parser:
 # Choose one:
 npm install @sveltekit-i18n/parser-curly
 npm install @sveltekit-i18n/parser-icu
-# or create your own
+npm install @sveltekit-i18n/parser-mf2
+npm install @sveltekit-i18n/parser-i18next
 ```
 
 ## Quick Start
@@ -393,6 +394,8 @@ The locales survive only when the config reaches the constructor as a literal �
 - [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) – Complete solution, with the Curly Message Format parser included
 - [@sveltekit-i18n/parser-curly](https://github.com/sveltekit-i18n/parsers/tree/master/parser-curly) – [Curly Message Format](https://curlymessage.dev) parser
 - [@sveltekit-i18n/parser-icu](https://github.com/sveltekit-i18n/parsers/tree/master/parser-icu) – ICU message format parser
+- [@sveltekit-i18n/parser-mf2](https://github.com/sveltekit-i18n/parsers/tree/master/parser-mf2) – [Unicode MessageFormat 2](https://unicode.org/reports/tr35/tr35-messageFormat.html) parser
+- [@sveltekit-i18n/parser-i18next](https://github.com/sveltekit-i18n/parsers/tree/master/parser-i18next) – [i18next](https://www.i18next.com) interpolation and formatting syntax parser
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 
 ## Contributing

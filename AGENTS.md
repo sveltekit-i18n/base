@@ -17,12 +17,13 @@ breaking a published library over speed. For trivial tasks, use judgment.
 `@sveltekit-i18n/base` is the **core**, parser-agnostic engine of the
 [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) ecosystem. It owns
 translation state, loading, caching, route matching, and preprocessing — but
-**not** message interpolation, which a pluggable parser provides. Three repos:
+**not** message interpolation, which a pluggable parser provides. Four repos:
 
 - **`base`** (here) — core, parser-agnostic, zero runtime deps.
 - **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-curly`.
 - **`parsers`** — `parser-curly` (the [Curly Message
-  Format](https://curlymessage.dev)), `parser-icu` (ICU).
+  Format](https://curlymessage.dev)), `parser-icu` (ICU), `parser-mf2`
+  (Unicode MessageFormat 2), `parser-i18next` (i18next's syntax).
 - **`extensions`** — official extensions for the `config.extensions` pipe
   (e.g. `extension-stores`).
 
