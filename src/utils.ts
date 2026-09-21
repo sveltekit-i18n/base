@@ -386,13 +386,17 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
 
 // Loader properties are consumer code — an accessor may throw. Materialized
 // once at the config boundary, so a single unreadable loader costs only itself
-// instead of taking down every locale-keyed read downstream.
-export const resolveLoaders = (input: readonly Loader.LoaderModule[] = []): Loader.LoaderModule[] => (
-  input.reduce<Loader.LoaderModule[]>((acc, descriptor) => {
+// instead of taking down every locale-keyed read downstream. The two spellings
+// of the namespace collapse here too, so nothing downstream knows there are
+// two.
+export const resolveLoaders = (input: readonly Loader.LoaderModule[] = []): Loader.Resolved[] => (
+  input.reduce<Loader.Resolved[]>((acc, descriptor) => {
     try {
-      const { key, locale, loader, routes } = descriptor;
+      const { namespace, key, locale, loader, routes } = descriptor;
 
-      return [...acc, { key, locale, loader, routes }];
+      if (key !== undefined) logger.warn(`Loader '${String(key)}' uses 'key', which is deprecated. Rename it to 'namespace'.`);
+
+      return [...acc, { namespace: namespace ?? key, locale, loader, routes }];
     } catch (error) {
       logError('Skipping a loader that cannot be read.', error);
 
@@ -426,8 +430,8 @@ const reportLoaderConflict = (path: string) => {
   logger.warn(`Conflicting translations for '${path}'. Keeping the value of the last loader.`);
 };
 
-export const serialize = (input: Array<Loader.LoaderModule & { data: any }>) => {
-  return input.reduce((acc, { key, data, locale }) => {
+export const serialize = (input: Array<Loader.Resolved & { data: any }>) => {
+  return input.reduce((acc, { namespace, data, locale }) => {
     if (!data) return acc;
 
     // The locale is already sanitized — loaders are normalized before the fetch.
@@ -437,19 +441,19 @@ export const serialize = (input: Array<Loader.LoaderModule & { data: any }>) => 
       ...acc,
       [locale]: {
         ...namespaces,
-        [key]: hasOwn(namespaces, key) ? mergeTranslations(read(namespaces, key), data, `${key}`, reportLoaderConflict) : data,
+        [namespace]: hasOwn(namespaces, namespace) ? mergeTranslations(read(namespaces, namespace), data, `${namespace}`, reportLoaderConflict) : data,
       },
     });
   }, {} as Translations.SerializedTranslations);
 };
 
-export const fetchTranslations = async (loaders: Loader.LoaderModule[], route: string) => {
+export const fetchTranslations = async (loaders: Loader.Resolved[], route: string) => {
   const response = await Promise.all(loaders.map(async ({ loader, ...rest }) => {
     let data;
     try {
       data = await loader({ locale: rest.locale, route });
     } catch (error) {
-      logError(`Failed to load translation. Verify your '${rest.locale}' > '${rest.key}' Loader.`, error);
+      logError(`Failed to load translation. Verify your '${rest.locale}' > '${rest.namespace}' Loader.`, error);
     }
     return { loader, ...rest, data };
   }));

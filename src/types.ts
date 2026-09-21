@@ -281,11 +281,7 @@ export namespace Loader {
     route: string;
   };
 
-  export type LoaderModule = {
-    /**
-     * Represents the translation namespace. This key is used as a translation prefix so it should be module-unique. You can access your translation later using `t('key.yourTranslation')`. It shouldn't include `.` (dot) character.
-     */
-    key: Key;
+  type LoaderModuleBody = {
     /**
      * Locale (e.g. `en`, `de`) which is this loader for.
      */
@@ -301,6 +297,33 @@ export namespace Loader {
     */
     routes?: readonly Route[];
   };
+
+  /**
+   * The namespace a loader loads into, under either name. A union rather than
+   * two optional properties so the compiler keeps what one required property
+   * gave: a loader names exactly one, and naming both is rejected instead of
+   * resolved by a precedence rule.
+   */
+  type Named =
+    | {
+      /**
+       * Represents the translation namespace. It is used as a translation prefix so it should be module-unique. You can access your translation later using `t('namespace.yourTranslation')`. It shouldn't include `.` (dot) character.
+       */
+      namespace: Key;
+      key?: never;
+    }
+    | {
+      /**
+       * @deprecated Renamed to `namespace`. Still honored; scheduled for removal in the next major.
+       */
+      key: Key;
+      namespace?: never;
+    };
+
+  export type LoaderModule = LoaderModuleBody & Named;
+
+  /** A loader module after `resolveLoaders` has settled which name it used. */
+  export type Resolved = LoaderModuleBody & { namespace: Key };
 
   /**
    * Loads translation data. Receives the load context (`locale`, `route`) –

@@ -7,10 +7,16 @@ const defaultCache = Number.POSITIVE_INFINITY;
 
 type LoadedKeys = Translations.LocaleIndexed<Loader.Key[]>;
 
+/**
+ * The config as it is held, rather than as it arrives: `resolveLoaders` has
+ * already settled which name each descriptor spelled its namespace under.
+ */
+type HeldConfig<P extends Parser.Params, O> = Omit<Config.T<P, O>, 'loaders'> & { loaders?: Loader.Resolved[] };
+
 class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never, LocaleUnion extends string = string> {
   // -- reactive state ---------------------------------------------------------
 
-  #config = $state<Config.T<ParserParams, ParserOutput> | undefined>(undefined);
+  #config = $state<HeldConfig<ParserParams, ParserOutput> | undefined>(undefined);
 
   /** The ACTIVE locale — advances only after its translations resolved. */
   #locale = $state<Config.Locale | undefined>(undefined);
@@ -157,14 +163,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     };
 
     // Report-only: the loader still runs, but `.` is the dot-notation
-    // separator, so a dotted key collides with the flattened namespace.
+    // separator, so a dotted namespace collides with the flattened one.
     // `String` rather than a template literal — interpolating a Symbol throws,
     // and a config-time report must not abort the rest of the config load.
-    loaders.forEach(({ key }) => {
-      const name = key == null ? '' : String(key);
+    loaders.forEach(({ namespace }) => {
+      const name = namespace == null ? '' : String(namespace);
 
       if (name.includes('.')) {
-        logger.error(`Invalid '${name}' loader key. It shouldn't include the '.' character.`);
+        logger.error(`Invalid '${name}' loader namespace. It shouldn't include the '.' character.`);
       }
     });
 
@@ -371,14 +377,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     );
 
     const keys = filteredLoaders
-      .filter(({ key, locale: loaderLocale }) => (read<Loader.Key[]>(loadedKeys, loaderLocale) || []).some(
+      .filter(({ namespace, locale: loaderLocale }) => (read<Loader.Key[]>(loadedKeys, loaderLocale) || []).some(
         // Exact or namespaced match only — `navbar` data must not mark a
         // sibling `nav` loader as loaded.
-        (loadedKey) => `${loadedKey}` === key || `${loadedKey}`.startsWith(`${key}.`),
+        (loadedKey) => `${loadedKey}` === namespace || `${loadedKey}`.startsWith(`${namespace}.`),
       ))
-      .reduce<LoadedKeys>((acc, { key, locale: loaderLocale }) => ({
+      .reduce<LoadedKeys>((acc, { namespace, locale: loaderLocale }) => ({
         ...acc,
-        [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), key],
+        [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), namespace],
       }), {});
 
     return [rawTranslations, keys];
@@ -530,18 +536,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const offRoute = new Set<Loader.Key>();
     const onRoute = new Set<Loader.Key>();
 
-    loaders.forEach(({ key, locale, routes }) => {
+    loaders.forEach(({ namespace, locale, routes }) => {
       if (this.#sanitize(locale)[0] !== sanitizedLocale) return;
 
-      (routes && !routes.some(testRoute(route)) ? offRoute : onRoute).add(key);
+      (routes && !routes.some(testRoute(route)) ? offRoute : onRoute).add(namespace);
     });
 
-    onRoute.forEach((key) => offRoute.delete(key));
+    onRoute.forEach((namespace) => offRoute.delete(namespace));
 
     return offRoute;
   }
 
-  #filterLoaders(sanitizedLocale: Config.Locale, route: string): Loader.LoaderModule[] {
+  #filterLoaders(sanitizedLocale: Config.Locale, route: string): Loader.Resolved[] {
     const { loaders, fallbackLocale = '' } = this.#config ?? {};
 
     const [sanitizedFallbackLocale] = this.#sanitize(fallbackLocale);
@@ -552,12 +558,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return (loaders || [])
       .map(({ locale, ...rest }) => ({ ...rest, locale: this.#sanitize(locale)[0] }))
       .filter(({ routes }) => !routes || (routes || []).some(testRoute(route)))
-      .filter(({ key, locale }) => (locale === sanitizedLocale && (
-        !translationForLocale || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedLocale) || []).includes(key)
+      .filter(({ namespace, locale }) => (locale === sanitizedLocale && (
+        !translationForLocale || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedLocale) || []).includes(namespace)
       )) || (
         fallbackLocale && locale === sanitizedFallbackLocale && (
           !translationForFallbackLocale
-            || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedFallbackLocale) || []).includes(key)
+            || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedFallbackLocale) || []).includes(namespace)
         )
       ));
   }

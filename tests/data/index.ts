@@ -11,24 +11,24 @@ export const CONFIG: Config.T = {
   },
   loaders: [
     {
-      key: 'common',
+      namespace: 'common',
       locale: 'EN',
       loader: async () => (await import('../data/translations/en/common.json')).default,
     },
     {
-      key: 'route1',
+      namespace: 'route1',
       locale: 'EN',
       routes: [/./],
       loader: async () => (await import('../data/translations/en/route.json')).default,
     },
     {
-      key: 'route2',
+      namespace: 'route2',
       locale: 'EN',
       routes: ['/path#hash?a=b&c=d'],
       loader: async () => (await import('../data/translations/en/route.json')).default,
     },
     {
-      key: 'common',
+      namespace: 'common',
       locale: 'zh-Hans',
       loader: async () => (await import('../data/translations/zh-Hans/common.json')).default,
     },
