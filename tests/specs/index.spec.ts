@@ -2,7 +2,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Parser } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
+import { matchLocale, read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -1940,7 +1940,8 @@ describe('utils', () => {
   it('publishes the reusable helpers, and only those', () => {
     expect(publicUtils.toDotNotation).toBe(toDotNotation);
     expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);
-    expect(Object.keys(publicUtils).sort()).toEqual(['sanitizeLocales', 'toDotNotation']);
+    expect(publicUtils.matchLocale).toBe(matchLocale);
+    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'sanitizeLocales', 'toDotNotation']);
     expectTypeOf(publicUtils.toDotNotation).toEqualTypeOf<DotNotation.T>();
   });
   // The library logs through one module-level singleton, so a test that
@@ -2105,5 +2106,146 @@ describe('utils', () => {
     const reported = captured.error.find(({ message }) => message.includes('Invalid route config!'));
 
     expect(reported?.error).toBe(boom);
+  });
+});
+
+describe('matchLocale', () => {
+  it('falls back from a subtag to its base', () => {
+    expect(matchLocale('en-GB', ['en', 'cs'])).toBe('en');
+    expect(matchLocale('cs-CZ', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('zh-Hant-TW', ['zh', 'en'])).toBe('zh');
+    expect(matchLocale('de-AT', ['en', 'cs'])).toBe(undefined);
+  });
+  it('compares case-insensitively and answers with the configured spelling', () => {
+    expect(matchLocale('EN-gb', ['en', 'cs'])).toBe('en');
+    expect(matchLocale('en-gb', ['en-GB'])).toBe('en-GB');
+    expect(matchLocale('EN', ['En'])).toBe('En');
+  });
+  it('reads the range as written as a prefix when the configured set is finer', () => {
+    expect(matchLocale('en', ['en-GB', 'en-US'])).toBe('en-GB');
+    expect(matchLocale('en-GB', ['en-GB-oed'])).toBe('en-GB-oed');
+
+    // An exact hit always wins the level it is on, whatever the config order.
+    expect(matchLocale('en', ['en-GB', 'en'])).toBe('en');
+  });
+  it('never substitutes a sibling for a locale it was not asked for', () => {
+    // Widening runs on the range AS WRITTEN and never on a truncated one, so
+    // no region or script is ever inferred from another.
+    expect(matchLocale('en-AU', ['en-US'])).toBe(undefined);
+    expect(matchLocale('pt-BR', ['pt-PT'])).toBe(undefined);
+    expect(matchLocale('zh-Hant', ['zh-Hans'])).toBe(undefined);
+  });
+  it('exhausts the truncation chain before widening', () => {
+    // RFC 4647 §3.4 names this case: the range `de-ch` may produce `de`, never
+    // `de-CH-1996`. Widening can only turn a miss into a hit, never change
+    // what plain lookup already answered.
+    expect(matchLocale('de-CH', ['de', 'de-CH-1996'])).toBe('de');
+    expect(matchLocale('zh-Hant', ['zh', 'zh-Hant-TW'])).toBe('zh');
+  });
+  it('never truncates to a bare singleton subtag', () => {
+    // RFC 5646 §4.4.2: a one-character subtag introduces an extension or a
+    // private-use sequence and never outlives it.
+    expect(matchLocale('x-pig-latin', ['x-pig'])).toBe('x-pig');
+    expect(matchLocale('x-pig-latin', ['x'])).toBe(undefined);
+    expect(matchLocale('en-u-co-phonebk', ['en'])).toBe('en');
+  });
+  it('takes a preference list in its own order', () => {
+    expect(matchLocale(['de', 'cs', 'en'], ['en', 'cs'])).toBe('cs');
+    expect(matchLocale(['de-AT', 'en-GB'], ['cs', 'en'])).toBe('en');
+
+    // Range-major: a base hit on the first preference beats an exact hit on a
+    // later one, because the visitor asked for English first.
+    expect(matchLocale('en, cs', ['cs', 'en-GB'])).toBe('en-GB');
+  });
+  it('honours q weights, including the spellings a header really carries', () => {
+    expect(matchLocale('en;q=0.8, cs;q=0.9', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en;Q=0.8, cs;q=0.9', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en ; q=0.8, cs;q=0.9', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('cs;q=0.9;foo=bar, en', ['en', 'cs'])).toBe('en');
+
+    // A weight out of range is clamped, not dropped, so both stay preferences
+    // and the field's own order decides.
+    expect(matchLocale('en;q=5, cs;q=1', ['en', 'cs'])).toBe('en');
+  });
+  it('reads `q=0` as a refusal, beaten only by a more specific range', () => {
+    expect(matchLocale('en;q=0, *', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('*;q=0, en', ['en', 'cs'])).toBe('en');
+    expect(matchLocale('*;q=0.1, en;q=0', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en;q=0, en-GB;q=0.9', ['en-GB'])).toBe('en-GB');
+    expect(matchLocale('en;q=0, en-GB;q=0.9', ['en'])).toBe(undefined);
+    expect(matchLocale('en;q=0', ['en', 'cs'])).toBe(undefined);
+  });
+  it('reads the wildcard as a preference of its own', () => {
+    expect(matchLocale('*', ['cs', 'en'])).toBe('cs');
+
+    // At equal weight a concrete range is consulted first; a stronger wildcard
+    // is still the stronger preference.
+    expect(matchLocale('en, *', ['cs', 'en'])).toBe('en');
+    expect(matchLocale('*, en', ['cs', 'en'])).toBe('en');
+    expect(matchLocale('cs;q=0.1, *', ['en', 'cs'])).toBe('en');
+  });
+  it('answers a miss rather than throwing on whatever arrives', () => {
+    expect(matchLocale('', ['en'])).toBe(undefined);
+    expect(matchLocale(null, ['en'])).toBe(undefined);
+    expect(matchLocale(undefined, ['en'])).toBe(undefined);
+    expect(matchLocale(42 as any, ['en'])).toBe(undefined);
+    expect(matchLocale({} as any, ['en'])).toBe(undefined);
+
+    // Read as a field value, never coerced into one: whatever arrives may
+    // carry a `toString` of its own, and a render must not die on it.
+    expect(matchLocale({ toString: () => { throw new Error('boom'); } } as any, ['en'])).toBe(undefined);
+    expect(matchLocale([{ toString: () => { throw new Error('boom'); } }] as any, ['en'])).toBe(undefined);
+    expect(matchLocale('en', [])).toBe(undefined);
+    expect(matchLocale('en', null as any)).toBe(undefined);
+    expect(matchLocale('en', [null, undefined, ''] as any)).toBe(undefined);
+    expect(matchLocale('en', 'en' as any)).toBe(undefined);
+
+    // A list is read member by member, so one unusable entry costs only itself.
+    expect(matchLocale([null, 42, 'cs'] as any, ['en', 'cs'])).toBe('cs');
+  });
+  it('ignores what is not a language range and keeps the rest of the field', () => {
+    expect(matchLocale(',,en,,', ['en'])).toBe('en');
+    expect(matchLocale('en-, cs', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('-en, cs', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en--US, cs', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en_US, cs', ['en', 'cs'])).toBe('cs');
+
+    // An unreadable weight drops its own range: reading it as 1 would promote
+    // junk to the strongest preference, and 0 would make it a refusal.
+    expect(matchLocale('en;q=abc, cs', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en;q=0x10, cs', ['en', 'cs'])).toBe('cs');
+    expect(matchLocale('en;q=, *', ['en', 'cs'])).toBe('en');
+  });
+  it('treats a prototype member name as an ordinary range', () => {
+    // Neither side is ever used as an object key, so `toString` matches only a
+    // locale that is actually configured.
+    expect(matchLocale('toString', ['toString'])).toBe('toString');
+
+    // Over the eight characters RFC 4647 §2.1 allows a subtag, so it is not a
+    // range at all rather than a range that happens to miss.
+    expect(matchLocale('constructor', ['constructor'])).toBe(undefined);
+    expect(matchLocale('toString', ['en'])).toBe(undefined);
+    expect(matchLocale('__proto__', ['en'])).toBe(undefined);
+    expect(({} as any).polluted).toBe(undefined);
+  });
+  it('costs a bounded amount on a hostile field', () => {
+    // Over the range cap, over the length cap, and a range that is all
+    // separators — none of which may reach the matcher as work.
+    expect(matchLocale(`${'x,'.repeat(5000)}cs`, ['cs'])).toBe(undefined);
+    expect(matchLocale(`${'a'.repeat(100000)}, cs`, ['en', 'cs'])).toBe('cs');
+    expect(matchLocale(`${'-'.repeat(100000)}, cs`, ['en', 'cs'])).toBe('cs');
+
+    // Every subtag of this one is well formed, so only the length cap stands
+    // between the truncation chain and a stack the size of the field.
+    expect(matchLocale(`en-${'ab-'.repeat(30000)}gb, cs`, ['en', 'cs'])).toBe('cs');
+  });
+  it('narrows its result to the locales it was given', () => {
+    expectTypeOf(matchLocale('en-GB', ['en', 'cs'])).toEqualTypeOf<'en' | 'cs' | undefined>();
+    expectTypeOf(matchLocale('en-GB', ['en', 'cs'] as const)).toEqualTypeOf<'en' | 'cs' | undefined>();
+
+    // A list whose type has already widened cannot narrow back.
+    const locales: string[] = ['en', 'cs'];
+
+    expectTypeOf(matchLocale('en-GB', locales)).toEqualTypeOf<string | undefined>();
   });
 });

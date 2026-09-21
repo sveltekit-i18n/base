@@ -343,14 +343,15 @@ Load-triggering methods return the promise of the matching load — concurrent d
 
 ### Utilities
 
-Two helpers the instance uses internally ship from a separate subpath, for code that has to match the library's own behavior:
+Pure helpers ship from a separate subpath, for the code around the instance that has to match the library's own behavior or decide which locale to ask for:
 
 ```javascript
-import { sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
 - `toDotNotation(input, preserveArrays?)` – the flattening behind [`preprocess`](#preprocess), for a custom `preprocess` that still wants dot notation
 - `sanitizeLocales(...locales)` – normalizes a locale from a URL, cookie or `Accept-Language` header the way the instance does, so it can be compared against `locale`
+- `matchLocale(requested, available)` – picks the configured locale a visitor asked for, from an `Accept-Language` header or `navigator.languages`, falling back from `en-GB` to `en` and answering `undefined` when nothing matches
 
 Full API documentation: [docs/README.md](./docs/README.md)
 
