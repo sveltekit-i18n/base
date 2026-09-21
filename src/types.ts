@@ -1,3 +1,5 @@
+import type { I18n } from './I18n.svelte.js';
+
 export namespace DotNotation {
   export type Input = any;
 
@@ -496,6 +498,18 @@ export namespace Schema {
   export type FromConfig<C> = C extends { schema?: infer S extends object }
     ? (HasClosedKeys<S> extends true ? S : never)
     : never;
+
+  /**
+   * The key schema an instance was built with; `never` when it carries none.
+   * The counterpart of `FromConfig` for code handed a constructed surface
+   * rather than a config — an extension typing its own output, for instance.
+   *
+   * Read off the class type parameter rather than off the shape of `t`: an
+   * extension that retypes `t` by intersection leaves a structural read
+   * unable to pick the schema out of the intersected signature, while the
+   * instance itself stays a member of that intersection.
+   */
+  export type FromInstance<I> = I extends I18n<any, any, infer S, any> ? S : never;
 
   /** The keys a schema allows; any string when there is no schema. */
   export type Key<S> = [S] extends [never] ? string : keyof S & string;
