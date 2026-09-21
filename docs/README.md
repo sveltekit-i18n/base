@@ -88,7 +88,7 @@ The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`).
 }
 ```
 
-##### `key` (required)
+##### `namespace` (required)
 
 **Type:** `string`
 
@@ -103,23 +103,29 @@ Translation namespace identifier. This acts as a prefix for translation keys.
 ```javascript
 {
   locale: 'en',
-  key: 'common',
+  namespace: 'common',
   // Translations will be accessible as i18n.t('common.greeting')
 }
 ```
 
-**⚠️ Common Pitfall:** Using dots in the `key` will cause lookup issues (a
-config-time `logger.error` reports such keys, but the loader still runs):
+> **`key` is the deprecated spelling of this property.** A loader may still name
+> its namespace `key` — it is honored exactly as `namespace` is, and reported
+> once through the [logger](#loglevel) at `warn`. Naming both is a type error.
+> The alias is scheduled for removal in the next major.
+
+**⚠️ Common Pitfall:** Using dots in the `namespace` will cause lookup issues (a
+config-time `logger.error` reports such namespaces, but the loader still runs):
 
 ```javascript
 // ❌ Bad
-{ key: 'pages.home' }
+{ namespace: 'pages.home' }
 
 // ✅ Good
-{ key: 'home' }
+{ namespace: 'home' }
 ```
 
-**Sharing a key.** Several loaders may declare the same `locale` and `key`:
+**Sharing a namespace.** Several loaders may declare the same `locale` and
+`namespace`:
 
 - Their data is **merged** where they fill in different parts of the
   namespace — every loader contributes its own branches.
@@ -128,14 +134,14 @@ config-time `logger.error` reports such keys, but the loader still runs):
   `loaders` wins and the collision is reported through the
   [logger](#loglevel).
 
-**A key is loaded only once per locale.** Loaders sharing a key therefore merge
-only when they run in the same load — when their `routes` all match the route
-that triggered it:
+**A namespace is loaded only once per locale.** Loaders sharing a namespace
+therefore merge only when they run in the same load — when their `routes` all
+match the route that triggered it:
 
 ```javascript
 loaders: [
-  { locale: 'en', key: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-  { locale: 'en', key: 'common', loader: async () => ({ menu: { about: 'About' } }) },
+  { locale: 'en', namespace: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', namespace: 'common', loader: async () => ({ menu: { about: 'About' } }) },
 ]
 // both loaders run when '/' is loaded
 // i18n.t('common.menu.home')  => 'Home'
@@ -147,21 +153,21 @@ skipped — including one that never had the chance to run, because its `routes`
 did not match.
 
 **⚠️ Common Pitfall:** Splitting one namespace into `routes`-scoped chunks. Give
-each route a key of its own instead:
+each route a namespace of its own instead:
 
 ```javascript
 // ❌ Bad — a visitor landing on '/about' loads `common` from the second loader,
 // and moving to '/' no longer runs the first one
 loaders: [
-  { locale: 'en', key: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-  { locale: 'en', key: 'common', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
+  { locale: 'en', namespace: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', namespace: 'common', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
 ]
 // i18n.t('common.menu.home') => not loaded
 
 // ✅ Good
 loaders: [
-  { locale: 'en', key: 'home', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-  { locale: 'en', key: 'about', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
+  { locale: 'en', namespace: 'home', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+  { locale: 'en', namespace: 'about', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
 ]
 ```
 
@@ -179,7 +185,7 @@ parameters.
 ```javascript
 {
   locale: 'en',
-  key: 'common',
+  namespace: 'common',
   loader: async () => (await import('./en/common.json')).default,
 }
 ```
@@ -189,7 +195,7 @@ parameters.
 ```javascript
 {
   locale: 'en',
-  key: 'common',
+  namespace: 'common',
   loader: async ({ locale }) => {
     const response = await fetch(`/api/translations/${locale}/common`);
     return await response.json();
@@ -198,7 +204,7 @@ parameters.
 ```
 
 **⚠️ `route` is context, not a cache key.** A loader runs at most once per
-locale per freshness window (see [`cache`](#cache)) — its `key` is recorded as
+locale per freshness window (see [`cache`](#cache)) — its `namespace` is recorded as
 loaded and it is skipped on later routes. So a loader whose payload varies by
 `route` would serve the first route's data everywhere. Scope such data with
 [`routes`](#routes-optional) instead, one loader entry per route group, and use
@@ -208,7 +214,7 @@ one route:
 ```javascript
 {
   locale: 'en',
-  key: 'checkout',
+  namespace: 'checkout',
   routes: ['/checkout'],
   loader: async ({ locale, route }) => {
     console.debug(`loading ${locale} translations for ${route}`);
@@ -223,7 +229,7 @@ one route:
 ```javascript
 {
   locale: 'en',
-  key: 'common',
+  namespace: 'common',
   loader: async () => {
     const translations = await db.translations.findOne({ locale: 'en', key: 'common' });
     return translations.data;
@@ -236,7 +242,7 @@ one route:
 ```javascript
 {
   locale: 'en',
-  key: 'admin',
+  namespace: 'admin',
   loader: async () => {
     // Only load admin translations if user is admin
     if (userIsAdmin) {
@@ -258,7 +264,7 @@ Array of route patterns. Loader will only execute if current route matches one o
 ```javascript
 {
   locale: 'en',
-  key: 'home',
+  namespace: 'home',
   routes: ['/'],
   loader: async () => (await import('./en/home.json')).default,
 }
@@ -269,7 +275,7 @@ Array of route patterns. Loader will only execute if current route matches one o
 ```javascript
 {
   locale: 'en',
-  key: 'products',
+  namespace: 'products',
   routes: ['/products', '/shop'],
   loader: async () => (await import('./en/products.json')).default,
 }
@@ -280,7 +286,7 @@ Array of route patterns. Loader will only execute if current route matches one o
 ```javascript
 {
   locale: 'en',
-  key: 'products',
+  namespace: 'products',
   routes: [/^\/products/, /^\/shop/],
   loader: async () => (await import('./en/products.json')).default,
 }
@@ -309,7 +315,7 @@ it pure — a matcher may be consulted more than once per load:
 ```javascript
 {
   locale: 'en',
-  key: 'products',
+  namespace: 'products',
   routes: [
     { test: (route) => route.startsWith('/products') },
     // A matcher built for full URLs has to be given an origin:
@@ -324,7 +330,7 @@ it pure — a matcher may be consulted more than once per load:
 ```javascript
 {
   locale: 'en',
-  key: 'common',
+  namespace: 'common',
   // No routes specified → loads on every page
   loader: async () => (await import('./en/common.json')).default,
 }
@@ -338,7 +344,7 @@ it pure — a matcher may be consulted more than once per load:
 
 **💡 Tip:** Keep common translations small and use route-based loading for page-specific content to optimize performance.
 
-**Loader descriptors are read once.** `locale`, `key`, `loader` and `routes`
+**Loader descriptors are read once.** `locale`, `namespace`, `loader` and `routes`
 are captured when the config is applied, so a property implemented as a getter
 is not re-evaluated on later loads. A descriptor that throws while being read
 is reported through the [logger](#loglevel) and dropped — the remaining loaders
@@ -353,19 +359,19 @@ const config = {
     // Common translations (all pages)
     {
       locale: 'en',
-      key: 'common',
+      namespace: 'common',
       loader: async () => (await import('./en/common.json')).default,
     },
     {
       locale: 'cs',
-      key: 'common',
+      namespace: 'common',
       loader: async () => (await import('./cs/common.json')).default,
     },
     
     // Homepage only
     {
       locale: 'en',
-      key: 'home',
+      namespace: 'home',
       routes: ['/'],
       loader: async () => (await import('./en/home.json')).default,
     },
@@ -373,7 +379,7 @@ const config = {
     // All product pages
     {
       locale: 'en',
-      key: 'products',
+      namespace: 'products',
       routes: [/^\/products/],
       loader: async () => (await import('./en/products.json')).default,
     },
@@ -381,7 +387,7 @@ const config = {
     // Dynamic API loading
     {
       locale: 'en',
-      key: 'dynamic',
+      namespace: 'dynamic',
       loader: async () => {
         const res = await fetch('/api/translations/en/dynamic');
         return await res.json();
@@ -518,10 +524,10 @@ No preprocessing – keep original structure.
 
 A lookup is a single own-property read of the locale's table, not a walk down a
 path, so without flattening only its **top-level** keys resolve. For
-loader-loaded data that top level is the loader `key`:
+loader-loaded data that top level is the loader `namespace`:
 
 ```javascript
-// loaders: [{ key: 'user', locale: 'en', loader: /* the JSON above */ }]
+// loaders: [{ namespace: 'user', locale: 'en', loader: /* the JSON above */ }]
 i18n.t('user')           // The whole namespace, exactly as the loader returned it
 i18n.t('user.profile')   // Not found – nothing flattened this key
 ```
@@ -536,7 +542,7 @@ keys are then looked up exactly as the function produced them (top level only,
 see [`'none'`](#none)).
 
 The function is called once per locale with that locale's table. Its top-level
-keys are the loader `key`s – or the keys you passed to `addTranslations()` –
+keys are the loader `namespace`s – or the keys you passed to `addTranslations()` –
 with each payload nested underneath.
 
 **Example 1: Add prefixes**
@@ -548,7 +554,7 @@ const config = {
   ),
 };
 
-// loaders: [{ key: 'common', ... }] – the namespace moves under 'app.common'
+// loaders: [{ namespace: 'common', ... }] – the namespace moves under 'app.common'
 i18n.t('app.common')
 ```
 
@@ -845,7 +851,7 @@ in the background.
 
 ```javascript
 const config = {
-  // cache: Number.POSITIVE_INFINITY — loaders run once per locale and key
+  // cache: Number.POSITIVE_INFINITY — loaders run once per locale and namespace
 };
 ```
 
@@ -1853,7 +1859,7 @@ const config: Config.T<Params> = {
   loaders: [
     {
       locale: 'en',
-      key: 'common',
+      namespace: 'common',
       loader: async () => (await import('./en/common.json')).default,
     },
   ],

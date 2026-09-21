@@ -79,12 +79,12 @@ const config = {
   loaders: [
     {
       locale: 'en',
-      key: 'common',
+      namespace: 'common',
       loader: async () => (await import('./en/common.json')).default,
     },
     {
       locale: 'cs',
-      key: 'common',
+      namespace: 'common',
       loader: async () => (await import('./cs/common.json')).default,
     },
   ],
@@ -188,7 +188,7 @@ Array of loader configurations:
 loaders: [
   {
     locale: 'en',           // Required: locale identifier
-    key: 'common',          // Required: translation namespace
+    namespace: 'common',    // Required: translation namespace
     loader: async () => {}, // Required: async function returning translations
     routes: ['/about'],     // Optional: load only for specific routes
   },
@@ -265,7 +265,7 @@ Hand-write it for a small set of messages, or point the slot at a generated arti
 
 ### `cache`
 
-Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — loaders run once per locale and key (a loader's `routes` only decide whether a load trigger considers it, not how often it runs).
+Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — loaders run once per locale and namespace (a loader's `routes` only decide whether a load trigger considers it, not how often it runs).
 
 Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 

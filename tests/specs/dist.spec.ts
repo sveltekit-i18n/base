@@ -15,7 +15,7 @@ describe('published artifact', () => {
     const instance = new I18n({
       parser,
       log,
-      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
     });
 
     await instance.loadTranslations('en', '/');
@@ -28,7 +28,7 @@ describe('published artifact', () => {
     const instance = new I18n({
       parser,
       log,
-      loaders: [{ key: 'common', locale: '__proto__', loader: async () => ({ greeting: 'Hi' }) }],
+      loaders: [{ namespace: 'common', locale: '__proto__', loader: async () => ({ greeting: 'Hi' }) }],
     });
 
     await instance.loadTranslations('__proto__');
