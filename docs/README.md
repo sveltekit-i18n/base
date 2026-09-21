@@ -2020,7 +2020,7 @@ const params: readonly Parser.ParamSpec[] = extract('Hello {name}!', { key: 'com
 
 A value that is not a message the parser recognizes yields `[]` rather than
 throwing — translation leaves are arbitrary data. The second argument
-(`Parser.ExtractContext`, `{ key?, locale? }`) is diagnostic only; neither
+(`Parser.ExtractContext`, `{ key?, locale? }`) is diagnostic only; no
 official parser needs it to extract.
 
 **`Parser.ParamSpec` fields:**
@@ -2033,13 +2033,13 @@ official parser needs it to extract.
   lattice, not a conflict marker: merging it with anything yields the other
   kind. `'date'` covers date and time formatting and means `Date | number`.
   `'function'` is a rich-text callback, the shape ICU tags require. `'boolean'`
-  is there for parsers that can prove it — neither official parser can, since
-  both compare stringified values.
+  is there for parsers that can prove it — no official parser reports it today.
 - **`values`** — values the message names explicitly. A **hint** for authoring
-  tools, never an exhaustive set: both official parsers fall back to a default
-  branch for anything unlisted, so it must not be used to close a union. It is
-  omitted where the listed values are not values at all (numeric thresholds,
-  plural categories) or mean the opposite (an inequality's operands).
+  tools, never an exhaustive set: every official parser that reports them falls
+  back to a default branch for anything unlisted, so it must not be used to
+  close a union. It is omitted where the listed values are not values at all
+  (numeric thresholds, plural categories) or mean the opposite (an inequality's
+  operands).
 - **`optional`** — whether the message renders without the parameter; defaults
   to `false`. A parameter only some selector branches use is optional:
   over-approximating trades a missed error for never demanding a parameter the
@@ -2049,8 +2049,9 @@ official parser needs it to extract.
   instead of the flat `optional: true` approximation; a generator that does not
   care can ignore it.
 
-No official parser ships an extractor yet — these types are the contract one
-will ship against.
+Every official parser ships one as a root export: `parser-curly`, `parser-icu`,
+`parser-mf2` and `parser-i18next` each export `extractParamsFactory`, and
+`sveltekit-i18n` re-exports the curly one beside the instance it types.
 
 ### Extensions and the constructor's type
 
