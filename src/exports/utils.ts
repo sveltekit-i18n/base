@@ -1,3 +1,3 @@
-export { sanitizeLocales, toDotNotation } from '../utils.js';
+export { matchLocale, sanitizeLocales, toDotNotation } from '../utils.js';
 
 export type { DotNotation } from '../types.js';

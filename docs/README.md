@@ -1555,14 +1555,15 @@ owner goes away.
 
 ## Utilities
 
-Two helpers the instance uses internally are published separately, for the
-cases where consumer code has to match the library's own behavior:
+Three pure helpers are published separately: two the instance uses internally,
+for the cases where consumer code has to match the library's own behavior, and
+one the instance never calls, for deciding which locale to ask it for:
 
 ```javascript
-import { sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
-The rest of the internals stays private – the subpath exports these two, plus
+The rest of the internals stays private – the subpath exports these three, plus
 the `DotNotation` type they are described with.
 
 ### `toDotNotation(input, preserveArrays?)`
@@ -1613,6 +1614,103 @@ A locale `Intl` does not recognize is lowercased and reported through the
 This is the DEFAULT normalization only: an instance configured with
 [`sanitizeLocales`](#sanitizelocales) keys its locales its own way, so a value
 compared against [`locale`](#locale) has to go through that same transform.
+
+---
+
+### `matchLocale(requested, available)`
+
+**Type:** `<const L extends string>(requested: string | readonly string[] | null | undefined, available: readonly L[]) => L | undefined`
+
+A locale rarely arrives spelled the way the config spells it. It comes from a
+URL segment, a cookie or an `Accept-Language` header, so it carries `en-GB`,
+`cs-CZ`, quality weights and casing nobody controls, while the configured set is
+usually coarser. This is the bridge between the two:
+
+```javascript
+import { matchLocale } from '@sveltekit-i18n/base/utils';
+
+matchLocale('en-GB,en;q=0.9,cs;q=0.8', ['en', 'cs']); // 'en'
+matchLocale('cs-CZ', ['en', 'cs']);                   // 'cs'
+matchLocale('de-AT', ['en', 'cs']);                   // undefined
+```
+
+`requested` is an `Accept-Language` field value, a single locale, or a
+preference list such as `navigator.languages`. `available` is the configured
+set, and the winner comes back **as `available` spells it**, so it can be handed
+straight to [`setLocale()`](#setlocalelocale).
+
+**What it does, exactly:**
+
+1. **Matching scheme** – [RFC 4647](https://www.rfc-editor.org/rfc/rfc4647)
+   *Lookup*: the requested range, then its progressively shorter prefixes
+   (`zh-Hant-TW` → `zh-Hant` → `zh`), compared case-insensitively. Only when
+   that finds nothing is the range **as written** tried once more as a prefix,
+   so a request for `en` also reaches a configured `en-GB`.
+2. **One result, or none** – a miss is `undefined` rather than a guess. What a
+   miss means stays yours to decide, usually [`fallbackLocale`](#fallbacklocale).
+3. **`q` weights** order the ranges, and `q=0` refuses one – beaten only by a
+   strictly more specific range that matched.
+4. **`*`** is read the way HTTP reads it: a preference of its own, consulted
+   after every concrete range of the same weight.
+
+**⚠️ Only the REQUESTED locale is ever truncated.** An available locale is
+compared as you spelled it, and no region or script is ever inferred from
+another, so a sibling is never substituted:
+
+```javascript
+matchLocale('en-AU', ['en-US']);    // undefined – not 'en-US'
+matchLocale('zh-Hant', ['zh-Hans']); // undefined – not 'zh-Hans'
+```
+
+That is the whole of it: there is no CLDR data here, no likely-subtags
+expansion, and `zh-Hant` → `zh` is a string operation rather than a knowledge
+lookup. An app that needs real language negotiation reaches for a package built
+on CLDR; this closes the everyday gap instead of becoming one of them.
+
+**⚠️ The result is only as narrow as `available` is.** A plain `string[]` types
+the result `string | undefined`; an array literal, an `as const` list or
+[`locales`](#locales) keeps the union:
+
+```typescript
+const wide: string[] = ['en', 'cs'];
+
+matchLocale('en-GB', wide);              // string | undefined
+matchLocale('en-GB', ['en', 'cs']);      // 'en' | 'cs' | undefined
+matchLocale('en-GB', i18n.locales);      // the instance's own locale union
+```
+
+**Server – the `Accept-Language` header:**
+
+```javascript
+// src/hooks.server.js
+import { matchLocale } from '@sveltekit-i18n/base/utils';
+
+const LOCALES = ['en', 'cs'];
+
+export const handle = async ({ event, resolve }) => {
+  event.locals.locale = matchLocale(event.cookies.get('locale'), LOCALES)
+    ?? matchLocale(event.request.headers.get('accept-language'), LOCALES)
+    ?? 'en';
+
+  return resolve(event);
+};
+```
+
+A visitor's explicit choice outranks their browser's, and `undefined` from both
+lands on the app's default – which is why a miss is not answered with a guess.
+
+**Client – `navigator.languages`:**
+
+```javascript
+import { matchLocale } from '@sveltekit-i18n/base/utils';
+
+const preferred = matchLocale(navigator.languages, i18n.locales);
+
+if (preferred && preferred !== i18n.locale) await i18n.setLocale(preferred);
+```
+
+Nothing here reads a request or a browser by itself: the helper computes a
+locale from values you pass it, and assigning it stays your call.
 
 ---
 
