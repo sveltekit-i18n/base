@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
-import type { Config, Extension, I18n, Parser } from '../../src/index.js';
+import type { Config, Extension, I18n, Loader, Parser } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { matchLocale, read, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
+import { matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -11,6 +11,10 @@ import { filterTranslationKeys } from '../utils/index.js';
 const TRANSLATIONS = getTranslations();
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
+
+// The public descriptor type is a union over the two namespace spellings, so
+// reading one takes the same resolution the core applies at the config boundary.
+const resolved = resolveLoaders(loaders);
 
 describe('i18n instance', () => {
   it('exports all properties and methods', () => {
@@ -117,7 +121,7 @@ describe('i18n instance', () => {
     const nonStandardLocale = 'ku';
     const instance = new i18n({
       loaders: [{
-        key: 'common',
+        namespace: 'common',
         locale: nonStandardLocale.toUpperCase(),
         loader: async () => (await import(`../data/translations/${nonStandardLocale}/common.json`)).default,
       }],
@@ -260,7 +264,7 @@ describe('i18n instance', () => {
 
     await instance.loadConfig(CONFIG);
 
-    const keys = loaders.filter(({ routes }) => !routes).map(({ key }) => key);
+    const keys = resolved.filter(({ routes }) => !routes).map(({ namespace }) => namespace);
 
     instance.locales.forEach((locale) => {
       expect(instance.translations[locale]).toEqual(
@@ -276,7 +280,7 @@ describe('i18n instance', () => {
 
     await instance.loadConfig({ ...CONFIG, fallbackLocale });
 
-    const keys = loaders.filter(({ routes }) => !routes).map(({ key }) => key);
+    const keys = resolved.filter(({ routes }) => !routes).map(({ namespace }) => namespace);
 
     instance.locales.forEach((locale) => {
       expect(instance.translations[locale]).toEqual(
@@ -298,7 +302,7 @@ describe('i18n instance', () => {
 
     await instance.loadConfig(CONFIG);
 
-    const keys = loaders.filter(({ routes }) => !!routes).map(({ key }) => key);
+    const keys = resolved.filter(({ routes }) => !!routes).map(({ namespace }) => namespace);
 
     expect(instance.translations[initLocale]).toEqual(
       expect.not.objectContaining(filterTranslationKeys(TRANSLATIONS[initLocale], keys)),
@@ -316,7 +320,7 @@ describe('i18n instance', () => {
   it('`loadTranslations` works for given routes only', async () => {
     const instance = new i18n({ loaders, parser, log });
     const url = '/path#hash?a=b&c=d';
-    const keys = loaders.filter(({ routes }) => routes?.includes(url)).map(({ key }) => key);
+    const keys = resolved.filter(({ routes }) => routes?.includes(url)).map(({ namespace }) => namespace);
 
     await instance.loadTranslations(initLocale, '/');
     expect(instance.translations[initLocale]).toEqual(
@@ -328,12 +332,38 @@ describe('i18n instance', () => {
       expect.objectContaining(TRANSLATIONS[initLocale]),
     );
   });
+  it('loads a namespace the same whether it is named `namespace` or the deprecated `key`', async () => {
+    const loader = async () => ({ greeting: 'Hi' });
+
+    const current = new i18n({ parser, log, loaders: [{ namespace: 'common', locale: 'en', loader }] });
+    const legacy = new i18n({ parser, log, loaders: [{ key: 'common', locale: 'en', loader }] });
+
+    await Promise.all([
+      current.loadTranslations('en', '/'),
+      legacy.loadTranslations('en', '/'),
+    ]);
+
+    expect(legacy.translations).toEqual(current.translations);
+    expect(legacy.rawTranslations).toEqual(current.rawTranslations);
+    expect(legacy.t('common.greeting')).toBe(current.t('common.greeting'));
+  });
+  it('keeps a deprecated-name loader from refetching, exactly as the current name does', async () => {
+    let calls = 0;
+    const loader = async () => { calls += 1; return { greeting: 'Hi' }; };
+
+    const instance = new i18n({ parser, log, loaders: [{ key: 'common', locale: 'en', loader }] });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadTranslations('en', '/');
+
+    expect(calls).toBe(1);
+  });
   it('a failed load rejects the returned promise', async () => {
     const instance = new i18n({
       parser,
       log,
       preprocess: () => { throw new Error('preprocess boom'); },
-      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) }],
     });
 
     await expect(instance.loadTranslations('en', '/')).rejects.toThrow('preprocess boom');
@@ -402,7 +432,7 @@ describe('i18n instance', () => {
       initLocale: undefined,
       loaders: [
         {
-          key: 'common',
+          namespace: 'common',
           locale: '__proto__',
           loader: async () => { calls += 1; return { greeting: 'Hi' }; },
         },
@@ -449,8 +479,8 @@ describe('i18n instance', () => {
       ...CONFIG,
       initLocale: undefined,
       loaders: [
-        { key: 'a', locale: '__proto__', loader: async () => ({ one: '1' }) },
-        { key: 'b', locale: '__proto__', loader: async () => ({ two: '2' }) },
+        { namespace: 'a', locale: '__proto__', loader: async () => ({ one: '1' }) },
+        { namespace: 'b', locale: '__proto__', loader: async () => ({ two: '2' }) },
       ],
     });
 
@@ -488,8 +518,8 @@ describe('i18n instance', () => {
       parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
-        { key: 'broken', locale: 'en', loader: async () => { throw new Error('loader boom'); } },
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'broken', locale: 'en', loader: async () => { throw new Error('loader boom'); } },
       ],
     });
 
@@ -503,8 +533,8 @@ describe('i18n instance', () => {
       parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
       log,
       loaders: [
-        { key: 'common', locale: 'en', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-        { key: 'common', locale: 'en', loader: async () => ({ menu: { about: 'About' }, greeting: 'Hello' }) },
+        { namespace: 'common', locale: 'en', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+        { namespace: 'common', locale: 'en', loader: async () => ({ menu: { about: 'About' }, greeting: 'Hello' }) },
       ],
     });
 
@@ -521,8 +551,8 @@ describe('i18n instance', () => {
       parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
       log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => ({ home: { title: 'Title' } }) },
-        { key: 'common', locale: 'en', loader: async () => ({ home: 'Home' }) },
+        { namespace: 'common', locale: 'en', loader: async () => ({ home: { title: 'Title' } }) },
+        { namespace: 'common', locale: 'en', loader: async () => ({ home: 'Home' }) },
       ],
     });
 
@@ -538,7 +568,7 @@ describe('i18n instance', () => {
       log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
       initLocale: 'en',
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => ({ menu: { home: 'Home' } }) },
+        { namespace: 'common', locale: 'en', loader: async () => ({ menu: { home: 'Home' } }) },
       ],
     });
 
@@ -561,7 +591,7 @@ describe('i18n instance', () => {
       parser,
       log,
       loaders: [
-        { key: 'common', locale: 'EN', loader: async (props) => { received.push(props); return { greeting: 'Hello' }; } },
+        { namespace: 'common', locale: 'EN', loader: async (props) => { received.push(props); return { greeting: 'Hello' }; } },
       ],
     });
 
@@ -577,8 +607,8 @@ describe('i18n instance', () => {
       log,
       fallbackLocale: 'EN',
       loaders: [
-        { key: 'common', locale: 'EN', loader: push },
-        { key: 'common', locale: 'DE', loader: push },
+        { namespace: 'common', locale: 'EN', loader: push },
+        { namespace: 'common', locale: 'DE', loader: push },
       ],
     });
 
@@ -597,7 +627,7 @@ describe('i18n instance', () => {
       parser,
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       loaders: [
-        { key: 'broken', locale: 'en', loader: async () => { throw boom; } },
+        { namespace: 'broken', locale: 'en', loader: async () => { throw boom; } },
       ],
     });
 
@@ -615,7 +645,7 @@ describe('i18n instance', () => {
       log,
       loaders: [
         {
-          key: 'common',
+          namespace: 'common',
           locale: 'en',
           routes: [{ test: (route: string) => { seen.push(route); return route.startsWith('/products'); } }],
           loader: async () => ({ greeting: 'Hello' }),
@@ -640,7 +670,7 @@ describe('i18n instance', () => {
       parser,
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       loaders: [
-        { key: Symbol('common') as unknown as string, locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: Symbol('common') as unknown as string, locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
       ],
     })).resolves.toBeUndefined();
 
@@ -653,8 +683,8 @@ describe('i18n instance', () => {
       parser,
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       loaders: [
-        { key: 'broken', get locale(): string { throw boom; }, loader: async () => ({ greeting: 'Ahoj' }) },
-        { key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'broken', get locale(): string { throw boom; }, loader: async () => ({ greeting: 'Ahoj' }) },
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
       ],
     });
 
@@ -675,11 +705,11 @@ describe('i18n instance', () => {
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       initLocale: 'en',
       loaders: [
-        { key: 'common.nested', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'common.nested', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
       ],
     });
 
-    expect(errorSpy).toHaveBeenCalledWith("[i18n]: Invalid 'common.nested' loader key. It shouldn't include the '.' character.");
+    expect(errorSpy).toHaveBeenCalledWith("[i18n]: Invalid 'common.nested' loader namespace. It shouldn't include the '.' character.");
     // Report-only: the loader still ran and its data landed in the table.
     expect(read(instance.translations['en'], 'common.nested.greeting')).toBe('Hello');
   });
@@ -773,7 +803,7 @@ describe('i18n locale keys', () => {
       parser: valueParser,
       log,
       translations: { EN: { common: { greeting: 'Hello' } } },
-      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
     });
 
     await instance.loadTranslations('en');
@@ -826,7 +856,7 @@ describe('i18n sanitizeLocales config', () => {
       parser: valueParser,
       log,
       sanitizeLocales: (locale) => locale.toUpperCase(),
-      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
     });
 
     await instance.loadTranslations('en');
@@ -1033,7 +1063,7 @@ describe('i18n loading concurrency', () => {
       parser,
       log,
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } },
+        { namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } },
       ],
     });
 
@@ -1058,8 +1088,8 @@ describe('i18n loading concurrency', () => {
       parser,
       log,
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => { await blockUntilOpened('en'); return { greeting: 'Hello' }; } },
-        { key: 'common', locale: 'cs', loader: async () => { await blockUntilOpened('cs'); return { greeting: 'Ahoj' }; } },
+        { namespace: 'common', locale: 'en', loader: async () => { await blockUntilOpened('en'); return { greeting: 'Hello' }; } },
+        { namespace: 'common', locale: 'cs', loader: async () => { await blockUntilOpened('cs'); return { greeting: 'Ahoj' }; } },
       ],
     });
 
@@ -1086,7 +1116,7 @@ describe('i18n loading concurrency', () => {
       log,
       loaders: [
         {
-          key: 'common',
+          namespace: 'common',
           locale: 'en',
           loader: async () => {
             await new Promise<void>((resolve) => { gates.en = resolve; });
@@ -1115,9 +1145,9 @@ describe('i18n loading concurrency', () => {
       parser: valueParser,
       log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
       loaders: [
-        { key: 'navbar', locale: 'en', loader: async () => ({ title: 'Navbar' }) },
+        { namespace: 'navbar', locale: 'en', loader: async () => ({ title: 'Navbar' }) },
         {
-          key: 'nav',
+          namespace: 'nav',
           locale: 'en',
           loader: async () => {
             attempts += 1;
@@ -1140,7 +1170,7 @@ describe('i18n cache and invalidation', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 
   const counterLoader = (locale: string, calls: Record<string, number>) => ({
-    key: 'common',
+    namespace: 'common',
     locale,
     loader: async () => {
       calls[locale] = (calls[locale] ?? 0) + 1;
@@ -1299,7 +1329,7 @@ describe('i18n cache and invalidation', () => {
       parser: valueParser,
       log,
       loaders: [
-        { key: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
       ],
     });
 
@@ -1333,7 +1363,7 @@ describe('i18n cache and invalidation', () => {
       parser: valueParser,
       log,
       loaders: [
-        { key: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
       ],
     });
 
@@ -1371,7 +1401,7 @@ describe('i18n cache and invalidation', () => {
     await instance.loadConfig({
       parser,
       log,
-      loaders: [{ key: 'common', locale: 'en', loader: async () => { reconfiguredCalls += 1; return { greeting: 'Hi' }; } }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { reconfiguredCalls += 1; return { greeting: 'Hi' }; } }],
     });
     await instance.loadTranslations('en', '/');
 
@@ -1388,7 +1418,7 @@ describe('i18n cache and invalidation', () => {
       log,
       initLocale: 'en',
       loaders: [
-        { key: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { oldCalls += 1; resolvers.push(resolve); }) },
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { oldCalls += 1; resolvers.push(resolve); }) },
       ],
     });
     expect(oldCalls).toBe(1);
@@ -1398,7 +1428,7 @@ describe('i18n cache and invalidation', () => {
       log,
       initLocale: 'en',
       loaders: [
-        { key: 'common', locale: 'en', loader: async () => { newCalls += 1; return { greeting: 'new' }; } },
+        { namespace: 'common', locale: 'en', loader: async () => { newCalls += 1; return { greeting: 'new' }; } },
       ],
     });
 
@@ -1419,10 +1449,10 @@ describe('i18n snapshot', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 
   const countingLoaders = (calls: Record<string, number>) => [
-    { key: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
-    { key: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
-    { key: 'about', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { title: 'About' }; } },
-    { key: 'common', locale: 'cs', loader: async () => { calls.cs = (calls.cs ?? 0) + 1; return { greeting: 'Ahoj' }; } },
+    { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
+    { namespace: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
+    { namespace: 'about', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { title: 'About' }; } },
+    { namespace: 'common', locale: 'cs', loader: async () => { calls.cs = (calls.cs ?? 0) + 1; return { greeting: 'Ahoj' }; } },
   ];
 
   it('returns nothing before anything loaded', () => {
@@ -1516,7 +1546,7 @@ describe('i18n destroy', () => {
       parser: valueParser,
       log,
       loaders: [
-        { key: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
       ],
     });
 
@@ -1539,7 +1569,7 @@ describe('i18n destroy', () => {
     const instance = new i18n({
       parser: valueParser,
       log,
-      loaders: [{ key: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
     });
 
     await instance.loadTranslations('en', '/');
@@ -1562,7 +1592,7 @@ describe('i18n destroy', () => {
     const instance = new i18n({
       parser: valueParser,
       log,
-      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
     });
 
     await instance.loadTranslations('en', '/');
@@ -1577,7 +1607,7 @@ describe('i18n destroy', () => {
     const instance = new i18n({
       parser: valueParser,
       log,
-      loaders: [{ key: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }],
     });
 
     await instance.loadTranslations('en', '/');
@@ -1673,7 +1703,7 @@ describe('type inference', () => {
     // Reaches the parser, so the declared output is what comes back.
     expect(rich.t('key')).toEqual({ html: 'key' });
 
-    // No key: nothing to parse.
+    // No namespace: nothing to parse.
     expect(rich.t('')).toBe('');
 
     // No locale: nothing to parse either.
@@ -1832,7 +1862,7 @@ describe('type inference', () => {
       initLocale: 'en',
       fallbackLocale: 'de',
       translations: { cs: { greeting: 'Ahoj' } },
-      loaders: [{ locale: 'sk', key: 'common', routes: ['/about'], loader: async () => ({}) }],
+      loaders: [{ locale: 'sk', namespace: 'common', routes: ['/about'], loader: async () => ({}) }],
     } as const;
 
     // Every config slot that names a locale feeds the same union — the one the
@@ -1872,7 +1902,7 @@ describe('type inference', () => {
       parser,
       log,
       initLocale: 'en',
-      loaders: dynamicLocales.map((locale) => ({ locale, key: 'common', loader: async () => ({}) })),
+      loaders: dynamicLocales.map((locale) => ({ locale, namespace: 'common', loader: async () => ({}) })),
     } as const;
 
     // A half-known union would complete `'en'` while silently hiding every
@@ -1911,6 +1941,43 @@ describe('type inference', () => {
     const renarrowed: I18n<any, string, never, 'en' | 'de'> = untyped;
 
     expect(renarrowed).toBeInstanceOf(i18n);
+  });
+
+  it('accepts either namespace spelling, but never both and never neither', () => {
+    const loader = async () => ({});
+
+    const current: Loader.LoaderModule = { namespace: 'common', locale: 'en', loader };
+    const legacy: Loader.LoaderModule = { key: 'common', locale: 'en', loader };
+
+    // @ts-expect-error a loader names its namespace under one spelling, not both
+    const both: Loader.LoaderModule = { namespace: 'common', key: 'common', locale: 'en', loader };
+
+    // @ts-expect-error a loader has to name its namespace
+    const neither: Loader.LoaderModule = { locale: 'en', loader };
+
+    expect([current, legacy, both, neither]).toHaveLength(4);
+  });
+
+  it('narrows the locale union across a config mixing both namespace spellings', () => {
+    const loader = async () => ({});
+
+    const config = {
+      parser,
+      log,
+      initLocale: 'en',
+      loaders: [
+        { namespace: 'common', locale: 'en', loader },
+        { key: 'home', locale: 'cs', loader },
+      ],
+    } as const satisfies Config.T;
+
+    expectTypeOf<Config.LocalesFromConfig<typeof config>>().toEqualTypeOf<'en' | 'cs'>();
+
+    const instance = new i18n(config);
+
+    expectTypeOf<Parameters<typeof instance.loadTranslations>[0]>().toEqualTypeOf<'en' | 'cs' | (string & {})>();
+
+    expect(instance).toBeInstanceOf(i18n);
   });
 });
 
@@ -2084,6 +2151,37 @@ describe('utils', () => {
     const reported = captured.error.find(({ message }) => message.includes('Invalid route config!'));
 
     expect(reported?.error).toBe(boom);
+  });
+  it('`resolveLoaders` settles both namespace spellings into one', () => {
+    const loader = async () => ({});
+
+    const [current, legacy] = resolveLoaders([
+      { namespace: 'common', locale: 'en', loader },
+      { key: 'nav', locale: 'en', loader },
+    ]);
+
+    expect(current?.namespace).toBe('common');
+    expect(legacy?.namespace).toBe('nav');
+    // Nothing downstream should be able to tell which name was used.
+    expect(Object.hasOwn(legacy, 'key')).toBe(false);
+  });
+  it('`resolveLoaders` warns for the deprecated name and stays quiet for the current one', () => {
+    const { captured, restore } = captureLogs();
+    const loader = async () => ({});
+
+    try {
+      resolveLoaders([
+        { namespace: 'common', locale: 'en', loader },
+        { key: 'nav', locale: 'en', loader },
+      ]);
+    } finally {
+      restore();
+    }
+
+    const deprecations = captured.warn.filter(({ message }) => message.includes("uses 'key'"));
+
+    expect(deprecations).toHaveLength(1);
+    expect(deprecations[0]?.message).toContain('nav');
   });
 });
 
