@@ -27,7 +27,6 @@ Before submitting this PR, please ensure:
 - [ ] **All commits are atomic** (each commit works independently)
 - [ ] **Commits have clear messages** (imperative mood, descriptive)
 - [ ] **Branch rebased on latest master** (`git rebase origin/master`)
-- [ ] **CHANGELOG.md updated** (if this changes functionality)
 - [ ] **Documentation updated** (if API or behavior changed)
 
 ## Additional Notes
