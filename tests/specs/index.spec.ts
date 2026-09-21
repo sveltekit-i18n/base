@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
-import type { Config, Extension, I18n, Loader, Parser } from '../../src/index.js';
+import type { Config, Extension, I18n, Loader, Parser, Schema } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
@@ -1824,6 +1824,40 @@ describe('type inference', () => {
     noKeys.t('any.key', 'anything', 1);
 
     expect(annotated).toBeInstanceOf(i18n);
+  });
+
+  it('reads the key schema back off a constructed instance', () => {
+    type TestSchema = { 'common.placeholder': { value: string } };
+
+    const typed = new i18n({ ...CONFIG, schema: {} as TestSchema });
+    const untyped = new i18n({ ...CONFIG });
+
+    expectTypeOf<Schema.FromInstance<typeof typed>>().toEqualTypeOf<TestSchema>();
+    expectTypeOf<Schema.FromInstance<typeof untyped>>().toEqualTypeOf<never>();
+
+    expect([typed, untyped]).toHaveLength(2);
+  });
+
+  it('reads the key schema off a surface whose `t` an extension retyped', () => {
+    type TestSchema = { 'common.placeholder': { value: string } };
+
+    // A structural read of `t` cannot pick the schema out of an intersected
+    // signature; the instance stays a member of the intersection, so reading
+    // the class type parameter survives what a `t`-enriching extension returns.
+    interface WithTree extends Extension.Operator {
+      readonly output: this['input'] extends infer I
+        ? I & { t: { tree: true } }
+        : never;
+    }
+
+    const withTree: Extension.Generic<WithTree> = (input: I18n) => Object.assign(input, { t: { tree: true as const } });
+
+    const piped = new i18n({ ...CONFIG, schema: {} as TestSchema, extensions: [withTree] });
+
+    expectTypeOf<Schema.FromInstance<typeof piped>>().toEqualTypeOf<TestSchema>();
+    expectTypeOf(piped.t.tree).toEqualTypeOf<true>();
+
+    expect(piped.t.tree).toBe(true);
   });
 
   it('leaves `t`/`l` untyped when no key schema is supplied', () => {

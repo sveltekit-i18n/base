@@ -832,8 +832,11 @@ small project, or a generated artifact for a large one (see
 [Message parameter extraction](#message-parameter-extraction) for the
 build-time contract a generator reads messages through). The types the slot is
 resolved through are exported from the package root as the `Schema` namespace —
-`Schema.FromConfig`, `Schema.Key`, `Schema.Params` and `Schema.Payload` — for
-generators and wrapper packages; application code only supplies `schema`.
+`Schema.FromConfig`, `Schema.FromInstance`, `Schema.Key`, `Schema.Params` and
+`Schema.Payload` — for generators and wrapper packages; application code only
+supplies `schema`. `FromConfig` reads the slot off a config, `FromInstance` off
+a constructed instance — what an extension has in hand when it types its own
+output.
 
 ---
 
