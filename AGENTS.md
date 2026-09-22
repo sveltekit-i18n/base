@@ -103,6 +103,16 @@ translation state, loading, caching, route matching, and preprocessing — but
   pre-invalidation data cannot resurrect the dropped bookkeeping. Neither
   expiry nor `invalidate` ever removes displayed translations or starts a
   load by itself. Don't break load-once semantics.
+- **A loader receives plain data.** `Loader.Props` holds strings and plain
+  objects of strings: the locale, the route, and whatever else a loader is
+  handed later. Never an `event`, a `fetch`, or any `@sveltejs/kit` type. That
+  keeps a loader an ordinary async function the consumer can back with anything,
+  a SvelteKit remote `query` included, with no code here. It also keeps
+  SvelteKit's rule that a query may not read `event.url`, `params` or `route`
+  away from this package. Anything that crosses the SSR boundary (the snapshot
+  payload) is plain data for the same reason: SvelteKit serializes it with
+  `devalue`, which rejects functions, class instances and an own `__proto__`
+  key.
 - **Parser is injected, never imported.** `translate()` calls
   `config.parser.parse(value, params, locale, key)`. `Parser.ExtractParams` is
   the build-time half of that contract and deliberately not a member of
