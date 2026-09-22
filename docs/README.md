@@ -1378,6 +1378,10 @@ What the payload leaves out:
   key no loader claims (added through `addTranslations()`) is always kept. A key
   some loader claims is dropped whole, including whatever `config.translations`
   contributed to it.
+- **A literal `__proto__` key**, at any depth — SvelteKit serializes load data
+  with `devalue`, which refuses an object carrying one, so keeping it would fail
+  the render. The key is dropped with a warning; the rest of its namespace is
+  kept.
 
 The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
 shape — so the receiving instance applies its own `config.preprocess`.

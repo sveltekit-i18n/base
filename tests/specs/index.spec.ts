@@ -1504,6 +1504,28 @@ describe('i18n snapshot', () => {
     expect(calls).toEqual({ about: 1 });
     expect(client.t('about.title')).toBe('About');
   });
+
+  it('leaves out a literal `__proto__` key, which the serializers of load data refuse', async () => {
+    const hasOwnProtoKey = (value: any): boolean => !!value && typeof value === 'object'
+      && (Object.hasOwn(value, '__proto__') || Object.values(value).some(hasOwnProtoKey));
+
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        // JSON.parse creates real own '__proto__' keys (object literals would not).
+        { key: 'home', locale: 'en', loader: async () => JSON.parse('{"__proto__": {"x": "y"}, "list": [{"__proto__": "z", "ok": "1"}], "title": "Home"}') },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: JSON.parse('{"__proto__": {"a": "b"}}') });
+
+    const snapshot = instance.snapshot();
+
+    expect(hasOwnProtoKey(snapshot)).toBe(false);
+    expect(snapshot).toEqual({ en: { home: { list: [{ ok: '1' }], title: 'Home' } } });
+  });
 });
 
 describe('i18n destroy', () => {

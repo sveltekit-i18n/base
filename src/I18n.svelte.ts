@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, mergeTranslations, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Schema, Translations } from './types.js';
@@ -281,6 +281,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * instance rather than assigning it to `config.translations`: the payload is
    * a subset — two locales, and nothing of a key its loaders claim for another
    * route — so assigning it would drop the rest of the config's own data.
+   * A literal `__proto__` key is left out: the serializer SvelteKit hands load
+   * data to refuses an object that carries one.
    */
   snapshot = (): Translations.SerializedTranslations => {
     const { fallbackLocale } = this.#config ?? {};
@@ -300,9 +302,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       const offRoute = this.#offRouteKeys(locale, route);
 
-      const relevant = Object.keys(data)
+      const onRoute = Object.keys(data)
         .filter((key) => !offRoute.has(key))
         .reduce((keep, key) => ({ ...keep, [key]: read(data, key) }), {});
+
+      const relevant = omitProtoKeys(onRoute);
+
+      if (relevant !== onRoute) {
+        logger.warn(`Leaving a '__proto__' key of locale '${locale}' out of the snapshot: load data cannot carry it.`);
+      }
 
       // An empty entry would still stamp the locale's freshness on the client,
       // starting its `cache` window on data it never received.
