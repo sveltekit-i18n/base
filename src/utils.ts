@@ -250,6 +250,33 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
   }), target);
 };
 
+const isPlainObject = (value: any): boolean => {
+  if (!value || typeof value !== 'object') return false;
+
+  const proto = Object.getPrototypeOf(value);
+
+  return proto === Object.prototype || proto === null;
+};
+
+// devalue, which SvelteKit serializes load data with, refuses an object with
+// an own '__proto__' key. Branches without one are returned as they are.
+export const omitProtoKeys = (value: any): any => {
+  if (Array.isArray(value)) {
+    const items = value.map(omitProtoKeys);
+
+    return items.some((item, i) => item !== value[i]) ? items : value;
+  }
+
+  if (!isPlainObject(value)) return value;
+
+  const keys = Object.keys(value);
+  const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, omitProtoKeys(value[key])] as const);
+
+  if (entries.length === keys.length && entries.every(([key, item]) => item === value[key])) return value;
+
+  return entries.reduce((acc, [key, item]) => ({ ...acc, [key]: item }), {});
+};
+
 const reportLoaderConflict = (path: string) => {
   logger.warn(`Conflicting translations for '${path}'. Keeping the value of the last loader.`);
 };
