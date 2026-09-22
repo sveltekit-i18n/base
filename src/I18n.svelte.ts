@@ -281,12 +281,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Serializes what this instance holds for the active locale and the fallback
    * locale, narrowed to the current route: a key owned only by loaders that do
    * not match the route is left out. The result is shaped like
-   * `config.translations`, so a client hydrates by handing it back to the
-   * constructor — the bookkeeping derived from it then keeps the matching
-   * loaders from fetching the same data again. Merge it over the
-   * `config.translations` the client already has rather than assigning it: the
-   * payload covers two locales, so assigning it drops whatever the config
-   * declares for the rest.
+   * `config.translations`, so a client hydrates by passing it to
+   * `addTranslations()` — the bookkeeping derived from it then keeps the
+   * matching loaders from fetching the same data again. Apply it to the
+   * instance rather than assigning it to `config.translations`: the payload is
+   * a subset — two locales, and nothing of a key its loaders claim for another
+   * route — so assigning it would drop the rest of the config's own data.
    */
   snapshot = (): Translations.SerializedTranslations => {
     const { fallbackLocale } = this.#config ?? {};

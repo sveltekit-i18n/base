@@ -1340,9 +1340,9 @@ i18n.addTranslations({
 
 Serializes what the instance currently holds for the **active locale** and the
 **`fallbackLocale`**, narrowed to the current route. The result is shaped like
-[`translations`](#translations), so the receiving instance hydrates by handing
-it straight to its constructor — the bookkeeping derived from it keeps the
-matching loaders from fetching the same data again:
+[`translations`](#translations), so the receiving instance hydrates by passing
+it to [`addTranslations()`](#addtranslationstranslations) — the bookkeeping
+derived from it keeps the matching loaders from fetching the same data again:
 
 ```javascript
 // +layout.server.js — one instance per request
@@ -1364,10 +1364,9 @@ import { I18n } from '@sveltekit-i18n/base';
 import { config } from '$lib/translations';
 
 export const load = async ({ data, url }) => {
-  const i18n = new I18n({
-    ...config,
-    translations: { ...config.translations, ...data.translations },
-  });
+  const i18n = new I18n(config);
+
+  i18n.addTranslations(data.translations);
 
   await i18n.loadTranslations(data.locale, url.pathname);
 
@@ -1375,14 +1374,19 @@ export const load = async ({ data, url }) => {
 };
 ```
 
+The payload is **applied on top of** the config rather than assigned to
+`config.translations`: it is a subset of what the server held, so a config that
+carries its own `translations` keeps them either way. Assigning it would drop
+both of the things the list below leaves out.
+
 What the payload leaves out:
 
 - **Other locales** — only the active locale and the fallback are serialized.
-  Merge the payload over `config.translations` rather than assigning it, or a
-  config that declares translations for the other locales loses them.
 - **Other routes** — a key claimed *only* by loaders whose `routes` do not match
   the current route is dropped; the client loads it when it navigates there. A
-  key no loader claims (added through `addTranslations()`) is always kept.
+  key no loader claims (added through `addTranslations()`) is always kept. A key
+  some loader claims is dropped whole, including whatever `config.translations`
+  contributed to it.
 
 The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
 shape — so the receiving instance applies its own `config.preprocess`.
@@ -1506,12 +1510,15 @@ import { config } from '$lib/translations';
 let client;
 
 export const load = async ({ data, url }) => {
-  const i18n = client ?? new I18n({
-    ...config,
-    translations: { ...config.translations, ...data.translations },
-  });
+  let i18n = client;
 
-  if (browser) client = i18n;
+  if (!i18n) {
+    i18n = new I18n(config);
+
+    i18n.addTranslations(data.translations);
+
+    if (browser) client = i18n;
+  }
 
   await i18n.loadTranslations(data.locale, url.pathname);
 
@@ -1525,9 +1532,17 @@ not run a second time; only data the snapshot left out — the route-scoped
 translations of pages the visitor has not opened yet — is fetched. Every later
 client-side navigation reuses the same instance, so its cache survives.
 
-The snapshot covers the active locale and the fallback, so it is merged over
-`config.translations` instead of replacing it — what the config declares for
-the other locales survives the hydration.
+The hand-off is applied to the instance instead of being assigned to
+`config.translations`, so whatever the config declares stays where it is: the
+snapshot covers two locales and drops a key its loaders claim for another route,
+so assigning it would take the rest of the config's static data down with it.
+It is applied once, inside the branch that builds the instance — replaying it
+on a later navigation would mark loaders loaded again after an
+[`invalidate()`](#invalidatelocale).
+
+Leave [`initLocale`](#initlocale) out of a config used this way. It starts its
+load inside the constructor, before the hand-off can be applied, so the loaders
+run regardless — the locale belongs in the `loadTranslations()` call above.
 
 ### 4. Pass it down through context
 
