@@ -1355,7 +1355,10 @@ import { I18n } from '@sveltekit-i18n/base';
 import { config } from '$lib/translations';
 
 export const load = async ({ data, url }) => {
-  const i18n = new I18n({ ...config, translations: data.translations });
+  const i18n = new I18n({
+    ...config,
+    translations: { ...config.translations, ...data.translations },
+  });
 
   await i18n.loadTranslations(data.locale, url.pathname);
 
@@ -1366,6 +1369,8 @@ export const load = async ({ data, url }) => {
 What the payload leaves out:
 
 - **Other locales** — only the active locale and the fallback are serialized.
+  Merge the payload over `config.translations` rather than assigning it, or a
+  config that declares translations for the other locales loses them.
 - **Other routes** — a key claimed *only* by loaders whose `routes` do not match
   the current route is dropped; the client loads it when it navigates there. A
   key no loader claims (added through `addTranslations()`) is always kept.
@@ -1492,7 +1497,10 @@ import { config } from '$lib/translations';
 let client;
 
 export const load = async ({ data, url }) => {
-  const i18n = client ?? new I18n({ ...config, translations: data.translations });
+  const i18n = client ?? new I18n({
+    ...config,
+    translations: { ...config.translations, ...data.translations },
+  });
 
   if (browser) client = i18n;
 
@@ -1507,6 +1515,10 @@ hydration. Both start from the server's snapshot, so the loaders behind it do
 not run a second time; only data the snapshot left out — the route-scoped
 translations of pages the visitor has not opened yet — is fetched. Every later
 client-side navigation reuses the same instance, so its cache survives.
+
+The snapshot covers the active locale and the fallback, so it is merged over
+`config.translations` instead of replacing it — what the config declares for
+the other locales survives the hydration.
 
 ### 4. Pass it down through context
 
