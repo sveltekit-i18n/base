@@ -283,7 +283,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * not match the route is left out. The result is shaped like
    * `config.translations`, so a client hydrates by handing it back to the
    * constructor — the bookkeeping derived from it then keeps the matching
-   * loaders from fetching the same data again.
+   * loaders from fetching the same data again. Merge it over the
+   * `config.translations` the client already has rather than assigning it: the
+   * payload covers two locales, so assigning it drops whatever the config
+   * declares for the rest.
    */
   snapshot = (): Translations.SerializedTranslations => {
     const { fallbackLocale } = this.#config ?? {};
