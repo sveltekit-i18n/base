@@ -73,6 +73,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // asks for must not replace what it displays; a warm load asks for nothing.
   #wanted = new Map<Loader.Resolved, string>();
 
+  // What a hand-off delivered for the loaders with `cache: false`, whose
+  // records keep no trigger that selects them from running them. It serves the
+  // pass it arrived with: until an activating trigger asks for another locale
+  // or route than the hand-off named, or than the first activating trigger
+  // after it where the hand-off named none.
+  #handedOff = new Map<Loader.Resolved, string>();
+
+  #handOffPass: { locale?: Config.Locale; route?: string } = {};
+
   /** When each locale first received data — drives the `cache` expiry. */
   #loadedAt: Translations.LocaleIndexed<number> = Object.create(null);
 
@@ -296,8 +305,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * route: a modal, a panel, an editor. Warm, like `{ activate: false }`: it
    * changes neither the locale nor `loading`, and it leaves `cache` expiry to
    * the next activating trigger. It honours the load records, so calling it
-   * on every interaction fetches once, and what it loads stays loaded across
-   * routes.
+   * on every interaction fetches once — a loader with `cache: false` runs each
+   * time on its routes — and what it loads stays loaded across routes.
    */
   loadNamespace = (namespace: Loader.Key, locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
     if (this.#inert('loadNamespace')) return Promise.resolve();
@@ -335,8 +344,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#addTranslations(translations);
   };
 
-  /** Drops the bookkeeping `invalidate()` names and severs its loaders in flight. */
-  #invalidate(sanitized: Config.Locale | undefined, namespace?: Loader.Key): void {
+  /**
+   * Drops the bookkeeping `invalidate()` names and severs its loaders in
+   * flight. `config.cache` does not cover a loader with `cache: false`, so
+   * expiry leaves it alone.
+   */
+  #invalidate(sanitized: Config.Locale | undefined, namespace?: Loader.Key, { expiry = false } = {}): void {
     const locales = sanitized === undefined ? Object.keys(this.#namespaceRecords) : [sanitized];
 
     locales.forEach((recorded) => {
@@ -349,11 +362,16 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       else delete this.#loadedAt[sanitized];
     }
 
-    const covers = (loader: Loader.Resolved) => (sanitized === undefined || loader.locale === sanitized)
+    const covers = (loader: Loader.Resolved) => !(expiry && loader.cache === false)
+      && (sanitized === undefined || loader.locale === sanitized)
       && (namespace === undefined || loader.namespace === namespace);
 
     this.#loaderRecords.forEach((_, loader) => {
       if (covers(loader)) this.#loaderRecords.delete(loader);
+    });
+
+    this.#handedOff.forEach((_, loader) => {
+      if (covers(loader)) this.#handedOff.delete(loader);
     });
 
     // Applying their pre-invalidation data would resurrect the bookkeeping
@@ -364,9 +382,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * Restores the state `snapshot({ records: true })` captured on another
    * instance: its data, its load records, the active locale and the route.
-   * A loader named by a record does not run again for the same params; data
-   * no record names is displayed but keeps no loader from running. An
-   * envelope without `records` is applied as plain data instead. Nothing
+   * A loader named by a record does not run again for the same params — one
+   * with `cache: false` only for the pass the envelope arrived with; data no
+   * record names is displayed but keeps no loader from running. An envelope
+   * without `records` is applied as plain data instead, which holds a
+   * `cache: false` loader of a namespace it carries back for that pass. Nothing
    * happens for `undefined`, so a load whose server half sent nothing can call
    * it unconditionally.
    */
@@ -380,7 +400,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const { translations = {}, records, locale, route } = envelope;
 
     if (records) this.#hydrateRecords(translations, records);
-    else this.#addSanitized(translations);
+    else this.#hydratePlain(translations);
+
+    this.#handOffPass = { locale, route };
 
     if (route !== undefined) this.#route = route;
 
@@ -396,7 +418,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Serializes what this instance holds for the active locale and the fallback
    * locale. The result is shaped like `config.translations`, so a client
    * hydrates by passing it to `addTranslations()` — the bookkeeping derived
-   * from it then keeps the matching loaders from fetching the same data again.
+   * from it then keeps the matching loaders, but one with `cache: false`, from
+   * fetching the same data again.
    * Apply it to the instance rather than assigning it to `config.translations`:
    * the payload covers two locales, so assigning it would drop the rest of the
    * config's own data.
@@ -605,6 +628,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       (acc, locale) => ({ ...acc, [locale]: this.#preprocess(read(this.#rawTranslations, locale)) }),
       this.#translations,
     );
+
+    this.#stamp(deliveries.filter(({ loader }) => loader.cache !== false).map(({ loader }) => loader.locale));
   }
 
   /**
@@ -615,7 +640,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   #addTranslations(translations?: Translations.SerializedTranslations): void {
     if (!translations) return;
 
-    this.#addSanitized(sanitizeTranslationLocales(translations, this.#sanitize));
+    const sanitized = sanitizeTranslationLocales(translations, this.#sanitize);
+
+    this.#addSanitized(sanitized);
+    this.#stamp(Object.keys(sanitized));
   }
 
   #addSanitized(sanitized: Translations.SerializedTranslations): void {
@@ -632,6 +660,21 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#keepExternal(sanitized);
     this.#mergeTranslations(sanitized);
+  }
+
+  /**
+   * Applies plain hand-off data. A loader with `cache: false` is served by its
+   * namespace for the pass the data arrived with.
+   */
+  #hydratePlain(translations: Translations.SerializedTranslations): void {
+    const { loaders = [] } = this.#config ?? {};
+
+    const served = loaders.filter((loader) => loader.cache === false
+      && Object.keys(read(translations, loader.locale) ?? {}).some((key) => isNamespaceKey(key, loader.namespace)));
+
+    this.#addSanitized(translations);
+    served.forEach((loader) => this.#handedOff.set(loader, ''));
+    this.#stampHandOff(translations);
   }
 
   /**
@@ -662,6 +705,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     deliveries.forEach((delivery) => {
       this.#deliveries.set(delivery.loader, delivery);
       this.#loaderRecords.set(delivery.loader, delivery.signature);
+
+      if (delivery.loader.cache === false) this.#handedOff.set(delivery.loader, delivery.signature);
     });
 
     const external = Object.keys(translations).reduce<Translations.SerializedTranslations>((acc, locale) => {
@@ -674,6 +719,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#keepExternal(external);
     this.#mergeTranslations(translations);
+    this.#stampHandOff(translations);
   }
 
   /** Keeps data held without a loader, to rebuild a namespace from. */
@@ -716,12 +762,35 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       }),
       this.#translations,
     );
+  }
 
-    translationLocales.forEach((locale) => {
-      // Freshness is measured from the locale's FIRST data — later partial
-      // loads (other routes) must not extend the window.
+  /**
+   * Starts the `cache` window of each locale that has none. Freshness is
+   * measured from the locale's FIRST data — later partial loads (other
+   * routes) must not extend the window.
+   */
+  #stamp(locales: Config.Locale[]): void {
+    locales.forEach((locale) => {
       if (read(this.#loadedAt, locale) === undefined) this.#loadedAt[locale] = Date.now();
     });
+  }
+
+  /**
+   * Stamps each locale hand-off data holds something for besides a namespace
+   * only loaders with `cache: false` feed: those start no window.
+   */
+  #stampHandOff(translations: Translations.SerializedTranslations): void {
+    const { loaders = [] } = this.#config ?? {};
+
+    const uncached = (locale: Config.Locale, key: string) => {
+      const feeding = loaders.filter((loader) => loader.locale === locale && isNamespaceKey(key, loader.namespace));
+
+      return feeding.length > 0 && feeding.every((loader) => loader.cache === false);
+    };
+
+    this.#stamp(Object.keys(translations).filter(
+      (locale) => Object.keys(read(translations, locale) ?? {}).some((key) => !uncached(locale, key)),
+    ));
   }
 
   /** Reports a call on a destroyed instance; `true` means "ignore the call". */
@@ -774,7 +843,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       if (loadedAt !== undefined && Date.now() >= loadedAt + cacheValue) {
         logger.debug(`'${locale}' translations expired. Loaders will run again.`);
-        this.#invalidate(locale);
+        this.#invalidate(locale, undefined, { expiry: true });
       }
     });
   }
@@ -863,6 +932,20 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
   }
 
+  /**
+   * Ends the pass a hand-off serves once an activating trigger asks for
+   * another locale or route; the first trigger after a hand-off that named
+   * neither settles them.
+   */
+  #passHandOff(locale: Config.Locale, route: string): void {
+    if (!this.#handedOff.size) return;
+
+    const { locale: passLocale = locale, route: passRoute = route } = this.#handOffPass;
+
+    if (passLocale === locale && passRoute === route) this.#handOffPass = { locale, route };
+    else this.#handedOff.clear();
+  }
+
   /** Records the params the current route asks each matching loader for. */
   #want(matching: LoadRequest[]): void {
     matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
@@ -872,9 +955,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * The matching loaders a load has to run: all but those whose own record
    * holds the params the route yields now. A namespace supplied without a
    * loader stands in for the record of a loader without params that has none.
+   * A loader with `cache: false` runs unless a hand-off serves it: its record
+   * only names what it delivered.
    */
   #unloaded(matching: LoadRequest[]): LoadRequest[] {
     return matching.filter(({ loader, signature }) => {
+      if (loader.cache === false) return this.#handedOff.get(loader) !== signature;
+
       if (this.#loaderRecords.has(loader)) return this.#loaderRecords.get(loader) !== signature;
 
       return signature !== '' || !(read<Loader.Key[]>(this.#namespaceRecords, loader.locale) || []).includes(loader.namespace);
@@ -908,7 +995,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     // Recorded before the in-flight check, so a trigger joining a load, or one
     // served from the records, still decides which params the route shows.
-    if (activate) this.#want(matching);
+    if (activate) {
+      this.#want(matching);
+      this.#passHandOff(locale, route);
+    }
 
     const { loaders = [] } = this.#config ?? {};
 

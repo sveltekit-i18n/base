@@ -2927,6 +2927,339 @@ describe('i18n cache and invalidation', () => {
   });
 });
 
+describe('i18n loaders with `cache: false`', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  type Calls = Record<string, number>;
+
+  const setup = (calls: Calls, source = { version: 1 }) => [
+    { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
+    { namespace: 'about', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { title: 'About' }; } },
+    {
+      namespace: 'live',
+      locale: 'en',
+      cache: false as const,
+      loader: async () => { calls.live = (calls.live ?? 0) + 1; return { title: `v${source.version}` }; },
+    },
+  ];
+
+  it('runs on every trigger that selects it, and its data is applied each time', async () => {
+    const calls: Calls = {};
+    const source = { version: 1 };
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(calls, source) });
+
+    await instance.loadTranslations('en', '/');
+
+    source.version = 2;
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('live');
+
+    expect(calls).toEqual({ common: 1, live: 3 });
+    expect(instance.t('live.title')).toBe('v2');
+  });
+
+  it('joins a load in flight like any other loader', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(calls) });
+
+    const first = instance.loadTranslations('en', '/');
+    const second = instance.loadTranslations('en', '/');
+
+    expect(second).toBe(first);
+
+    await second;
+
+    expect(calls.live).toBe(1);
+  });
+
+  it('starts no `cache` window', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Calls = {};
+      const instance = new i18n({ parser: valueParser, log, cache: 1000, loaders: setup(calls).filter(({ namespace }) => namespace !== 'common') });
+
+      await instance.loadTranslations('en', '/');
+
+      vi.advanceTimersByTime(900);
+      await instance.setRoute('/about');
+
+      // The window starts with the first data a caching loader delivered.
+      vi.advanceTimersByTime(600);
+      await instance.setRoute('/about');
+
+      expect(calls).toEqual({ live: 3, about: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['with records', (server: I18n) => server.snapshot({ records: true })],
+    ['without records', (server: I18n) => ({ translations: server.snapshot(), locale: 'en', route: '/' })],
+  ])('starts no `cache` window from a hand-off %s either', async (_, envelopeOf) => {
+    vi.useFakeTimers();
+    try {
+      const loaders = (calls: Calls) => setup(calls).filter(({ namespace }) => namespace !== 'common');
+      const server = new i18n({ parser: valueParser, log, loaders: loaders({}) });
+
+      await server.loadTranslations('en', '/');
+
+      const calls: Calls = {};
+      const client = new i18n({ parser: valueParser, log, cache: 1000, loaders: loaders(calls) });
+
+      client.hydrate(envelopeOf(server));
+      await client.loadTranslations('en', '/');
+
+      vi.advanceTimersByTime(900);
+      await client.setRoute('/about');
+
+      vi.advanceTimersByTime(600);
+      await client.setRoute('/about');
+
+      expect(calls).toEqual({ live: 2, about: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the `cache` window to a caching loader it shares a namespace with after a hand-off', async () => {
+    vi.useFakeTimers();
+    try {
+      const loaders = (calls: Calls) => [
+        { namespace: 'page', locale: 'en', cache: false as const, loader: async () => { calls.live = (calls.live ?? 0) + 1; return { live: 'L' }; } },
+        { namespace: 'page', locale: 'en', routes: ['/'], loader: async () => { calls.cached = (calls.cached ?? 0) + 1; return { cached: 'C' }; } },
+      ];
+      const server = new i18n({ parser: valueParser, log, loaders: loaders({}) });
+
+      await server.loadTranslations('en', '/');
+
+      const calls: Calls = {};
+      const client = new i18n({ parser: valueParser, log, cache: 1000, loaders: loaders(calls) });
+
+      client.hydrate(server.snapshot({ records: true }));
+      await client.loadTranslations('en', '/');
+
+      expect(calls).toEqual({});
+
+      vi.advanceTimersByTime(1000);
+      await client.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ cached: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lands what it delivers while the `cache` window of its locale elapses', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Calls = {};
+      const resolvers: Array<(value: any) => void> = [];
+      const [common] = setup(calls);
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        cache: 1000,
+        loaders: [
+          common,
+          { namespace: 'editor', locale: 'en', cache: false as const, routes: ['/editor'], loader: () => new Promise<any>((resolve) => { resolvers.push(resolve); }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/');
+      vi.advanceTimersByTime(1500);
+
+      const warm = instance.loadNamespace('editor');
+      await instance.setRoute('/');
+
+      resolvers[0]?.({ title: 'Editor' });
+      await warm;
+
+      expect(calls).toEqual({ common: 2 });
+      expect(instance.t('editor.title')).toBe('Editor');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is severed by `invalidate()` like any other loader', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'live', locale: 'en', cache: false as const, loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+      ],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    instance.invalidate('en', 'live');
+
+    resolvers[0]?.({ title: 'stale' });
+    await vi.waitFor(() => expect(calls).toBe(2));
+
+    expect(instance.rawTranslations).toEqual({});
+
+    resolvers[1]?.({ title: 'fresh' });
+    await pending;
+
+    expect(instance.t('live.title')).toBe('fresh');
+  });
+
+  describe('with route params', () => {
+    const article = (received: Loader.Params[]) => ({
+      namespace: 'article',
+      locale: 'en',
+      cache: false as const,
+      routes: [/^\/article\/(?<articleId>\d+)/],
+      loader: async ({ params }: Loader.Props) => {
+        received.push(params);
+
+        return { title: `Article ${params.articleId}` };
+      },
+    });
+
+    it('serves what it delivered last off its routes', async () => {
+      const received: Loader.Params[] = [];
+      const instance = new i18n({ parser: valueParser, log, loaders: [article(received)] });
+
+      await instance.loadTranslations('en', '/article/1');
+      await instance.setRoute('/');
+      await instance.loadNamespace('article');
+      await instance.loadNamespace('article');
+
+      expect(received).toEqual([{ articleId: '1' }]);
+      expect(instance.t('article.title')).toBe('Article 1');
+    });
+
+    it('is handed over with the params it delivered for', async () => {
+      const server = new i18n({ parser: valueParser, log, loaders: [article([])] });
+
+      await server.loadTranslations('en', '/article/1');
+
+      const envelope = server.snapshot({ records: true });
+
+      expect(envelope.translations).toEqual({ en: { article: { title: 'Article 1' } } });
+      expect(envelope.records).toHaveLength(1);
+
+      const received: Loader.Params[] = [];
+      const client = new i18n({ parser: valueParser, log, loaders: [article(received)] });
+
+      client.hydrate(envelope);
+      await client.loadTranslations('en', '/article/1');
+      await client.setRoute('/');
+      await client.loadNamespace('article');
+
+      expect(received).toEqual([]);
+
+      await client.setRoute('/article/2');
+
+      expect(received).toEqual([{ articleId: '2' }]);
+      expect(client.t('article.title')).toBe('Article 2');
+    });
+  });
+
+  it('is served by a hand-off with records for the pass it arrived with', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.records).toHaveLength(2);
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: setup(calls) });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({});
+    expect(client.t('live.title')).toBe('v1');
+
+    await client.setRoute('/about');
+    await client.setRoute('/');
+
+    expect(calls).toEqual({ about: 1, live: 2 });
+  });
+
+  it('is served by a plain hand-off for the pass the first trigger after it settles', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: setup(calls) });
+
+    client.hydrate({ translations: server.snapshot(), locale: 'en' });
+    await client.loadTranslations('en', '/');
+    await client.setRoute('/');
+
+    expect(calls).toEqual({});
+
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({ about: 1, live: 1 });
+  });
+
+  it('keeps its hand-off through warm triggers, until an activating one leaves the pass the envelope named', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: setup(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/about', { activate: false });
+
+    expect(calls).toEqual({ about: 1 });
+
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({ about: 1, live: 1 });
+  });
+
+  it('hands over no record of what it delivered under a previous config', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+    await server.loadConfig({ parser: valueParser, log, loaders: setup({}) });
+
+    expect(server.snapshot({ records: true }).records).toEqual([]);
+  });
+
+  it('keeps its hand-off when the `cache` window of its locale elapses', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, cache: 0, loaders: setup(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({ common: 1 });
+  });
+
+  it('runs within the pass once `invalidate()` dropped the hand-off', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: setup(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    client.invalidate('en', 'live');
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({ live: 1 });
+  });
+});
+
 describe('i18n snapshot', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 
@@ -4184,6 +4517,24 @@ describe('utils', () => {
 
     expect(deprecations).toHaveLength(1);
     expect(deprecations[0]?.message).toContain('nav');
+  });
+  it('`resolveLoaders` keeps `cache: false`, and reports and drops any other `cache`', () => {
+    const { captured, restore } = captureLogs();
+    const loader = async () => ({});
+
+    try {
+      const [live, timed] = resolveLoaders([
+        { namespace: 'live', locale: 'en', loader, cache: false },
+        { namespace: 'timed', locale: 'en', loader, cache: 60_000 as any },
+      ]);
+
+      expect(live?.cache).toBe(false);
+      expect(Object.hasOwn(timed ?? {}, 'cache')).toBe(false);
+    } finally {
+      restore();
+    }
+
+    expect(captured.error.map(({ message }) => message)).toEqual([expect.stringContaining("'timed'")]);
   });
   it('`resolveLoaders` expands a descriptor into one loader per locale and namespace pair', () => {
     const loader = async () => ({});

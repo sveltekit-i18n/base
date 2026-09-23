@@ -133,17 +133,25 @@ translation state, loading, caching, route matching, and preprocessing — but
   the instance was destroyed, another locale was requested, the config was
   replaced or a later trigger wants other params, and a warm load never
   resumes. Neither expiry nor `invalidate` ever removes displayed translations
-  or starts a load by itself. Don't break load-once semantics.
+  or starts a load by itself. Don't break load-once semantics. The one opt-out
+  is a loader with `cache: false`, whose source caches: it runs on every
+  trigger that selects it, writes no `#loadedAt` stamp and is outside expiry.
+  Its record only names what it delivered — for the snapshot, and for
+  `loadNamespace` off its routes — and keeps no trigger that selects it from
+  running it. Only a hand-off suppresses it, through `#handedOff`, for the
+  pass the envelope arrived with — until an activating trigger asks for
+  another locale or route, or `invalidate()` covers it.
 - **The SSR hand-off is a pair.** `snapshot({ records: true })` serializes the
   data, the records of the loaders that delivered it (their `id` and params
   signature — never a reference), the active locale and the route;
   `hydrate()` resolves each id to a loader of its own config and stores the
-  record under that reference, so the records keep one kind of key. A hydrated
-  loader's namespace becomes its delivery, so new params replace it; data no
-  record names is displayed but records no namespace, so whatever the
-  envelope does not cover loads again instead of going missing. An envelope
-  without `records` is plain data and records namespaces, as `addTranslations`
-  does.
+  record under that reference, so the records keep one kind of key; the
+  record of a `cache: false` loader also hands it off. A hydrated loader's
+  namespace becomes its delivery, so new params replace it; data no record
+  names is displayed but records no namespace, so whatever the envelope does
+  not cover loads again instead of going missing. An envelope without
+  `records` is plain data and records namespaces, as `addTranslations` does,
+  and hands off the `cache: false` loaders of the namespaces it carries.
 - **A loader receives plain data.** `Loader.Props` holds strings and plain
   objects of strings: the locale, the route, and whatever else a loader is
   handed later. Never an `event`, a `fetch`, or any `@sveltejs/kit` type. That
