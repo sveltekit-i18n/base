@@ -340,7 +340,18 @@ export namespace Loader {
    * the module names, with its namespace settled under one name and its locale
    * sanitized.
    */
-  export type Resolved = LoaderModuleBody & { locale: Locale; namespace: Key };
+  export type Resolved = LoaderModuleBody & {
+    locale: Locale;
+    namespace: Key;
+    /**
+     * Names this loader outside the process that resolved it, derived by base
+     * from the loader's locale, namespace and routes – never declared by a
+     * loader. Equal for equal content, across processes. `null` when another
+     * loader resolves to the same content (a `RouteMatcher` contributes its
+     * form, not its behavior), so the name would not tell the two apart.
+     */
+    id: string | null;
+  };
 
   /**
    * Loads translation data. Receives the load context (`locale`, `namespace`, `route`) –

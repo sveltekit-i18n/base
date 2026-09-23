@@ -1731,7 +1731,7 @@ build step, a test:
 import { resolveLoaders } from '@sveltekit-i18n/base/utils';
 
 resolveLoaders(config.loaders, config.sanitizeLocales);
-// [{ locale: 'en', namespace: 'common', loader, routes }, ...]
+// [{ locale: 'en', namespace: 'common', loader, routes, id: '["en","common"]' }, ...]
 ```
 
 Every result has a single `locale` and a single `namespace`:
@@ -1745,6 +1745,14 @@ Every result has a single `locale` and a single `namespace`:
 
 A descriptor that cannot be read, or that names no locale or no namespace, is
 dropped and reported through the [logger](#loglevel).
+
+Each result also carries an `id`: a string base derives from the loader's
+locale, namespace and routes, used to name the loader outside the process that
+resolved it. A loader never declares one. The same content yields the same id
+on every run and in every process, and a string route and a pattern with the
+same text yield different ids. How a route is **spelled** decides the id, not
+what it matches, and a custom matcher contributes only that it is one. Loaders
+whose content would give them the same id get `null` instead.
 
 ---
 
