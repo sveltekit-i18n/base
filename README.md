@@ -202,6 +202,19 @@ loaders: [
 ]
 ```
 
+A named capture group in a `RegExp` route is a load parameter: its match reaches the loader as `params`, and the loader runs again when it changes, its new data replacing the old:
+
+```javascript
+{
+  locale: 'en',
+  namespace: 'article',
+  routes: [/^\/article\/(?<articleId>[^/]+)/],
+  loader: async ({ locale, params }) => (await fetch(`/api/articles/${params.articleId}/i18n/${locale}`)).json(),
+}
+```
+
+See [route params](./docs/README.md#route-params) for the rules.
+
 Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
 
 ### `translations`
@@ -272,7 +285,7 @@ Hand-write it for a small set of messages, or point the slot at a generated arti
 
 ### `cache`
 
-Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — loaders run once per locale and namespace (a loader's `routes` only decide whether a load trigger considers it, not how often it runs).
+Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — each loader runs once per locale and [route params](./docs/README.md#route-params) (a loader's `routes` decide whether a load trigger considers it, and the params their named groups capture decide when it runs again).
 
 Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 

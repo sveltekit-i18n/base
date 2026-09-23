@@ -386,7 +386,7 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
 
 const asList = <V>(value: V | readonly V[]): readonly V[] => (Array.isArray(value) ? value : [value as V]);
 
-const unique = <V>(values: readonly V[]): V[] => Array.from(new Set(values));
+export const unique = <V>(values: readonly V[]): V[] => Array.from(new Set(values));
 
 // Tagged by form, so a string route and a pattern with the same text differ. A
 // matcher's behavior cannot be read — only that it is one.
@@ -536,37 +536,84 @@ export const serialize = (input: Array<Loader.Resolved & { data: any }>) => {
   }, {} as Translations.SerializedTranslations);
 };
 
-export const fetchTranslations = async (loaders: Loader.Resolved[], route: string) => {
-  const response = await Promise.all(loaders.map(async ({ loader, ...rest }) => {
-    let data;
+/** A loader selected for a load, with the params its route yielded. */
+export type LoadRequest = { loader: Loader.Resolved; params: Loader.Params; signature: string };
+
+/** What a loader delivered. A loader that threw has no entry; one that returned nothing delivered no keys. */
+export type Delivery = { loader: Loader.Resolved; signature: string; data: Translations.Input };
+
+// Every loader is called before the first one is awaited, and one that throws
+// costs only its own data. Only a throw is retried: an empty answer is an
+// answer, and it still replaces what the loader delivered for other params.
+export const fetchTranslations = async (requests: LoadRequest[], route: string): Promise<Delivery[]> => {
+  const responses = await Promise.all(requests.map(async ({ loader: resolved, params, signature }) => {
+    const { loader, locale, namespace } = resolved;
+
     try {
-      data = await loader({ locale: rest.locale, namespace: rest.namespace, route });
+      const data = await loader({ locale, namespace, route, params });
+
+      return [{ loader: resolved, signature, data: data || {} }];
     } catch (error) {
-      logError(`Failed to load translation. Verify your '${rest.locale}' > '${rest.namespace}' Loader.`, error);
+      logError(`Failed to load translation. Verify your '${locale}' > '${namespace}' Loader.`, error);
+
+      return [];
     }
-    return { loader, ...rest, data };
   }));
 
-  return serialize(response);
+  return responses.flat();
 };
 
-// `test` advances `lastIndex` on a `g`/`y` pattern, so a route object reused
+// `exec` advances `lastIndex` on a `g`/`y` pattern, so a route object reused
 // across navigations would match only every other time — and writing to the
 // consumer's own pattern is not ours to do, least of all when it is frozen.
-const withoutMatchState = (input: Loader.RouteMatcher) => (
-  input instanceof RegExp && (input.global || input.sticky)
+const withoutMatchState = (input: RegExp) => (
+  input.global || input.sticky
     ? new RegExp(input.source, input.flags)
     : input
 );
 
-export const testRoute = (route: string) => (input: Loader.Route) => {
+// A match yields the named groups of a pattern, copied onto a plain object
+// (a match's `groups` has a null prototype) without the groups that did not
+// take part. A string route and a matcher yield none. `undefined` is no match.
+export const matchRoute = (route: string) => (input: Loader.Route): Loader.Params | undefined => {
   try {
-    if (typeof input === 'string') return input === route;
+    if (typeof input === 'string') return input === route ? {} : undefined;
 
-    return withoutMatchState(input).test(route);
+    if (input instanceof RegExp) {
+      const match = withoutMatchState(input).exec(route);
+
+      if (!match) return undefined;
+
+      return Object.entries(match.groups ?? {}).reduce<Loader.Params>(
+        (acc, [name, value]: [string, string | undefined]) => (value === undefined ? acc : { ...acc, [name]: value }),
+        {},
+      );
+    }
+
+    return input.test(route) ? {} : undefined;
   } catch (error) {
     logError('Invalid route config!', error);
   }
 
-  return false;
+  return undefined;
+};
+
+export const testRoute = (route: string) => (input: Loader.Route): boolean => matchRoute(route)(input) !== undefined;
+
+/** The params a loader loads with on `route` – its first matching route's – or `undefined` when none matches. */
+export const routeParams = (routes: readonly Loader.Route[] | undefined, route: string): Loader.Params | undefined => {
+  if (!routes) return {};
+
+  const match = matchRoute(route);
+
+  return routes.reduce<Loader.Params | undefined>((found, input) => found ?? match(input), undefined);
+};
+
+// Keyed on the params alone, not the route: two routes yielding the same params
+// describe the same data. Stable in key order, and '' for none, so a loader
+// without params keys the way a namespace record does.
+export const paramsSignature = (params: Loader.Params): string => {
+  const names = Object.keys(params).sort();
+
+  return names.length ? JSON.stringify(names.map((name) => [name, read(params, name)])) : '';
 };

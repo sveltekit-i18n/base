@@ -90,7 +90,7 @@ export namespace Config {
 
   export type T<P extends Parser.Params = Parser.Params, O = Parser.Output, S = any> = {
     /**
-     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again once the `config.cache` window elapses, or after `invalidate()` is called.
+     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again when the params its `routes` capture change, once the `config.cache` window elapses, or after `invalidate()` is called.
      */
     loaders?: readonly Loader.LoaderModule[];
     /**
@@ -274,6 +274,9 @@ export namespace Loader {
 
   export type Route = string | RegExp | RouteMatcher;
 
+  /** The named capture groups a route pattern matched, by name. */
+  export type Params = Record<string, string>;
+
   /** The load context every loader is called with. */
   export type Props = {
     /**
@@ -289,6 +292,12 @@ export namespace Loader {
      * Route the load was triggered for.
      */
     route: string;
+    /**
+     * The named capture groups of the first route pattern in `routes` that
+     * matched `route` – `{}` for a loader without `routes`, for a string route
+     * and for a `RouteMatcher`. A loader runs again when they change.
+     */
+    params: Params;
   };
 
   type LoaderModuleBody = {
@@ -297,9 +306,9 @@ export namespace Loader {
     */
     loader: T;
     /**
-    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once per set of params). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
     *
-    * Named capture groups in a route `RegExp` are reserved: today they match exactly as any other group does, but a future minor may read their matches as load parameters and re-run the loader when those change. Use a non-capturing group (`(?:...)`) where you only need grouping.
+    * Named capture groups in a route `RegExp` are load parameters: their matches reach the loader as `Props.params`, and the loader runs again when they change, its data replacing what it delivered for the previous ones. Use a non-capturing group (`(?:...)`) where you only need grouping.
     */
     routes?: readonly Route[];
   };
@@ -354,7 +363,7 @@ export namespace Loader {
   };
 
   /**
-   * Loads translation data. Receives the load context (`locale`, `namespace`, `route`) –
+   * Loads translation data. Receives the load context (`locale`, `namespace`, `route`, `params`) –
    * loaders that don't need it can simply take no parameters.
    */
   export type T = (props: Props) => Promise<Translations.Input>;
