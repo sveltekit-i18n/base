@@ -2619,6 +2619,43 @@ describe('utils', () => {
 
     expect(expanded).toEqual(written);
   });
+  it('`resolveLoaders` names each loader by its content, equally across runs', () => {
+    const loader = async () => ({});
+    const config = () => [
+      { locale: ['en', 'cs'], namespace: 'common', loader },
+      { locale: 'en', namespace: 'home', routes: ['/', /^\/home/i], loader },
+    ];
+
+    const first = resolveLoaders(config()).map(({ id }) => id);
+
+    expect(first).toEqual(resolveLoaders(config()).map(({ id }) => id));
+    expect(first).toEqual(['["en","common"]', '["cs","common"]', JSON.stringify(['en', 'home', ['s:/', 'r:/^\\/home/i']])]);
+  });
+  it('`resolveLoaders` tells a string route from a pattern with the same text', () => {
+    const loader = async () => ({});
+
+    const [text, pattern] = resolveLoaders([
+      { locale: 'en', namespace: 'home', routes: ['/home'], loader },
+      { locale: 'en', namespace: 'home', routes: [/\/home/], loader },
+    ]);
+
+    expect(text?.id).not.toBeNull();
+    expect(pattern?.id).not.toBeNull();
+    expect(text?.id).not.toBe(pattern?.id);
+  });
+  it('`resolveLoaders` leaves loaders it cannot tell apart without an id', () => {
+    const loader = async () => ({});
+
+    const [first, second, other] = resolveLoaders([
+      { locale: 'en', namespace: 'home', routes: [{ test: (route: string) => route === '/' }], loader },
+      { locale: 'en', namespace: 'home', routes: [{ test: (route: string) => route === '/about' }], loader },
+      { locale: 'en', namespace: 'nav', routes: [{ test: () => true }], loader },
+    ]);
+
+    expect(first?.id).toBeNull();
+    expect(second?.id).toBeNull();
+    expect(other?.id).toBe('["en","nav",["m"]]');
+  });
   it('`resolveLoaders` sanitizes each locale, as `sanitizeLocales` asks', () => {
     const loader = async () => ({});
     const descriptor = { locale: ['en-us', 'CS'], namespace: 'common', loader };

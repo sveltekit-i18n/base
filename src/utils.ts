@@ -388,20 +388,59 @@ const asList = <V>(value: V | readonly V[]): readonly V[] => (Array.isArray(valu
 
 const unique = <V>(values: readonly V[]): V[] => Array.from(new Set(values));
 
+// Tagged by form, so a string route and a pattern with the same text differ. A
+// matcher's behavior cannot be read — only that it is one.
+const describeRoute = (route: Loader.Route): string => {
+  if (typeof route === 'string') return `s:${route}`;
+
+  if (route instanceof RegExp) return `r:${String(route)}`;
+
+  return 'm';
+};
+
+// The content itself rather than a hash of it: equality stays exact, and the
+// string repeats what a serialized payload already carries, so it compresses
+// with it.
+const loaderId = ({ locale, namespace, routes }: Omit<Loader.Resolved, 'id' | 'loader'>): string => JSON.stringify(
+  routes ? [locale, namespace, routes.map(describeRoute)] : [locale, namespace],
+);
+
+// A name shared by two loaders would hand one's records to the other, so
+// neither keeps it.
+const withIds = (loaders: Array<Omit<Loader.Resolved, 'id'>>): Loader.Resolved[] => {
+  const ids = loaders.map((loader) => {
+    try {
+      return loaderId(loader);
+    } catch (error) {
+      logError('Cannot derive an id for a loader.', error);
+
+      return null;
+    }
+  });
+
+  const counts = ids.reduce((acc, id) => acc.set(id, (acc.get(id) ?? 0) + 1), new Map<string | null, number>());
+
+  return loaders.map((loader, index) => {
+    const id = ids[index] ?? null;
+
+    return { ...loader, id: counts.get(id) === 1 ? id : null };
+  });
+};
+
 // Loader properties are consumer code — an accessor may throw. Materialized
 // once at the config boundary, so a single unreadable loader costs only itself
 // instead of taking down every locale-keyed read downstream. Everything a
 // descriptor may spell more than one way is settled here, so nothing
 // downstream knows there were several: the two names of the namespace, and a
 // list of locales or namespaces, which expands into one loader per pair with
-// its locale sanitized.
+// its locale sanitized. Each loader is named by its content here too.
 export const resolveLoaders = (
   input: readonly Loader.LoaderModule[] = [],
   sanitizeLocales: Config.SanitizeLocales = true,
 ): Loader.Resolved[] => {
   const sanitize = sanitizerFactory(sanitizeLocales);
 
-  return input.reduce<Loader.Resolved[]>((acc, descriptor) => {
+  return withIds(input.reduce<Array<Omit<Loader.Resolved, 'id'>>>((acc, descriptor) => {
     try {
       const { namespace, key, locale, loader, routes } = descriptor;
 
@@ -425,7 +464,7 @@ export const resolveLoaders = (
 
       return acc;
     }
-  }, []);
+  }, []));
 };
 
 const isMergeable = (value: any): boolean => !!value && typeof value === 'object' && !Array.isArray(value);
