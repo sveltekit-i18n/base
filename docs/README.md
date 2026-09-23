@@ -75,9 +75,13 @@ Each loader object can have:
 
 ##### `locale` (required)
 
-**Type:** `string`
+**Type:** `string | readonly string[]`
 
-The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`).
+The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`), or a
+list of them. A loader naming several locales is called once per locale, with
+the one it is loading in its `locale` prop — see
+[Several locales and namespaces](#several-locales-and-namespaces). Every listed
+locale is sanitized like a single one and appears in [`locales`](#locales).
 
 **Example:**
 
@@ -90,9 +94,11 @@ The locale identifier this loader is for (e.g., `'en'`, `'cs'`, `'de-DE'`).
 
 ##### `namespace` (required)
 
-**Type:** `string`
+**Type:** `string | readonly string[]`
 
-Translation namespace identifier. This acts as a prefix for translation keys.
+Translation namespace identifier. This acts as a prefix for translation keys. A
+list names several namespaces: the loader is then called once per namespace,
+with the one it is loading in its `namespace` prop.
 
 **Rules:**
 - Cannot contain dots (`.`)
@@ -110,8 +116,9 @@ Translation namespace identifier. This acts as a prefix for translation keys.
 
 > **`key` is the deprecated spelling of this property.** A loader may still name
 > its namespace `key` — it is honored exactly as `namespace` is, and reported
-> once through the [logger](#loglevel) at `warn`. Naming both is a type error.
-> The alias is scheduled for removal in the next major.
+> once through the [logger](#loglevel) at `warn`. Naming both is a type error,
+> and `key` takes a single namespace only. The alias is scheduled for removal in
+> the next major.
 
 **⚠️ Common Pitfall:** Using dots in the `namespace` will cause lookup issues (a
 config-time `logger.error` reports such namespaces, but the loader still runs):
@@ -173,12 +180,12 @@ loaders: [
 
 ##### `loader` (required)
 
-**Type:** `(props: { locale: string; route: string }) => Promise<Record<any, any>>`
+**Type:** `(props: { locale: string; namespace: string; route: string }) => Promise<Record<any, any>>`
 
 Async function that returns translation data. It receives the load context —
-the sanitized `locale` this run fetches translations for and the `route` the
-load was triggered for. Loaders that don't need the context can simply take no
-parameters.
+the sanitized `locale` and the `namespace` this run fetches translations for,
+and the `route` the load was triggered for. Loaders that don't need the context
+can simply take no parameters.
 
 **Loading from local files:**
 
@@ -350,32 +357,63 @@ is not re-evaluated on later loads. A descriptor that throws while being read
 is reported through the [logger](#loglevel) and dropped — the remaining loaders
 keep working, and [`locales`](#locales) lists the ones that resolved.
 
+#### Several locales and namespaces
+
+A descriptor may list several locales, several namespaces, or both. It stands
+for one loader per locale and namespace pair: every pair shares the
+descriptor's `loader` and `routes`, and the loader is called once per pair with
+that pair's `locale` and `namespace` in its props. A loader that computes its
+source from the props therefore needs one descriptor per set of `routes`,
+instead of one per locale and namespace — this is the recommended way to write
+a config:
+
+```javascript
+loaders: [
+  {
+    locale: ['en', 'cs'],
+    namespace: ['common', 'nav', 'footer'],
+    loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
+  },
+  {
+    locale: ['en', 'cs'],
+    namespace: 'home',
+    routes: ['/'],
+    loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
+  },
+]
+```
+
+Written out by hand, the config above is eight descriptors. Both spellings
+behave the same. Every call still returns one namespace's table, and all pairs
+that match a load are called before the first one is awaited. A pair named twice
+in one descriptor counts once. A descriptor whose list is empty stands for no
+loader, and is reported through the [logger](#loglevel) at `warn`.
+
+Code that reads `config.loaders` from outside the instance sees the lists as
+authored. [`resolveLoaders`](#utilities) from `@sveltekit-i18n/base/utils` turns
+them into the single-valued loaders the instance itself works with.
+
 #### Complete Loaders Example
 
 ```javascript
 const config = {
   parser: parser({ onReport: null }),
   loaders: [
-    // Common translations (all pages)
+    // Common translations (all pages), one call per locale and namespace
     {
-      locale: 'en',
-      namespace: 'common',
-      loader: async () => (await import('./en/common.json')).default,
+      locale: ['en', 'cs'],
+      namespace: ['common', 'nav'],
+      loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
     },
-    {
-      locale: 'cs',
-      namespace: 'common',
-      loader: async () => (await import('./cs/common.json')).default,
-    },
-    
+
     // Homepage only
     {
-      locale: 'en',
+      locale: ['en', 'cs'],
       namespace: 'home',
       routes: ['/'],
-      loader: async () => (await import('./en/home.json')).default,
+      loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
     },
-    
+
     // All product pages
     {
       locale: 'en',
@@ -1618,15 +1656,16 @@ owner goes away.
 
 ## Utilities
 
-Three pure helpers are published separately: two the instance uses internally,
-for the cases where consumer code has to match the library's own behavior, and
-one the instance never calls, for deciding which locale to ask it for:
+Four pure helpers are published separately: three the instance uses
+internally, for the cases where consumer code has to match the library's own
+behavior, and one the instance never calls, for deciding which locale to ask it
+for:
 
 ```javascript
-import { matchLocale, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
-The rest of the internals stays private – the subpath exports these three, plus
+The rest of the internals stays private – the subpath exports these four, plus
 the `DotNotation` type they are described with.
 
 ### `toDotNotation(input, preserveArrays?)`
@@ -1677,6 +1716,35 @@ A locale `Intl` does not recognize is lowercased and reported through the
 This is the DEFAULT normalization only: an instance configured with
 [`sanitizeLocales`](#sanitizelocales) keys its locales its own way, so a value
 compared against [`locale`](#locale) has to go through that same transform.
+
+---
+
+### `resolveLoaders(loaders, sanitizeLocales?)`
+
+**Type:** `(loaders?: readonly Loader.LoaderModule[], sanitizeLocales?: Config.SanitizeLocales) => Loader.Resolved[]`
+
+Normalizes `config.loaders` the way the instance does when a config is applied,
+for code that reads a config from outside the instance – a type generator, a
+build step, a test:
+
+```javascript
+import { resolveLoaders } from '@sveltekit-i18n/base/utils';
+
+resolveLoaders(config.loaders, config.sanitizeLocales);
+// [{ locale: 'en', namespace: 'common', loader, routes }, ...]
+```
+
+Every result has a single `locale` and a single `namespace`:
+
+- A descriptor listing several locales or namespaces expands into one loader
+  per pair (see [Several locales and namespaces](#several-locales-and-namespaces)).
+- The deprecated `key` is read as the namespace.
+- Each locale goes through [`sanitizeLocales`](#sanitizelocales). The second
+  argument takes the config option's value, and defaults to `true` as the
+  option does.
+
+A descriptor that cannot be read, or that names no locale or no namespace, is
+dropped and reported through the [logger](#loglevel).
 
 ---
 

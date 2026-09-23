@@ -57,10 +57,11 @@ describe('published artifact', () => {
     // specifier is a variable so that TypeScript leaves the self-reference to
     // Node instead of demanding a `rootDir`.
     const specifier = '@sveltekit-i18n/base/utils';
-    const { matchLocale, sanitizeLocales, toDotNotation } = await import(specifier);
+    const { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } = await import(specifier);
 
     expect(toDotNotation({ user: { name: 'Name' } })).toEqual({ 'user.name': 'Name' });
     expect(sanitizeLocales('en-us', null)).toEqual(['en-US']);
     expect(matchLocale('en-GB,cs;q=0.8', ['cs', 'en'])).toBe('en');
+    expect(resolveLoaders([{ locale: ['en-us', 'cs'], namespace: 'common', loader: async () => ({}) }]).map(({ locale }: { locale: string }) => locale)).toEqual(['en-US', 'cs']);
   });
 });

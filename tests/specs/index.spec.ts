@@ -276,7 +276,7 @@ describe('i18n instance', () => {
   });
   it('includes both `translations` when using `fallbackLocale`', async () => {
     const instance = new i18n();
-    const fallbackLocale = loaders.find(({ locale }) => locale.toLowerCase() !== initLocale.toLowerCase())?.locale;
+    const fallbackLocale = resolved.find(({ locale }) => locale.toLowerCase() !== initLocale.toLowerCase())?.locale;
 
     await instance.loadConfig({ ...CONFIG, fallbackLocale });
 
@@ -289,7 +289,7 @@ describe('i18n instance', () => {
     });
   });
   it('`fallbackLocale` is used instead of an unknown locale', async () => {
-    const fallbackLocale = loaders.find(({ locale }) => locale.toLowerCase() !== initLocale.toLowerCase())?.locale;
+    const fallbackLocale = resolved.find(({ locale }) => locale.toLowerCase() !== initLocale.toLowerCase())?.locale;
 
     const instance = new i18n({ loaders, parser, fallbackLocale });
 
@@ -597,11 +597,11 @@ describe('i18n instance', () => {
 
     await instance.loadTranslations('en', '/path');
 
-    expect(received).toEqual([{ locale: 'en', route: '/path' }]);
+    expect(received).toEqual([{ locale: 'en', namespace: 'common', route: '/path' }]);
   });
   it('a fallback-locale loader receives its own locale, not the requested one', async () => {
     const received: unknown[] = [];
-    const push = async (props: { locale: string; route: string }) => { received.push(props); return { greeting: 'Hello' }; };
+    const push = async (props: Loader.Props) => { received.push(props); return { greeting: 'Hello' }; };
     const instance = new i18n({
       parser,
       log,
@@ -615,10 +615,61 @@ describe('i18n instance', () => {
     await instance.loadTranslations('de', '/path');
 
     expect(received).toEqual(expect.arrayContaining([
-      { locale: 'de', route: '/path' },
-      { locale: 'en', route: '/path' },
+      { locale: 'de', namespace: 'common', route: '/path' },
+      { locale: 'en', namespace: 'common', route: '/path' },
     ]));
     expect(received).toHaveLength(2);
+  });
+  it('sanitizes every locale once, so a `sanitizeLocales` that is not idempotent still matches', async () => {
+    const instance = new i18n({
+      parser,
+      log,
+      sanitizeLocales: (locale) => `${locale}-x`,
+      initLocale: 'de',
+      fallbackLocale: 'en',
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'common', locale: 'de', loader: async () => ({ greeting: 'Hallo' }) },
+      ],
+    });
+
+    await instance.setRoute('/');
+    await instance.loadTranslations('de');
+
+    expect(instance.locale).toBe('de-x');
+    expect(instance.translations).toEqual({
+      'de-x': { 'common.greeting': 'Hallo' },
+      'en-x': { 'common.greeting': 'Hello' },
+    });
+    expect(instance.locales).toEqual(['en-x', 'de-x']);
+    expect(Object.keys(instance.snapshot()).sort()).toEqual(['de-x', 'en-x']);
+  });
+  it('calls a loader naming several locales and namespaces once per pair', async () => {
+    const received: Loader.Props[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      fallbackLocale: 'en',
+      loaders: [
+        {
+          locale: ['EN', 'de'],
+          namespace: ['common', 'nav'],
+          loader: async (props) => { received.push(props); return { title: `${props.locale}:${props.namespace}` }; },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('de', '/path');
+
+    expect(received).toHaveLength(4);
+    expect(received).toEqual(expect.arrayContaining([
+      { locale: 'en', namespace: 'common', route: '/path' },
+      { locale: 'en', namespace: 'nav', route: '/path' },
+      { locale: 'de', namespace: 'common', route: '/path' },
+      { locale: 'de', namespace: 'nav', route: '/path' },
+    ]));
+    expect(instance.translations.de).toEqual({ 'common.title': 'de:common', 'nav.title': 'de:nav' });
+    expect(instance.locales).toEqual(['en', 'de']);
   });
   it('forwards a thrown loader value to the configured logger unwrapped', async () => {
     const errorSpy = vi.fn();
@@ -2327,6 +2378,28 @@ describe('type inference', () => {
 
     expect(instance).toBeInstanceOf(i18n);
   });
+
+  it('narrows the locale union across loaders naming several locales', () => {
+    const loader = async () => ({});
+
+    const config = {
+      parser,
+      log,
+      loaders: [
+        { namespace: ['common', 'nav'], locale: ['en', 'de'], loader },
+        { namespace: 'home', locale: 'cs', loader },
+      ],
+    } as const satisfies Config.T;
+
+    expectTypeOf<Config.LocalesFromConfig<typeof config>>().toEqualTypeOf<'en' | 'de' | 'cs'>();
+
+    expectTypeOf<Config.LocalesFromConfig<{ loaders: [{ namespace: 'common'; locale: string[]; loader: typeof loader }] }>>().toEqualTypeOf<string>();
+
+    // @ts-expect-error the deprecated `key` names one namespace only
+    const legacyList: Loader.LoaderModule = { key: ['common', 'nav'], locale: 'en', loader };
+
+    expect([config, legacyList]).toHaveLength(2);
+  });
 });
 
 describe('utils', () => {
@@ -2334,7 +2407,8 @@ describe('utils', () => {
     expect(publicUtils.toDotNotation).toBe(toDotNotation);
     expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);
     expect(publicUtils.matchLocale).toBe(matchLocale);
-    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'sanitizeLocales', 'toDotNotation']);
+    expect(publicUtils.resolveLoaders).toBe(resolveLoaders);
+    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'resolveLoaders', 'sanitizeLocales', 'toDotNotation']);
     expectTypeOf(publicUtils.toDotNotation).toEqualTypeOf<DotNotation.T>();
   });
   // The library logs through one module-level singleton, so a test that
@@ -2530,6 +2604,48 @@ describe('utils', () => {
 
     expect(deprecations).toHaveLength(1);
     expect(deprecations[0]?.message).toContain('nav');
+  });
+  it('`resolveLoaders` expands a descriptor into one loader per locale and namespace pair', () => {
+    const loader = async () => ({});
+    const routes = ['/'];
+
+    const expanded = resolveLoaders([{ locale: ['en', 'de'], namespace: ['common', 'nav'], loader, routes }]);
+    const written = resolveLoaders([
+      { locale: 'en', namespace: 'common', loader, routes },
+      { locale: 'en', namespace: 'nav', loader, routes },
+      { locale: 'de', namespace: 'common', loader, routes },
+      { locale: 'de', namespace: 'nav', loader, routes },
+    ]);
+
+    expect(expanded).toEqual(written);
+  });
+  it('`resolveLoaders` sanitizes each locale, as `sanitizeLocales` asks', () => {
+    const loader = async () => ({});
+    const descriptor = { locale: ['en-us', 'CS'], namespace: 'common', loader };
+
+    expect(resolveLoaders([descriptor]).map(({ locale }) => locale)).toEqual(['en-US', 'cs']);
+    expect(resolveLoaders([descriptor], false).map(({ locale }) => locale)).toEqual(['en-us', 'CS']);
+    expect(resolveLoaders([descriptor], (locale) => `x-${locale}`).map(({ locale }) => locale)).toEqual(['x-en-us', 'x-CS']);
+  });
+  it('`resolveLoaders` collapses a pair named twice and skips a descriptor naming none', () => {
+    const { captured, restore } = captureLogs();
+    const loader = async () => ({});
+
+    let resolvedLoaders: Loader.Resolved[];
+
+    try {
+      resolvedLoaders = resolveLoaders([
+        { locale: ['en', 'en'], namespace: ['common', 'common'], loader },
+        { locale: [], namespace: 'nav', loader },
+        { locale: 'en', namespace: [], loader },
+        { locale: 'en', loader } as unknown as Loader.LoaderModule,
+      ]);
+    } finally {
+      restore();
+    }
+
+    expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
+    expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
   });
 });
 

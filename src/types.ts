@@ -60,10 +60,13 @@ export namespace Config {
   type LocaleProp<C, K extends string> = C extends { [P in K]: infer L extends string } ? L : never;
 
   type LocaleSources<C> =
-    | (C extends { loaders: readonly { locale: infer L extends string }[] } ? L : never)
+    | (C extends { loaders: readonly { locale: infer L }[] } ? LoaderLocales<L> : never)
     | (C extends { translations: infer T } ? keyof T & string : never)
     | LocaleProp<C, 'initLocale'>
     | LocaleProp<C, 'fallbackLocale'>;
+
+  /** A loader's `locale`, spelled as one locale or as several. */
+  type LoaderLocales<L> = L extends readonly (infer M)[] ? M : L;
 
   type ResolveLocales<L> = L extends string ? L : never;
 
@@ -278,16 +281,17 @@ export namespace Loader {
      */
     locale: Locale;
     /**
+     * Namespace this loader run fetches translations for – one call per
+     * namespace, even when the loader names several.
+     */
+    namespace: Key;
+    /**
      * Route the load was triggered for.
      */
     route: string;
   };
 
   type LoaderModuleBody = {
-    /**
-     * Locale (e.g. `en`, `de`) which is this loader for.
-     */
-    locale: Locale;
     /**
      * Function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
     */
@@ -310,8 +314,10 @@ export namespace Loader {
     | {
       /**
        * Represents the translation namespace. It is used as a translation prefix so it should be module-unique. You can access your translation later using `t('namespace.yourTranslation')`. It shouldn't include `.` (dot) character.
+       *
+       * Several namespaces may be listed: the loader is then called once per namespace (and per locale), with the one it is loading in `Props.namespace`.
        */
-      namespace: Key;
+      namespace: Key | readonly Key[];
       key?: never;
     }
     | {
@@ -322,13 +328,22 @@ export namespace Loader {
       namespace?: never;
     };
 
-  export type LoaderModule = LoaderModuleBody & Named;
-
-  /** A loader module after `resolveLoaders` has settled which name it used. */
-  export type Resolved = LoaderModuleBody & { namespace: Key };
+  export type LoaderModule = LoaderModuleBody & Named & {
+    /**
+     * Locale (e.g. `en`, `de`) which is this loader for. Several locales may be listed: the loader is then called once per locale (and per namespace), with the one it is loading in `Props.locale`.
+     */
+    locale: Locale | readonly Locale[];
+  };
 
   /**
-   * Loads translation data. Receives the load context (`locale`, `route`) –
+   * A loader module after `resolveLoaders`: one per locale and namespace pair
+   * the module names, with its namespace settled under one name and its locale
+   * sanitized.
+   */
+  export type Resolved = LoaderModuleBody & { locale: Locale; namespace: Key };
+
+  /**
+   * Loads translation data. Receives the load context (`locale`, `namespace`, `route`) –
    * loaders that don't need it can simply take no parameters.
    */
   export type T = (props: Props) => Promise<Translations.Input>;

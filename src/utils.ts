@@ -384,26 +384,49 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
   return input;
 };
 
+const asList = <V>(value: V | readonly V[]): readonly V[] => (Array.isArray(value) ? value : [value as V]);
+
+const unique = <V>(values: readonly V[]): V[] => Array.from(new Set(values));
+
 // Loader properties are consumer code — an accessor may throw. Materialized
 // once at the config boundary, so a single unreadable loader costs only itself
-// instead of taking down every locale-keyed read downstream. The two spellings
-// of the namespace collapse here too, so nothing downstream knows there are
-// two.
-export const resolveLoaders = (input: readonly Loader.LoaderModule[] = []): Loader.Resolved[] => (
-  input.reduce<Loader.Resolved[]>((acc, descriptor) => {
+// instead of taking down every locale-keyed read downstream. Everything a
+// descriptor may spell more than one way is settled here, so nothing
+// downstream knows there were several: the two names of the namespace, and a
+// list of locales or namespaces, which expands into one loader per pair with
+// its locale sanitized.
+export const resolveLoaders = (
+  input: readonly Loader.LoaderModule[] = [],
+  sanitizeLocales: Config.SanitizeLocales = true,
+): Loader.Resolved[] => {
+  const sanitize = sanitizerFactory(sanitizeLocales);
+
+  return input.reduce<Loader.Resolved[]>((acc, descriptor) => {
     try {
       const { namespace, key, locale, loader, routes } = descriptor;
 
       if (key !== undefined) logger.warn(`Loader '${String(key)}' uses 'key', which is deprecated. Rename it to 'namespace'.`);
 
-      return [...acc, { namespace: namespace ?? key, locale, loader, routes }];
+      const namespaces = unique(asList(namespace ?? key).filter((name) => name != null));
+      const locales = unique(sanitize(...asList(locale).filter((name) => name != null)));
+
+      if (!namespaces.length || !locales.length) {
+        logger.warn('Skipping a loader that names no locale or no namespace.');
+
+        return acc;
+      }
+
+      return [
+        ...acc,
+        ...locales.flatMap((pairLocale) => namespaces.map((pairNamespace) => ({ namespace: pairNamespace, locale: pairLocale, loader, routes }))),
+      ];
     } catch (error) {
       logError('Skipping a loader that cannot be read.', error);
 
       return acc;
     }
-  }, [])
-);
+  }, []);
+};
 
 const isMergeable = (value: any): boolean => !!value && typeof value === 'object' && !Array.isArray(value);
 
@@ -478,7 +501,7 @@ export const fetchTranslations = async (loaders: Loader.Resolved[], route: strin
   const response = await Promise.all(loaders.map(async ({ loader, ...rest }) => {
     let data;
     try {
-      data = await loader({ locale: rest.locale, route });
+      data = await loader({ locale: rest.locale, namespace: rest.namespace, route });
     } catch (error) {
       logError(`Failed to load translation. Verify your '${rest.locale}' > '${rest.namespace}' Loader.`, error);
     }

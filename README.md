@@ -78,14 +78,9 @@ const config = {
   parser: parser({ onReport: null, /* other parser options */ }),
   loaders: [
     {
-      locale: 'en',
+      locale: ['en', 'cs'],
       namespace: 'common',
-      loader: async () => (await import('./en/common.json')).default,
-    },
-    {
-      locale: 'cs',
-      namespace: 'common',
-      loader: async () => (await import('./cs/common.json')).default,
+      loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
     },
   ],
 };
@@ -191,6 +186,18 @@ loaders: [
     namespace: 'common',    // Required: translation namespace
     loader: async () => {}, // Required: async function returning translations
     routes: ['/about'],     // Optional: load only for specific routes
+  },
+]
+```
+
+`locale` and `namespace` each take a list as well. Such a descriptor stands for one loader per locale and namespace pair, and the loader receives the pair it is loading, so one computed loader can replace a descriptor per file:
+
+```javascript
+loaders: [
+  {
+    locale: ['en', 'cs'],
+    namespace: ['common', 'nav'],
+    loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
   },
 ]
 ```
@@ -346,10 +353,11 @@ Load-triggering methods return the promise of the matching load — concurrent d
 Pure helpers ship from a separate subpath, for the code around the instance that has to match the library's own behavior or decide which locale to ask for:
 
 ```javascript
-import { matchLocale, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
 - `toDotNotation(input, preserveArrays?)` – the flattening behind [`preprocess`](#preprocess), for a custom `preprocess` that still wants dot notation
+- `resolveLoaders(loaders, sanitizeLocales?)` – normalizes `config.loaders` the way the instance does, into one loader per locale and namespace pair, for code that reads a config from outside the instance
 - `sanitizeLocales(...locales)` – normalizes a locale from a URL, cookie or `Accept-Language` header the way the instance does, so it can be compared against `locale`
 - `matchLocale(requested, available)` – picks the configured locale a visitor asked for, from an `Accept-Language` header or `navigator.languages`, falling back from `en-GB` to `en` and answering `undefined` when nothing matches
 
