@@ -426,9 +426,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * and every loader runs again.
    * A namespace plain data cannot hand over is left out, for the client to
    * load: one fed by several loaders, whose record would suppress a part the
-   * payload lacks, and one whose loader's routes can capture params, whose
-   * data a plain hand-off keeps as data no loader delivered, so the next
-   * params could not replace it.
+   * payload lacks; one whose loader's routes can capture params, whose data a
+   * plain hand-off keeps as data no loader delivered, so the next params could
+   * not replace it; and one none of whose loaders delivered here and no
+   * hand-off named, whose seeded data would keep the client's loaders from
+   * ever running.
    * A literal `__proto__` key is left out too: the serializer SvelteKit hands
    * load data to refuses an object that carries one.
    *
@@ -878,7 +880,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       const several = feeding.length > 1;
       const params = feeding.some(({ routes }) => capturesParams(routes));
 
-      if (!withRecords) return several || params;
+      // Seeded data alone would keep the client's loaders from ever running.
+      const delivered = feeding.some((loader) => this.#loaderRecords.has(loader))
+        || (read<Loader.Key[]>(this.#namespaceRecords, sanitizedLocale) || []).includes(namespace);
+
+      if (!withRecords) return several || params || !delivered;
 
       // Only a record lets the client replace the data once the params change.
       return params && (several || feeding.some((loader) => loader.id === null || !this.#loaderRecords.has(loader)));
