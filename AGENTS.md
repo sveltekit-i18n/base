@@ -84,7 +84,13 @@ translation state, loading, caching, route matching, and preprocessing — but
   `setRoute`/`loadTranslations` start loads directly and return the promise of
   the MATCHING load — concurrent duplicate triggers for the same locale and
   route join the in-flight load instead of fetching twice; `loading` is
-  derived from the set of in-flight loads. There is no loader-trigger store,
+  derived from the set of in-flight ACTIVATING loads. A warm load
+  (`loadTranslations(…, { activate: false })`) only fills the tables: it
+  writes neither the requested locale nor the route, never activates on its
+  own, counts towards `loading` only once an activating trigger joins it, and
+  never evaluates `cache` expiry — expiry severs the locale's in-flight loads,
+  and nothing a warm trigger records would restart a severed activating one.
+  There is no loader-trigger store,
   no promise purge, no `toPromise()`. A failed load rejects the caller's
   promise; a discarded one is reported through the logger and never becomes an
   unhandled rejection.

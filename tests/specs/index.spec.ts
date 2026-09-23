@@ -1166,6 +1166,298 @@ describe('i18n loading concurrency', () => {
   });
 });
 
+describe('i18n warm loads', () => {
+  const gated = () => {
+    const gates: Record<string, () => void> = {};
+    const calls: Record<string, number> = {};
+    const routes: Record<string, string[]> = {};
+
+    const loader = (locale: string) => ({
+      namespace: 'common',
+      locale,
+      loader: async ({ route }: Loader.Props) => {
+        calls[locale] = (calls[locale] ?? 0) + 1;
+        routes[locale] = [...(routes[locale] ?? []), route];
+        await new Promise<void>((resolve) => { gates[locale] = resolve; });
+        return { greeting: `Hello ${locale}` };
+      },
+    });
+
+    return { gates, calls, routes, loader };
+  };
+
+  const open = async (gates: Record<string, () => void>, locale: string) => {
+    await vi.waitFor(() => expect(gates[locale]).toBeDefined());
+    gates[locale]();
+  };
+
+  it('fills the tables without touching the locale or the route', async () => {
+    const { gates, routes, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('en'), loader('de')] });
+
+    const hot = instance.loadTranslations('en', '/home');
+    await open(gates, 'en');
+    await hot;
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    await open(gates, 'de');
+    await warm;
+
+    expect(instance.translations.de).toEqual({ 'common.greeting': 'Hello de' });
+    expect(instance.locale).toBe('en');
+
+    // The route stayed '/home': a hot trigger for another locale loads on it.
+    instance.invalidate('de');
+    const next = instance.setLocale('de');
+    await open(gates, 'de');
+    await next;
+
+    expect(routes.de).toEqual(['/about', '/home']);
+  });
+
+  it('does not raise `loading`', async () => {
+    const { gates, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+
+    expect(instance.loading).toBe(false);
+
+    await open(gates, 'de');
+    await warm;
+
+    expect(instance.loading).toBe(false);
+  });
+
+  it('an activating trigger joining an in-flight warm load raises `loading` and activates on settle', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    const hot = instance.loadTranslations('de', '/about');
+
+    expect(hot).toBe(warm);
+    expect(instance.loading).toBe(true);
+
+    await open(gates, 'de');
+    await hot;
+
+    expect(calls.de).toBe(1);
+    expect(instance.locale).toBe('de');
+    expect(instance.loading).toBe(false);
+  });
+
+  it('an activating trigger after a settled warm load activates without fetching again', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    await open(gates, 'de');
+    await warm;
+
+    expect(instance.locale).toBeUndefined();
+
+    const hot = instance.loadTranslations('de', '/about');
+
+    expect(instance.loading).toBe(false);
+    expect(instance.locale).toBe('de');
+
+    await hot;
+
+    expect(calls.de).toBe(1);
+  });
+
+  it('a warm load for the active locale disturbs nothing', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('en')] });
+
+    const hot = instance.loadTranslations('en', '/home');
+    await open(gates, 'en');
+    await hot;
+
+    await instance.loadTranslations('en', '/about', { activate: false });
+
+    expect(calls.en).toBe(1);
+    expect(instance.locale).toBe('en');
+    expect(instance.loading).toBe(false);
+  });
+
+  it.each([
+    ['without a `fallbackLocale`', undefined],
+    ['with a `fallbackLocale`', 'de'],
+  ])('a warm load on a fresh instance leaves `locale` undefined %s', async (_, fallbackLocale) => {
+    const { gates, loader } = gated();
+    const instance = new i18n({ parser, log, fallbackLocale, loaders: [loader('de')] });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    await open(gates, 'de');
+    await warm;
+
+    expect(instance.translations.de).toEqual({ 'common.greeting': 'Hello de' });
+    expect(instance.locale).toBeUndefined();
+    expect(instance.initialized).toBe(false);
+  });
+
+  it('`invalidate()` severs a warm load', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    await vi.waitFor(() => expect(gates.de).toBeDefined());
+
+    instance.invalidate('de');
+    gates.de();
+    await warm;
+
+    expect(instance.translations.de).toBeUndefined();
+
+    delete gates.de;
+    const hot = instance.loadTranslations('de', '/about');
+    await open(gates, 'de');
+    await hot;
+
+    expect(calls.de).toBe(2);
+    expect(instance.locale).toBe('de');
+  });
+
+  it('does not become the requested locale', async () => {
+    const { gates, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('en'), loader('de')] });
+
+    const hot = instance.loadTranslations('en', '/home');
+    const warm = instance.loadTranslations('de', '/home', { activate: false });
+    await open(gates, 'de');
+    await open(gates, 'en');
+    await Promise.all([hot, warm]);
+
+    expect(instance.locale).toBe('en');
+
+    await instance.setRoute('/other');
+
+    expect(instance.locale).toBe('en');
+  });
+
+  it('a warm trigger joining an in-flight warm load stays warm', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const first = instance.loadTranslations('de', '/about', { activate: false });
+    const second = instance.loadTranslations('de', '/about', { activate: false });
+
+    expect(second).toBe(first);
+    expect(instance.loading).toBe(false);
+
+    await open(gates, 'de');
+    await second;
+
+    expect(calls.de).toBe(1);
+    expect(instance.locale).toBeUndefined();
+    expect(instance.initialized).toBe(false);
+  });
+
+  it('a warm trigger joining an in-flight activating load does not demote it', async () => {
+    const { gates, calls, loader } = gated();
+    const instance = new i18n({ parser, log, loaders: [loader('de')] });
+
+    const hot = instance.loadTranslations('de', '/about');
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+
+    expect(warm).toBe(hot);
+    expect(instance.loading).toBe(true);
+
+    await open(gates, 'de');
+    await hot;
+
+    expect(calls.de).toBe(1);
+    expect(instance.locale).toBe('de');
+    expect(instance.loading).toBe(false);
+  });
+
+  it('a warm load with nothing to fetch does not activate', async () => {
+    const loader = vi.fn(async () => ({ greeting: 'Hallo' }));
+    const instance = new i18n({
+      parser,
+      log,
+      translations: { de: { common: { greeting: 'Hallo' } } },
+      loaders: [{ namespace: 'common', locale: 'de', loader }],
+    });
+
+    await instance.loadTranslations('de', '/', { activate: false });
+
+    expect(loader).not.toHaveBeenCalled();
+    expect(instance.locale).toBeUndefined();
+    expect(instance.initialized).toBe(false);
+  });
+
+  it('an activating trigger arriving right after a warm load applied its data activates', async () => {
+    const { gates, loader } = gated();
+    let hot: Promise<void> | undefined;
+
+    const instance: I18n = new i18n({
+      parser,
+      log,
+      loaders: [loader('de')],
+      // Runs while the warm load applies its data, so the queued trigger lands
+      // after the data is in but before the load has settled.
+      preprocess: (input) => {
+        queueMicrotask(() => { hot ??= instance.loadTranslations('de', '/about'); });
+        return input;
+      },
+    });
+
+    const warm = instance.loadTranslations('de', '/about', { activate: false });
+    await open(gates, 'de');
+    await warm;
+    await hot;
+
+    expect(hot).toBeDefined();
+    expect(instance.locale).toBe('de');
+    expect(instance.loading).toBe(false);
+  });
+
+  it('a warm load does not expire an activating load in flight', async () => {
+    let now = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+    try {
+      let release: (() => void) | undefined;
+      const instance = new i18n({
+        parser,
+        log,
+        cache: 1000,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: async () => ({ greeting: 'Hallo' }) },
+          { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+          {
+            namespace: 'about',
+            locale: 'en',
+            routes: ['/about'],
+            loader: () => new Promise<any>((resolve) => { release = () => resolve({ title: 'About' }); }),
+          },
+        ],
+      });
+
+      await instance.loadTranslations('de', '/about');
+      await instance.loadTranslations('en', '/home', { activate: false });
+
+      now = 500;
+      const hot = instance.setLocale('en');
+
+      // Past the window of the warm-loaded 'en' data.
+      now = 1500;
+      await instance.loadTranslations('en', '/home', { activate: false });
+
+      await vi.waitFor(() => expect(release).toBeDefined());
+      release?.();
+      await hot;
+
+      expect(instance.locale).toBe('en');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
 describe('i18n cache and invalidation', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 

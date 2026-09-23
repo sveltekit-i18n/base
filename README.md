@@ -324,7 +324,7 @@ log: {
 - `l(locale, key, ...params)` – translate for an explicit locale
 - `locale` – the ACTIVE locale; assignment is a fire-and-forget `setLocale()`
 - `locales` – available locales
-- `loading` – `true` while any load is in flight
+- `loading` – `true` while any activating load is in flight; a `{ activate: false }` load counts only once an activating trigger joins it
 - `initialized` – locale and route set, translations present
 - `translations` / `rawTranslations` – the (pre/post-preprocess) tables
 
@@ -332,7 +332,7 @@ log: {
 
 Load-triggering methods return the promise of the matching load — concurrent duplicate triggers share one in-flight load (and its promise) instead of fetching twice.
 
-- `loadTranslations(locale, route?)` – load translations for locale and route; `route` defaults to the current one
+- `loadTranslations(locale, route?, options?)` – load translations for locale and route; `route` defaults to the current one, and `{ activate: false }` only fills the tables without switching to them
 - `setLocale(locale)` – request a locale; loads once a route is known
 - `setRoute(route)` – update the current route
 - `loadConfig(config)` – (re)configure the instance
