@@ -1412,15 +1412,21 @@ i18n.addTranslations({
 
 ---
 
-### `snapshot()`
+### `snapshot(options?)`
 
-**Type:** `() => Record<string, any>`
+**Type:** `(options?: { records?: boolean }) => Record<string, any> | Snapshot.Envelope`
 
 Serializes what the instance currently holds for the **active locale** and the
-**`fallbackLocale`**, whichever routes loaded it. The result is shaped like
-[`translations`](#translations), so the receiving instance hydrates by passing
-it to [`addTranslations()`](#addtranslationstranslations) — the bookkeeping
-derived from it keeps the matching loaders from fetching the same data again:
+**`fallbackLocale`**, whichever routes loaded it — the server half of the
+[SSR hand-off](#server-side-rendering). Two forms:
+
+- **`snapshot({ records: true })`** returns an envelope for
+  [`hydrate()`](#hydrateenvelope): the data, the loaders that delivered it, the
+  active locale and the route. This is the form to hand to a client.
+- **`snapshot()`** returns the data alone, shaped like
+  [`translations`](#translations). Applied with
+  [`addTranslations()`](#addtranslationstranslations), it keeps every loader of
+  every namespace it names from running.
 
 ```javascript
 // +layout.server.js — one instance per request
@@ -1432,50 +1438,92 @@ export const load = async ({ url, locals }) => {
 
   await i18n.loadTranslations(locals.locale, url.pathname);
 
-  return { locale: locals.locale, translations: i18n.snapshot() };
+  return { i18n: i18n.snapshot({ records: true }) };
 };
 ```
 
+The envelope is plain data — strings, arrays and plain objects — so SvelteKit
+serializes it like any other load data. Its locales are held sanitized and are
+not sanitized again, so take it from `snapshot()` rather than building it by
+hand. `Snapshot.Envelope` is its type.
+
+What the payload leaves out:
+
+- **Other locales** — only the active locale and the fallback are serialized.
+- **A namespace fed by several loaders when one of them can capture [route
+  params](#route-params).** The client could not tell which part of the
+  namespace each loader delivered, so the next params could not replace theirs.
+  The client loads the namespace itself. The same goes for a namespace whose
+  one loader can capture params but holds no record — after an
+  [`invalidate()`](#invalidatelocale), say.
+- **A loader that cannot be named off-process** — two loaders the config spells
+  the same, or whose only difference is a `RouteMatcher` — stays out of the
+  records. Its data is handed over, and the client runs the loader again.
+- **A literal `__proto__` key**, at any depth — SvelteKit serializes load data
+  with `devalue`, which refuses an object carrying one, so keeping it would fail
+  the render. The key is dropped with a warning; the rest of its namespace is
+  kept.
+
+Without records, plain data cannot say which loader delivered what, so
+`snapshot()` also leaves out **every** namespace fed by several loaders — the
+namespace record it would leave on the client would keep a loader whose part
+is missing from running — and every namespace of a loader whose `routes` can
+capture params, which on the client would count as data supplied without a
+loader. The client loads those itself.
+
+The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
+shape — so the receiving instance applies its own `config.preprocess`.
+Freshness is not transferred either: the [`cache`](#cache) window of a hydrated
+locale starts when the client receives the data, not when the server loaded it.
+
+---
+
+### `hydrate(envelope?)`
+
+**Type:** `(envelope?: Snapshot.Envelope) => void`
+
+Restores the state [`snapshot({ records: true })`](#snapshotoptions) captured
+on another instance — the client half of the [SSR
+hand-off](#server-side-rendering):
+
+- the **data** is displayed at once;
+- a loader named by the **records** does not run again for the same [route
+  params](#route-params), while its siblings on other routes still run when
+  their route matches; new params replace its data as they would after a load;
+- data no record names is displayed, but keeps no loader from running — a
+  loader the records do not cover loads again rather than going missing;
+- the **active locale** and the **route** are restored, so the instance is
+  [`initialized`](#initialized) and `t()` renders the server's locale before any
+  load has run.
+
 ```javascript
-// +layout.js — the client starts from the server's data
+// +layout.js — the client starts from the server's state
 import { I18n } from '@sveltekit-i18n/base';
 import { config } from '$lib/translations';
 
 export const load = async ({ data, url }) => {
   const i18n = new I18n(config);
 
-  i18n.addTranslations(data.translations);
+  i18n.hydrate(data.i18n);
 
-  await i18n.loadTranslations(data.locale, url.pathname);
+  await i18n.loadTranslations(i18n.locale, url.pathname);
 
   return { i18n };
 };
 ```
 
-The payload is **applied on top of** the config rather than assigned to
-`config.translations`: it is a subset of what the server held, so a config that
-carries its own `translations` keeps them either way. Assigning it would drop
-whatever the list below leaves out.
+The envelope is **applied on top of** the config: a config that carries its own
+`translations` keeps them.
 
-What the payload leaves out:
+`hydrate(undefined)` does nothing, so a `load` whose server half sent nothing
+can call it unconditionally. An envelope without `records` is applied as plain
+data, the way [`addTranslations()`](#addtranslationstranslations) applies it.
+A record naming no loader of the client's config — one whose `routes` the two
+sides spell differently, say — is dropped, and its loader runs again.
 
-- **Other locales** — only the active locale and the fallback are serialized.
-- **A namespace fed by several loaders.** Plain data cannot say which of them
-  delivered, and the namespace it records on the client would keep a loader
-  whose part is missing from running. The client loads the namespace itself.
-- **A namespace of a loader whose `routes` can capture [route
-  params](#route-params)**, whichever of them loaded it. On the client it would
-  count as data supplied without a loader, which the loader's next params could
-  not replace. The client loads it with its own params.
-- **A literal `__proto__` key**, at any depth — SvelteKit serializes load data
-  with `devalue`, which refuses an object carrying one, so keeping it would fail
-  the render. The key is dropped with a warning; the rest of its namespace is
-  kept.
-
-The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
-shape — so the receiving instance applies its own `config.preprocess`.
-Freshness is not transferred either: the [`cache`](#cache) window of a hydrated
-locale starts when the client receives the data, not when the server loaded it.
+Call it before any load starts. With [`initLocale`](#initlocale) set, the
+constructor starts one before `hydrate()` can be called, so the loaders run
+regardless; `hydrate()` warns when that happens.
 
 ---
 
@@ -1513,7 +1561,8 @@ refresh before the window elapses.
 Detaches the instance from its loading lifecycle. Loads still in flight settle
 with their data discarded, [`loading`](#loading) drops to `false`, and every
 further load or mutation call (`loadTranslations`, `setLocale`, `setRoute`,
-`loadConfig`, `addTranslations`, `invalidate`) is ignored with a warning.
+`loadConfig`, `addTranslations`, `hydrate`, `invalidate`) is ignored with a
+warning.
 
 Reads keep working — `t`, `l`, `locale`, `translations` and `snapshot()` still
 return the instance's last state, so a component that is still tearing down
@@ -1545,8 +1594,8 @@ every visitor being rendered concurrently: two requests for different locales
 overwrite each other's `locale` and translation tables, and one visitor's
 language can end up in another visitor's HTML.
 
-Create **one instance per request** instead, and hand its data to the client
-with [`snapshot()`](#snapshot).
+Create **one instance per request** instead, and hand its state to the client
+with [`snapshot()`](#snapshotoptions) and [`hydrate()`](#hydrateenvelope).
 
 ### 1. Export the config, not the instance
 
@@ -1573,7 +1622,7 @@ export const load = async ({ url, locals }) => {
 
   await i18n.loadTranslations(locals.locale, url.pathname);
 
-  return { locale: locals.locale, translations: i18n.snapshot() };
+  return { i18n: i18n.snapshot({ records: true }) };
 };
 ```
 
@@ -1599,35 +1648,34 @@ export const load = async ({ data, url }) => {
   if (!i18n) {
     i18n = new I18n(config);
 
-    i18n.addTranslations(data.translations);
+    i18n.hydrate(data.i18n);
 
     if (browser) client = i18n;
   }
 
-  await i18n.loadTranslations(data.locale, url.pathname);
+  await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
 
   return { i18n };
 };
 ```
 
 This `load` runs on the server for the SSR pass and again in the browser on
-hydration. Both start from the server's snapshot, so the loaders behind it do
-not run a second time; only data the snapshot left out — the route-scoped
-translations of pages the visitor has not opened yet, and the namespaces the
-snapshot cannot hand over — is fetched. Every later
-client-side navigation reuses the same instance, so its cache survives.
+hydration. Both start from the server's state: the loaders that delivered on
+the server do not run a second time, and the locale is active before the first
+render. Only what the server did not load — the route-scoped translations of
+pages the visitor has not opened yet, and the few namespaces the snapshot
+cannot hand over — is fetched. Every later client-side navigation reuses the
+same instance, so its cache survives.
 
-The hand-off is applied to the instance instead of being assigned to
-`config.translations`, so whatever the config declares stays where it is: the
-snapshot covers two locales and leaves out the namespaces it cannot hand over,
-so assigning it would take the rest of the config's static data down with it.
-It is applied once, inside the branch that builds the instance — replaying it
-on a later navigation would mark loaders loaded again after an
-[`invalidate()`](#invalidatelocale).
+The hand-off is applied once, inside the branch that builds the instance —
+replaying it on a later navigation would mark loaders loaded again after an
+[`invalidate()`](#invalidatelocale). It is applied on top of the config, so
+whatever the config declares stays where it is.
 
 Leave [`initLocale`](#initlocale) out of a config used this way. It starts its
 load inside the constructor, before the hand-off can be applied, so the loaders
-run regardless — the locale belongs in the `loadTranslations()` call above.
+run regardless (and [`hydrate()`](#hydrateenvelope) warns) — the locale belongs
+in the `loadTranslations()` call above.
 
 ### 4. Pass it down through context
 
@@ -1945,7 +1993,7 @@ parser that declares none means `string`.
 Base does not inspect, transform, validate or serialize what `parse` returns.
 The value is handed to the caller of `t`/`l` and reaches nothing else — in
 particular [`translations`](#translations--rawtranslations),
-`rawTranslations` and [`snapshot()`](#snapshot) all carry the translation
+`rawTranslations` and [`snapshot()`](#snapshotoptions) all carry the translation
 tables, before and after preprocessing, and never parser output. A rich return
 type therefore has no effect on the SSR payload or on hydration.
 

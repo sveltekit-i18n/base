@@ -113,8 +113,8 @@ export const load = async ({ url }) => {
 > **Rendering per-visitor locales on the server?** The instance above is a
 > module-level singleton — on the server it is shared by every request in the
 > process, so concurrent visitors overwrite each other's locale. Use one
-> instance per request and hand its data to the client with `snapshot()`:
-> see [Server-Side Rendering](./docs/README.md#server-side-rendering).
+> instance per request and hand its state to the client with `snapshot()` and
+> `hydrate()`: see [Server-Side Rendering](./docs/README.md#server-side-rendering).
 
 ### 4. Use in components
 
@@ -357,7 +357,8 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `setRoute(route)` – update the current route
 - `loadConfig(config)` – (re)configure the instance
 - `addTranslations(translations)` – add synchronous translations
-- `snapshot()` – serialize what the active locale (and the fallback) holds, shaped like `config.translations` so the receiving instance hydrates by passing it to `addTranslations()`
+- `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`
+- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again), its locale and its route
 - `invalidate(locale?)` – mark loaded translations stale (one locale, or all); loaders run again on the next load trigger, and a load still in flight for an invalidated locale settles with its data discarded
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 

@@ -77,7 +77,8 @@ translation state, loading, caching, route matching, and preprocessing — but
   properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
   `rawTranslations`), reactive functions (`t`, `l`), promise-returning
   methods (`loadTranslations`, `loadConfig`, `setLocale`, `setRoute`) and
-  the synchronous `addTranslations`, `snapshot`, `invalidate` and `destroy`.
+  the synchronous `addTranslations`, `snapshot`, `hydrate`, `invalidate` and
+  `destroy`.
   There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
@@ -120,6 +121,16 @@ translation state, loading, caching, route matching, and preprocessing — but
   pre-invalidation data cannot resurrect the dropped bookkeeping. Neither
   expiry nor `invalidate` ever removes displayed translations or starts a
   load by itself. Don't break load-once semantics.
+- **The SSR hand-off is a pair.** `snapshot({ records: true })` serializes the
+  data, the records of the loaders that delivered it (their `id` and params
+  signature — never a reference), the active locale and the route;
+  `hydrate()` resolves each id to a loader of its own config and stores the
+  record under that reference, so the records keep one kind of key. A hydrated
+  loader's namespace becomes its delivery, so new params replace it; data no
+  record names is displayed but records no namespace, so whatever the
+  envelope does not cover loads again instead of going missing. An envelope
+  without `records` is plain data and records namespaces, as `addTranslations`
+  does.
 - **A loader receives plain data.** `Loader.Props` holds strings and plain
   objects of strings: the locale, the route, and whatever else a loader is
   handed later. Never an `event`, a `fetch`, or any `@sveltejs/kit` type. That
