@@ -8,6 +8,14 @@ const defaultCache = Number.POSITIVE_INFINITY;
 
 type NamespaceRecords = Translations.LocaleIndexed<Loader.Key[]>;
 
+type InflightLoad = {
+  key: string;
+  promise: Promise<void>;
+  activate: boolean;
+  loaders: Loader.Resolved[];
+  severed: Set<Loader.Resolved>;
+};
+
 /** A top-level key holding part of `namespace` — the namespace itself or a key flattened out of it. */
 const isNamespaceKey = (key: string, namespace: Loader.Key) => key === namespace || key.startsWith(`${namespace}.`);
 
@@ -69,11 +77,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   #loadedAt: Translations.LocaleIndexed<number> = Object.create(null);
 
   /**
-   * In-flight loads keyed by locale and route; duplicate triggers share the
-   * promise. `activate` is set by the first activating trigger, so a warm load
-   * joined by one activates when it settles.
+   * Loads in flight, each under the key of what its trigger selected; a
+   * trigger with the same key shares the promise of one that delivers all it
+   * has to fetch. `activate` is set by the first activating trigger, so a warm
+   * load joined by one activates when it settles. `severed` holds the loaders
+   * an invalidation cut off while the load was in flight.
    */
-  #inflight = new Map<string, { promise: Promise<void>; activate: boolean }>();
+  #inflight = new Set<InflightLoad>();
 
   #destroyed = false;
 
@@ -300,41 +310,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   };
 
   /**
-   * Marks loaded translations stale — for one locale, or all of them. Loaders
-   * run again on the NEXT load trigger; the call itself starts no load and
-   * keeps the currently displayed translations in place. A load still in
-   * flight for an invalidated locale is severed: it settles, but its data is
-   * discarded — it predates the invalidation.
+   * Marks loaded translations stale — for one locale or all of them, and for
+   * one namespace or all of them. Loaders run again on the NEXT load trigger;
+   * the call itself starts no load and keeps the currently displayed
+   * translations in place. A loader still in flight for what was invalidated
+   * is severed: its load settles, but its data is discarded — it predates the
+   * invalidation — and an activating trigger fetches it again before its locale
+   * activates. A namespace invalidation leaves the locale's `cache` window
+   * where it was.
    */
-  invalidate = (locale?: Config.LocaleInput<LocaleUnion>): void => {
+  invalidate = (locale?: Config.LocaleInput<LocaleUnion>, namespace?: Loader.Key): void => {
     if (this.#inert('invalidate')) return;
 
-    if (locale !== undefined) {
-      const [sanitized] = this.#sanitize(locale);
+    const [sanitized] = locale === undefined ? [] : this.#sanitize(locale);
 
-      if (sanitized !== undefined) {
-        delete this.#namespaceRecords[sanitized];
-        delete this.#loadedAt[sanitized];
+    if (locale !== undefined && sanitized === undefined) return;
 
-        this.#loaderRecords.forEach((_, loader) => {
-          if (loader.locale === sanitized) this.#loaderRecords.delete(loader);
-        });
-
-        // Sever matching in-flight loads — applying their pre-invalidation
-        // data would resurrect the bookkeeping dropped above, permanently
-        // suppressing the promised refetch.
-        this.#inflight.forEach((_, key) => {
-          if (key.startsWith(`${sanitized}\u0000`)) this.#inflight.delete(key);
-        });
-      }
-
-      return;
-    }
-
-    this.#loaderRecords.clear();
-    this.#namespaceRecords = Object.create(null);
-    this.#loadedAt = Object.create(null);
-    this.#inflight.clear();
+    this.#invalidate(sanitized, namespace);
   };
 
   addTranslations = (translations?: Translations.SerializedTranslations): void => {
@@ -342,6 +334,32 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#addTranslations(translations);
   };
+
+  /** Drops the bookkeeping `invalidate()` names and severs its loaders in flight. */
+  #invalidate(sanitized: Config.Locale | undefined, namespace?: Loader.Key): void {
+    const locales = sanitized === undefined ? Object.keys(this.#namespaceRecords) : [sanitized];
+
+    locales.forEach((recorded) => {
+      if (namespace === undefined) delete this.#namespaceRecords[recorded];
+      else this.#namespaceRecords[recorded] = (read<Loader.Key[]>(this.#namespaceRecords, recorded) || []).filter((name) => name !== namespace);
+    });
+
+    if (namespace === undefined) {
+      if (sanitized === undefined) this.#loadedAt = Object.create(null);
+      else delete this.#loadedAt[sanitized];
+    }
+
+    const covers = (loader: Loader.Resolved) => (sanitized === undefined || loader.locale === sanitized)
+      && (namespace === undefined || loader.namespace === namespace);
+
+    this.#loaderRecords.forEach((_, loader) => {
+      if (covers(loader)) this.#loaderRecords.delete(loader);
+    });
+
+    // Applying their pre-invalidation data would resurrect the bookkeeping
+    // dropped above, permanently suppressing the promised refetch.
+    this.#sever(covers);
+  }
 
   /**
    * Restores the state `snapshot({ records: true })` captured on another
@@ -471,9 +489,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#destroyed = true;
 
-    // Severed rather than awaited — the identity guard in `#load` makes a
-    // settled load apply nothing once its entry is gone.
-    this.#inflight.clear();
+    // Severed rather than awaited: a settled load then applies nothing.
+    this.#sever(() => true);
     this.#pending = new Set();
   };
 
@@ -757,18 +774,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       if (loadedAt !== undefined && Date.now() >= loadedAt + cacheValue) {
         logger.debug(`'${locale}' translations expired. Loaders will run again.`);
-        this.invalidate(locale);
+        this.#invalidate(locale);
       }
     });
   }
 
-  /** Activates `locale` unless another request superseded its load meanwhile. */
-  #activate(locale: Config.Locale): void {
+  /** Whether a later request asked for another locale than `locale`. */
+  #superseded(locale: Config.Locale): boolean {
     const requested = this.#resolveLocale(this.#requestedLocale);
 
     // An unresolvable most-recent request supersedes nothing — it must not
     // block a completed load from activating.
-    if (requested !== undefined && requested !== locale) return;
+    return requested !== undefined && requested !== locale;
+  }
+
+  /** Activates `locale` unless another request superseded its load meanwhile. */
+  #activate(locale: Config.Locale): void {
+    if (this.#superseded(locale)) return;
 
     if (this.#locale !== locale) this.#locale = locale;
   }
@@ -830,6 +852,17 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
   }
 
+  /**
+   * Cuts the loaders `covers` matches off the loads in flight: a load running
+   * one discards that loader's data when it settles while the rest of it
+   * lands, and no trigger that has to fetch that loader joins it.
+   */
+  #sever(covers: (loader: Loader.Resolved) => boolean): void {
+    this.#inflight.forEach(({ loaders, severed }) => {
+      loaders.filter(covers).forEach((loader) => severed.add(loader));
+    });
+  }
+
   /** Records the params the current route asks each matching loader for. */
   #want(matching: LoadRequest[]): void {
     matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
@@ -850,13 +883,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Starts (or joins) a load. A load already in flight for the same locale
-   * that selected the same loaders for the same params is returned as-is, so
-   * concurrent duplicate triggers share one fetch — whichever route they came
-   * from, and whether they selected by route or by `namespace`. The pending entry is registered synchronously, so `loading` is
-   * observable right after the triggering call; a load with nothing to fetch
-   * never registers at all, so cache-served navigations do not flicker the flag.
-   * A load that does not `activate` never registers either — until an
-   * activating trigger joins it.
+   * that selected the same loaders for the same params is returned as-is while
+   * it delivers everything the trigger has to fetch, so concurrent duplicate
+   * triggers share one fetch — whichever route they came from, and whether
+   * they selected by route or by `namespace`. The pending entry is registered
+   * synchronously, so `loading` is observable right after the triggering call;
+   * a load with nothing to fetch never registers at all, so cache-served
+   * navigations do not flicker the flag. A load that does not `activate` never
+   * registers either — until an activating trigger joins it.
    */
   #load(requestedLocale: Config.Locale, route: string, activate = true, namespace?: Loader.Key): Promise<void> {
     const locale = this.#resolveLocale(requestedLocale);
@@ -866,9 +900,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // Expiry is evaluated per activating trigger, BEFORE the in-flight check.
     // That order is safe: a locale is stamped only once its data arrived, so a
     // shared in-flight load cannot be invalidated by its own duplicates. A
-    // warm trigger leaves it to the next activating one: expiry severs every
-    // in-flight load of the locale, and a warm trigger records no request that
-    // would restart a severed activating load.
+    // warm trigger fills the tables and leaves their freshness to the next
+    // activating one.
     if (activate) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
 
     const matching = namespace === undefined ? this.#matchLoaders(locale, route) : this.#matchNamespace(locale, namespace, route);
@@ -880,21 +913,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const { loaders = [] } = this.#config ?? {};
 
     // Keyed by what the trigger selected, not by the route it came from. NUL
-    // never appears in a sanitized locale, so the locale prefix `invalidate()`
-    // severs by is unambiguous.
+    // never appears in a sanitized locale, so no two selections share a key.
     const inflightKey = [locale, ...matching.map(({ loader, signature }) => `${loaders.indexOf(loader)}:${signature}`)].join('\u0000');
-    const inflight = this.#inflight.get(inflightKey);
 
-    if (inflight) {
-      if (activate && !inflight.activate) {
-        inflight.activate = true;
-        this.#pending = new Set(this.#pending).add(inflight.promise);
-      }
+    return this.#loadSelection(locale, route, inflightKey, matching, activate);
+  }
 
-      return inflight.promise;
-    }
-
-    const requests = this.#unloaded(matching);
+  /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
+  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], activate: boolean): Promise<void> {
+    const requests = this.#unloaded(selected);
 
     if (!requests.length) {
       // Nothing to fetch — the locale still becomes active (its data is
@@ -904,36 +931,73 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return Promise.resolve();
     }
 
-    const promise: Promise<void> = this.#fetch(requests, route).then((deliveries) => {
-      // An `invalidate()` — explicit, via expiry, or via reconfiguration —
-      // that raced this load severed it from `#inflight`. Its data predates
-      // the invalidation: applying it would resurrect the dropped bookkeeping
-      // and permanently suppress the promised refetch.
-      if (this.#inflight.get(inflightKey) !== entry) return;
+    const inflight = this.#joinable(key, requests);
 
+    if (inflight) return this.#join(inflight, activate);
+
+    return this.#start(locale, route, key, requests, activate);
+  }
+
+  /** The load in flight under `key` that delivers every one of `requests`. */
+  #joinable(key: string, requests: LoadRequest[]): InflightLoad | undefined {
+    return Array.from(this.#inflight).find(({ key: inflightKey, loaders, severed }) => inflightKey === key
+      && requests.every(({ loader }) => loaders.includes(loader) && !severed.has(loader)));
+  }
+
+  /** Joins a load in flight; an activating trigger makes it activate. */
+  #join(entry: InflightLoad, activate: boolean): Promise<void> {
+    if (activate && !entry.activate) {
+      entry.activate = true;
+      this.#pending = new Set(this.#pending).add(entry.promise);
+    }
+
+    return entry.promise;
+  }
+
+  /** Whether the latest activating trigger still asks `loader` for `signature`. */
+  #isWanted({ loader, signature }: { loader: Loader.Resolved; signature: string }): boolean {
+    return (this.#wanted.get(loader) ?? signature) === signature;
+  }
+
+  /** Fetches `requests` as a load in flight under `key`, and settles it. */
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], activate: boolean): Promise<void> {
+    const promise: Promise<void> = this.#fetch(requests, route).then((deliveries) => {
       // Released before the load settles: a trigger arriving in between must
       // not join a load whose activation step has already run — it finds the
       // data recorded and activates at once.
-      this.#inflight.delete(inflightKey);
+      this.#inflight.delete(entry);
 
-      const wanted = deliveries.filter(({ loader, signature }) => (this.#wanted.get(loader) ?? signature) === signature);
+      // An `invalidate()` — explicit, via expiry, via reconfiguration or via
+      // `destroy()` — that raced this load severed some of its loaders. Their
+      // data predates the invalidation: applying it would resurrect the
+      // dropped bookkeeping and permanently suppress the promised refetch.
+      const current = deliveries.filter(({ loader }) => !entry.severed.has(loader));
+
+      const wanted = current.filter((delivery) => this.#isWanted(delivery));
 
       if (wanted.length) this.#applyDeliveries(wanted);
 
       // A load that delivered params the route no longer asks for leaves the
       // activation to the load of the params it asks for.
-      if (entry.activate && wanted.length === deliveries.length) this.#activate(locale);
+      if (!entry.activate || wanted.length !== current.length) return undefined;
+
+      if (!entry.severed.size) {
+        this.#activate(locale);
+
+        return undefined;
+      }
+
+      return this.#resume(locale, route, key, requests.filter(({ loader }) => entry.severed.has(loader)));
     });
 
-    const entry = { promise, activate };
+    const entry: InflightLoad = { key, promise, activate, loaders: requests.map(({ loader }) => loader), severed: new Set() };
 
-    this.#inflight.set(inflightKey, entry);
+    this.#inflight.add(entry);
     if (activate) this.#pending = new Set(this.#pending).add(promise);
 
     const settle = () => {
-      // Guarded by identity — a later load under the same key must not be
-      // evicted by this one settling.
-      if (this.#inflight.get(inflightKey) === entry) this.#inflight.delete(inflightKey);
+      // A rejected fetch never reached the release above.
+      this.#inflight.delete(entry);
 
       if (!this.#pending.has(promise)) return;
 
@@ -949,6 +1013,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     promise.catch((error) => logError(`Failed to load translations for '${locale}' locale and '${route}' route.`, error));
 
     return promise;
+  }
+
+  /**
+   * Finishes an activating load an invalidation cut `severed` off: it fetches
+   * them again and activates once they arrive, so a trigger's promise still
+   * means its locale is loaded. It leaves the locale to the next trigger when
+   * the instance was destroyed, another locale was asked for, the config no
+   * longer has one of those loaders or a later trigger wants other params.
+   */
+  #resume(locale: Config.Locale, route: string, key: string, severed: LoadRequest[]): Promise<void> | undefined {
+    const { loaders = [] } = this.#config ?? {};
+
+    if (this.#destroyed || this.#superseded(locale)) return undefined;
+
+    if (severed.some((request) => !loaders.includes(request.loader) || !this.#isWanted(request))) return undefined;
+
+    return this.#loadSelection(locale, route, key, severed, true);
   }
 }
 

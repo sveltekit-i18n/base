@@ -360,7 +360,7 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `addTranslations(translations)` – add synchronous translations
 - `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`
 - `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again), its locale and its route
-- `invalidate(locale?)` – mark loaded translations stale (one locale, or all); loaders run again on the next load trigger, and a load still in flight for an invalidated locale settles with its data discarded
+- `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with its data discarded — an activating trigger fetches it again before it activates
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 
 ### Utilities
