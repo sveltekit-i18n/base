@@ -1,6 +1,7 @@
+import * as devalue from 'devalue';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import i18n from '../../src/index.js';
-import type { Config, Extension, I18n, Loader, Parser, Schema } from '../../src/index.js';
+import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
 import { matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
@@ -36,6 +37,7 @@ describe('i18n instance', () => {
     expect(instance).toHaveProperty('setRoute');
     expect(instance).toHaveProperty('invalidate');
     expect(instance).toHaveProperty('snapshot');
+    expect(instance).toHaveProperty('hydrate');
     expect(instance).toHaveProperty('destroy');
     // The v2 SSR hand-off primitive is deleted from v3, not deprecated — pin
     // its absence so it cannot quietly return.
@@ -2337,6 +2339,362 @@ describe('i18n snapshot', () => {
   });
 });
 
+describe('i18n hydrate', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  type Calls = Record<string, number>;
+
+  const counted = (calls: Calls, name: string, data: any) => async () => {
+    calls[name] = (calls[name] ?? 0) + 1;
+
+    return data;
+  };
+
+  const sharedLoaders = (calls: Calls) => [
+    { namespace: 'common', locale: 'en', loader: counted(calls, 'common', { greeting: 'Hello' }) },
+    { namespace: 'nav', locale: 'en', routes: ['/'], loader: counted(calls, 'home', { home: 'Home' }) },
+    { namespace: 'nav', locale: 'en', routes: ['/about'], loader: counted(calls, 'about', { about: 'About' }) },
+    { namespace: 'common', locale: 'cs', routes: ['/about'], loader: counted(calls, 'cs', { greeting: 'Ahoj' }) },
+  ];
+
+  const article = (calls: Calls) => ({
+    namespace: 'article',
+    locale: 'en',
+    routes: [/^\/article\/(?<articleId>\d+)/],
+    loader: async ({ params }: Loader.Props) => {
+      calls.article = (calls.article ?? 0) + 1;
+
+      return { title: `Article ${params.articleId}`, [`only${params.articleId}`]: 'x' };
+    },
+  });
+
+  it('hands over a namespace fed by several loaders, and only its missing part loads', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.translations).toEqual({ en: { common: { greeting: 'Hello' }, nav: { home: 'Home' } } });
+    expect(envelope.records).toHaveLength(2);
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/');
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({ about: 1 });
+    expect(client.t('nav.home')).toBe('Home');
+    expect(client.t('nav.about')).toBe('About');
+  });
+
+  it('keeps a parameterized loader from refetching its params, and replaces its data for others', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    await server.loadTranslations('en', '/article/6');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.records).toEqual([{ id: resolveLoaders([article({})])[0].id, signature: '[["articleId","6"]]' }]);
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: [article(calls)] });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/article/6');
+
+    expect(calls).toEqual({});
+    expect(client.t('article.title')).toBe('Article 6');
+
+    await client.setRoute('/article/7');
+
+    expect(calls).toEqual({ article: 1 });
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x' });
+  });
+
+  it('leaves out the data of a parameterized loader it holds no record of', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    await server.loadTranslations('en', '/article/6');
+    server.invalidate('en');
+
+    expect(server.snapshot({ records: true })).toEqual({ translations: {}, records: [], locale: 'en', route: '/article/6' });
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/article/6');
+    await client.setRoute('/article/7');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x' });
+  });
+
+  it('still leaves out a namespace fed by several loaders when one of them captures params', async () => {
+    const loaders = [
+      article({}),
+      { namespace: 'article', locale: 'en', loader: async () => ({ back: 'Back' }) },
+      { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+    ];
+    const server = new i18n({ parser: valueParser, log, loaders });
+
+    await server.loadTranslations('en', '/article/6');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.translations).toEqual({ en: { common: { greeting: 'Hello' } } });
+    expect(envelope.records).toEqual([{ id: resolveLoaders(loaders)[2].id }]);
+  });
+
+  it('leaves a loader without an id out of the records, so it loads again', async () => {
+    const matcher = (calls: Calls, name: string) => ({
+      namespace: 'common',
+      locale: 'en',
+      routes: [{ test: (route: string) => route === '/' }],
+      loader: counted(calls, name, { [name]: name }),
+    });
+    const loaders = (calls: Calls) => [matcher(calls, 'a'), matcher(calls, 'b')];
+    const server = new i18n({ parser: valueParser, log, loaders: loaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.records).toEqual([]);
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: loaders(calls) });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({ a: 1, b: 1 });
+  });
+
+  it('runs a loader again that threw on the server, rather than suppressing it', async () => {
+    const loaders = (calls: Calls, fail: boolean) => [
+      { namespace: 'common', locale: 'en', loader: counted(calls, 'common', { greeting: 'Hello' }) },
+      {
+        namespace: 'home',
+        locale: 'en',
+        loader: async () => {
+          calls.home = (calls.home ?? 0) + 1;
+
+          if (fail) throw new Error('down');
+
+          return { title: 'Home' };
+        },
+      },
+    ];
+    const server = new i18n({
+      parser: valueParser,
+      log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+      loaders: loaders({}, true),
+    });
+
+    await server.loadTranslations('en', '/').catch(() => {});
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: loaders(calls, false) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toEqual({ home: 1 });
+    expect(client.t('home.title')).toBe('Home');
+  });
+
+  it('drops a record naming no loader of the client config, which then loads again', async () => {
+    // The same loader, its route spelled another way: the ids differ.
+    const server = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'nav', locale: 'en', routes: [/^\/$/], loader: async () => ({ home: 'Home' }) }] });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/');
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({ common: 1, home: 1, about: 1 });
+    expect(client.t('nav.about')).toBe('About');
+  });
+
+  it('carries a locale named like an envelope key through the round trip', async () => {
+    const loaders = [{ namespace: 'common', locale: 'translations', loader: async () => ({ greeting: 'Hello' }) }];
+    const server = new i18n({ parser: valueParser, log, sanitizeLocales: false, loaders });
+
+    await server.loadTranslations('translations', '/');
+
+    let calls = 0;
+    const client = new i18n({
+      parser: valueParser,
+      log,
+      sanitizeLocales: false,
+      loaders: [{ ...loaders[0], loader: async () => { calls += 1; return {}; } }],
+    });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('translations', '/');
+
+    expect(calls).toBe(0);
+    expect(client.locale).toBe('translations');
+    expect(client.t('common.greeting')).toBe('Hello');
+  });
+
+  it('applies an envelope without records as plain data, suppressing every loader of its namespaces', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const { records, ...plain } = server.snapshot({ records: true });
+
+    expect(records).toHaveLength(2);
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(plain);
+    await client.loadTranslations('en', '/');
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({});
+    expect(client.t('nav.about')).toBe('nav.about');
+  });
+
+  it('restores the locale and the route without any load running', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/about');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+
+    expect(client.initialized).toBe(true);
+    expect(client.locale).toBe('en');
+    expect(client.t('nav.about')).toBe('About');
+
+    // The route is restored too: a locale change loads for it.
+    await client.setLocale('cs');
+
+    expect(calls).toEqual({ cs: 1 });
+    expect(client.locale).toBe('cs');
+  });
+
+  it('restores the locale and the route from an envelope without data, staying uninitialized', async () => {
+    const envelope: Snapshot.Envelope = { translations: {}, records: [], locale: 'en', route: '/about' };
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(envelope);
+
+    expect(client.initialized).toBe(false);
+    expect(client.locale).toBe('en');
+
+    await client.setLocale('cs');
+
+    expect(calls).toEqual({ cs: 1 });
+  });
+
+  it('leaves a warm load after it with nothing to fetch and nothing to activate', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    client.hydrate(server.snapshot({ records: true }));
+
+    const warm = client.loadTranslations('en', '/', { activate: false });
+
+    expect(client.loading).toBe(false);
+    await warm;
+
+    expect(calls).toEqual({});
+    expect(client.locale).toBe('en');
+  });
+
+  it('keeps a warm load for other params from replacing what the restored route shows', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    await server.loadTranslations('en', '/article/6');
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/article/7', { activate: false });
+
+    expect(client.t('article.title')).toBe('Article 6');
+  });
+
+  it('does nothing after `destroy()`', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    client.destroy();
+    client.hydrate(server.snapshot({ records: true }));
+
+    expect(client.locale).toBeUndefined();
+    expect(client.rawTranslations).toEqual({});
+  });
+
+  it('warns when it arrives after a load started', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: sharedLoaders({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const warnSpy = vi.fn();
+    const calls: Calls = {};
+    const client = new i18n({
+      parser: valueParser,
+      log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
+      initLocale: 'en',
+      loaders: sharedLoaders(calls),
+    });
+
+    client.hydrate(server.snapshot({ records: true }));
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('after a load started'));
+    expect(calls).toEqual({ common: 1 });
+  });
+
+  it('leaves the instance untouched for `undefined`', async () => {
+    const calls: Calls = {};
+    const client = new i18n({ parser: valueParser, log, loaders: sharedLoaders(calls) });
+
+    await client.loadTranslations('en', '/');
+
+    const before = client.rawTranslations;
+
+    client.hydrate(undefined);
+
+    expect(client.rawTranslations).toBe(before);
+    expect(client.locale).toBe('en');
+  });
+
+  it('produces an envelope both devalue encoders accept', async () => {
+    const server = new i18n({ parser: valueParser, log, fallbackLocale: 'cs', loaders: [...sharedLoaders({}), article({})] });
+
+    await server.loadTranslations('cs', '/about');
+    await server.loadTranslations('en', '/article/6');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.records!.length).toBeGreaterThan(0);
+    expect(devalue.parse(devalue.stringify(envelope))).toEqual(envelope);
+    expect((0, eval)(`(${devalue.uneval(envelope)})`)).toEqual(envelope);
+  });
+});
+
 describe('i18n destroy', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 
@@ -2475,6 +2833,16 @@ describe('translate', () => {
 });
 
 describe('type inference', () => {
+  it('types the snapshot by the form asked for', () => {
+    const instance = new i18n({ parser, log });
+
+    expectTypeOf(instance.snapshot()).toEqualTypeOf<Translations.SerializedTranslations>();
+    expectTypeOf(instance.snapshot({ records: false })).toEqualTypeOf<Translations.SerializedTranslations>();
+    expectTypeOf(instance.snapshot({ records: true })).toEqualTypeOf<Snapshot.Envelope>();
+    expectTypeOf(instance.snapshot({ records: Math.random() > 0.5 })).toEqualTypeOf<Translations.SerializedTranslations | Snapshot.Envelope>();
+    expectTypeOf(instance.hydrate).parameter(0).toEqualTypeOf<Snapshot.Envelope | undefined>();
+  });
+
   it('infers the `t`/`l` output type from the configured parser', () => {
     const richParser = { parse: (_value: unknown, _params: unknown[], _locale: string, key: string) => ({ html: key }) };
     const rich = new i18n({ parser: richParser, log });

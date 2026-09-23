@@ -605,6 +605,38 @@ export namespace Schema {
       : P;
 }
 
+export namespace Snapshot {
+  /**
+   * A loader that delivered on the instance a snapshot was taken of: its
+   * `Loader.Resolved.id`, and the signature of the route params it delivered
+   * for – left out when its routes captured none.
+   */
+  export type LoadRecord = { id: string; signature?: string };
+
+  /**
+   * What `snapshot({ records: true })` returns and `hydrate()` applies. Plain
+   * data throughout – strings, arrays and plain objects – so `devalue`, the
+   * serializer SvelteKit hands load data to, accepts it. Its locales are held
+   * sanitized and are not sanitized again, so take it from `snapshot()` rather
+   * than building it by hand.
+   */
+  export type Envelope = {
+    /** What the instance held for its active locale and the fallback locale, shaped like `config.translations`. */
+    translations: Translations.SerializedTranslations;
+    /**
+     * The loaders that delivered, which `hydrate()` keeps from running again
+     * for the same params. Without it, the data is handed over as plain data:
+     * it keeps every loader without params of every namespace it names from
+     * running, as `addTranslations()` does.
+     */
+    records?: LoadRecord[];
+    /** The active locale. */
+    locale?: string;
+    /** The current route. */
+    route?: string;
+  };
+}
+
 export namespace Translations {
   export type Locales<T = string> = T[];
 

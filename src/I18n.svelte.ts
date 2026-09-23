@@ -2,7 +2,7 @@ import { capturesParams, fetchTranslations, hasOwn, mergeTranslations, omitProto
 import type { Delivery, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
-import type { Config, Extension, Loader, Parser, Schema, Translations } from './types.js';
+import type { Config, Extension, Loader, Parser, Schema, Snapshot, Translations } from './types.js';
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
@@ -325,6 +325,37 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   };
 
   /**
+   * Restores the state `snapshot({ records: true })` captured on another
+   * instance: its data, its load records, the active locale and the route.
+   * A loader named by a record does not run again for the same params; data
+   * no record names is displayed but keeps no loader from running. An
+   * envelope without `records` is applied as plain data instead. Nothing
+   * happens for `undefined`, so a load whose server half sent nothing can call
+   * it unconditionally.
+   */
+  hydrate = (envelope?: Snapshot.Envelope): void => {
+    if (!envelope || this.#inert('hydrate')) return;
+
+    // Typically `initLocale`: the constructor started its load before the
+    // records could keep the loaders from running.
+    if (this.#inflight.size) logger.warn('Hydrating after a load started: its loaders ran regardless of the hand-off.');
+
+    const { translations = {}, records, locale, route } = envelope;
+
+    if (records) this.#hydrateRecords(translations, records);
+    else this.#addSanitized(translations);
+
+    if (route !== undefined) this.#route = route;
+
+    if (locale !== undefined) {
+      this.#requestedLocale = locale;
+      this.#locale = locale;
+    }
+
+    if (locale !== undefined && route !== undefined) this.#want(this.#matchLoaders(locale, route));
+  };
+
+  /**
    * Serializes what this instance holds for the active locale and the fallback
    * locale. The result is shaped like `config.translations`, so a client
    * hydrates by passing it to `addTranslations()` — the bookkeeping derived
@@ -338,24 +369,35 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * the client could not tell apart from data supplied without a loader.
    * A literal `__proto__` key is left out too: the serializer SvelteKit hands
    * load data to refuses an object that carries one.
+   *
+   * `{ records: true }` returns an envelope for `hydrate()` instead: the same
+   * data, the loaders that delivered it, the active locale and the route. The
+   * records name each loader, so a namespace fed by several loaders is handed
+   * over too, and so is one a loader delivered for route params while its
+   * record says so — not a namespace with both, whose data the client could
+   * not split between them.
    */
-  snapshot = (): Translations.SerializedTranslations => {
-    const { fallbackLocale } = this.#config ?? {};
+  snapshot = ((options?: { records?: boolean }) => {
+    const withRecords = options?.records === true;
+
+    const { fallbackLocale, loaders = [] } = this.#config ?? {};
 
     // Both are held sanitized, the way the loaders key their data.
-    const locales = [this.#locale, fallbackLocale].filter((locale): locale is Config.Locale => !!locale);
+    const locales = unique([this.#locale, fallbackLocale].filter((locale): locale is Config.Locale => !!locale));
 
-    return locales.reduce<Translations.SerializedTranslations>((acc, locale) => {
-      if (hasOwn(acc, locale)) return acc;
+    const omitted = new Map(locales.map((locale) => [locale, this.#unsnapshottable(locale, withRecords)]));
 
+    const isOmitted = (locale: Config.Locale, key: string) => (omitted.get(locale) ?? []).some(
+      (namespace) => isNamespaceKey(key, namespace),
+    );
+
+    const translations = locales.reduce<Translations.SerializedTranslations>((acc, locale) => {
       const data = read(this.#rawTranslations, locale);
 
       if (!data) return acc;
 
-      const omitted = this.#unsnapshottable(locale);
-
       const handable = Object.fromEntries(
-        Object.entries(data).filter(([key]) => !omitted.some((namespace) => isNamespaceKey(key, namespace))),
+        Object.entries(data).filter(([key]) => !isOmitted(locale, key)),
       );
 
       const relevant = omitProtoKeys(handable);
@@ -370,6 +412,30 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       return { ...acc, [locale]: relevant };
     }, {});
+
+    if (!withRecords) return translations;
+
+    // A loader without an id cannot be named off-process: its data travels as
+    // data alone, and the client runs it again.
+    const records = loaders.flatMap((loader): Snapshot.LoadRecord[] => {
+      const { id, locale, namespace } = loader;
+      const signature = this.#loaderRecords.get(loader);
+
+      if (id === null || signature === undefined || !omitted.has(locale) || isOmitted(locale, namespace)) return [];
+
+      return [signature ? { id, signature } : { id }];
+    });
+
+    return {
+      translations,
+      records,
+      ...(this.#locale === undefined ? {} : { locale: this.#locale }),
+      ...(this.#route === undefined ? {} : { route: this.#route }),
+    };
+  }) as {
+    (options?: { records?: false }): Translations.SerializedTranslations;
+    (options: { records: true }): Snapshot.Envelope;
+    (options?: { records?: boolean }): Translations.SerializedTranslations | Snapshot.Envelope;
   };
 
   /**
@@ -513,8 +579,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   #addTranslations(translations?: Translations.SerializedTranslations): void {
     if (!translations) return;
 
-    const sanitized = sanitizeTranslationLocales(translations, this.#sanitize);
+    this.#addSanitized(sanitizeTranslationLocales(translations, this.#sanitize));
+  }
 
+  #addSanitized(sanitized: Translations.SerializedTranslations): void {
     Object.keys(sanitized).forEach((locale) => {
       // A `null` payload for a locale must not take the whole call down —
       // every step of the merge tolerates it, so this bookkeeping does too.
@@ -528,6 +596,48 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#keepExternal(sanitized);
     this.#mergeTranslations(sanitized);
+  }
+
+  /**
+   * Applies hand-off data with the records of the loaders that delivered it.
+   * A recorded loader's namespace is kept as that loader's delivery, so params
+   * that change later replace it; the rest is kept as data supplied without a
+   * loader, but records no namespace — the hand-off says which loaders it
+   * covers, and anything else loads again rather than going missing. A record
+   * naming no loader of this config is dropped, and its loader runs again.
+   */
+  #hydrateRecords(translations: Translations.SerializedTranslations, records: Snapshot.LoadRecord[]): void {
+    const { loaders = [] } = this.#config ?? {};
+
+    const named = new Map(loaders.flatMap((loader) => (loader.id === null ? [] : [[loader.id, loader] as const])));
+
+    const deliveries = records.flatMap(({ id, signature = '' }): Delivery[] => {
+      const loader = named.get(id);
+
+      if (!loader) {
+        logger.debug(`No loader is named '${id}'. It loads again.`);
+
+        return [];
+      }
+
+      return [{ loader, signature, data: read(read(translations, loader.locale), loader.namespace) ?? {} }];
+    });
+
+    deliveries.forEach((delivery) => {
+      this.#deliveries.set(delivery.loader, delivery);
+      this.#loaderRecords.set(delivery.loader, delivery.signature);
+    });
+
+    const external = Object.keys(translations).reduce<Translations.SerializedTranslations>((acc, locale) => {
+      const rest = Object.fromEntries(Object.entries(read(translations, locale) ?? {}).filter(
+        ([key]) => !deliveries.some(({ loader }) => loader.locale === locale && loader.namespace === key),
+      ));
+
+      return Object.keys(rest).length ? { ...acc, [locale]: rest } : acc;
+    }, {});
+
+    this.#keepExternal(external);
+    this.#mergeTranslations(translations);
   }
 
   /** Keeps data held without a loader, to rebuild a namespace from. */
@@ -645,15 +755,22 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** The namespaces of `sanitizedLocale` `snapshot()` leaves out — see there. */
-  #unsnapshottable(sanitizedLocale: Config.Locale): Loader.Key[] {
+  #unsnapshottable(sanitizedLocale: Config.Locale, withRecords: boolean): Loader.Key[] {
     const { loaders = [] } = this.#config ?? {};
 
     const own = loaders.filter(({ locale }) => locale === sanitizedLocale);
 
-    return unique(own
-      .filter((loader) => own.some((other) => other !== loader && other.namespace === loader.namespace)
-        || capturesParams(loader.routes))
-      .map(({ namespace }) => namespace));
+    return unique(own.map(({ namespace }) => namespace)).filter((namespace) => {
+      const feeding = own.filter((loader) => loader.namespace === namespace);
+
+      const several = feeding.length > 1;
+      const params = feeding.some(({ routes }) => capturesParams(routes));
+
+      if (!withRecords) return several || params;
+
+      // Only a record lets the client replace the data once the params change.
+      return params && (several || feeding.some((loader) => loader.id === null || !this.#loaderRecords.has(loader)));
+    });
   }
 
   /**
@@ -670,6 +787,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       return params ? [{ loader, params, signature: paramsSignature(params) }] : [];
     });
+  }
+
+  /** Records the params the current route asks each matching loader for. */
+  #want(matching: LoadRequest[]): void {
+    matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
   }
 
   /**
@@ -711,7 +833,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     // Recorded before the in-flight check, so a trigger joining a load, or one
     // served from the records, still decides which params the route shows.
-    if (activate) matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
+    if (activate) this.#want(matching);
 
     // NUL never appears in a sanitized locale, so the key is unambiguous.
     const inflightKey = `${locale}\u0000${route}`;
