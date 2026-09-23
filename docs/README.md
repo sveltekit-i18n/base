@@ -498,6 +498,12 @@ const config = {
 
 Synchronous translations that are available immediately, before any loaders execute.
 
+They **seed** the tables: they record nothing, so a loader of a namespace they
+name still runs on its triggers — a route-scoped one once its route is reached —
+and its data merges in; a leaf both declare takes the loader's value once it
+delivers. They start no [`cache`](#cache) window either. To hand
+server-rendered data over, use [`hydrate()`](#hydrateenvelope).
+
 Locale keys are normalized per [`sanitizeLocales`](#sanitizelocales), so by
 default `EN` and `en` are one entry — the one `t()` reads.
 
@@ -1479,12 +1485,14 @@ the rejection.
 
 **Type:** `(translations: Record<string, any>) => void`
 
-Adds translations synchronously (static tables known ahead of time). Payload is
-preprocessed per `config.preprocess` and merged into the tables; already-added
-namespaces count as loaded, so their loaders do not refire — except a loader
-whose [route params](#route-params) ask for data of their own, and one with
-[`cache: false`](#cache-optional). Locale keys are
-normalized ([`sanitizeLocales`](#sanitizelocales)) before they are merged.
+Seeds translations synchronously (static tables known ahead of time), like
+[`translations`](#translations). Payload is preprocessed per
+`config.preprocess` and merged into the tables, and it records nothing: every
+loader of a namespace it names still runs and merges into it, and a loader
+whose [route params](#route-params) change replaces only its own part. It
+starts no [`cache`](#cache) window. Locale keys are normalized
+([`sanitizeLocales`](#sanitizelocales)) before they are merged. To hand a
+server's state over, use [`hydrate()`](#hydrateenvelope).
 
 Merging goes branch by branch, so a payload for a namespace that already holds
 data adds to it instead of replacing it; a leaf declared twice takes the
@@ -1511,10 +1519,12 @@ Serializes what the instance currently holds for the **active locale** and the
   [`hydrate()`](#hydrateenvelope): the data, the loaders that delivered it, the
   active locale and the route. This is the form to hand to a client.
 - **`snapshot()`** returns the data alone, shaped like
-  [`translations`](#translations). Applied with
-  [`addTranslations()`](#addtranslationstranslations), it keeps every loader of
-  every namespace it names from running, but one with
-  [`cache: false`](#cache-optional).
+  [`translations`](#translations), for a plain hand-off:
+  `hydrate({ translations })` keeps every loader without route params of every
+  namespace it names from running, and holds a
+  [`cache: false`](#cache-optional) one back for the pass it arrived with.
+  Passed to [`addTranslations()`](#addtranslationstranslations) or assigned to
+  `config.translations`, it only seeds, and every loader runs again.
 
 ```javascript
 // +layout.server.js — one instance per request
@@ -1532,8 +1542,10 @@ export const load = async ({ url, locals }) => {
 
 The envelope is plain data — strings, arrays and plain objects — so SvelteKit
 serializes it like any other load data. Its locales are held sanitized and are
-not sanitized again, so take it from `snapshot()` rather than building it by
-hand. `Snapshot.Envelope` is its type.
+not sanitized again, and its `locale` and `route` are applied as they are, so
+take it from the server: the whole envelope from `snapshot({ records: true })`,
+or for a plain hand-off the data of `snapshot()` with the server's
+[`locale`](#locale). `Snapshot.Envelope` is its type.
 
 What the payload leaves out:
 
@@ -1553,16 +1565,23 @@ What the payload leaves out:
   kept.
 
 Without records, plain data cannot say which loader delivered what, so
-`snapshot()` also leaves out **every** namespace fed by several loaders — the
-namespace record it would leave on the client would keep a loader whose part
-is missing from running — and every namespace of a loader whose `routes` can
-capture params, which on the client would count as data supplied without a
-loader. The client loads those itself.
+`snapshot()` also leaves out:
+
+- **every** namespace fed by several loaders — the namespace record a plain
+  `hydrate()` would leave on the client would keep a loader whose part is
+  missing from running;
+- every namespace of a loader whose `routes` can capture params, which a plain
+  hand-off keeps as data no loader delivered, so new params could not replace
+  it.
+
+The client loads those itself.
 
 The data is **pre-preprocess** — the [`rawTranslations`](#translations--rawtranslations)
 shape — so the receiving instance applies its own `config.preprocess`.
 Freshness is not transferred either: the [`cache`](#cache) window of a hydrated
 locale starts when the client receives the data, not when the server loaded it.
+Data no caching loader feeds — seeded data, a namespace only
+[`cache: false`](#cache-optional) loaders feed — starts none.
 
 ---
 
@@ -1606,10 +1625,15 @@ The envelope is **applied on top of** the config: a config that carries its own
 `translations` keeps them.
 
 `hydrate(undefined)` does nothing, so a `load` whose server half sent nothing
-can call it unconditionally. An envelope without `records` is applied as plain
-data, the way [`addTranslations()`](#addtranslationstranslations) applies it —
-save that it also holds a [`cache: false`](#cache-optional) loader of a
-namespace it carries back for the pass it arrived with.
+can call it unconditionally. An envelope without `records` is a plain
+hand-off, the one channel that marks a namespace loaded without naming a
+loader: every namespace its data names — by the first segment of each key, so
+a dotted `'extra.a'` names `extra` — keeps its loaders without route params
+from running until [`invalidate()`](#invalidatelocale-namespace) or
+[`cache`](#cache) expiry covers it, and a [`cache: false`](#cache-optional)
+loader of such a namespace is held back for the pass it arrived with. Data
+passed to [`addTranslations()`](#addtranslationstranslations) or
+`config.translations` only seeds, and keeps no loader from running.
 A record naming no loader of the client's config — one whose `routes` the two
 sides spell differently, say — is dropped, and its loader runs again.
 
