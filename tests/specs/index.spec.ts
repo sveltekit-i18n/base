@@ -157,10 +157,10 @@ describe('i18n instance', () => {
 
     expect(instance.translations).toStrictEqual(TRANSLATIONS);
   });
-  it('`addTranslations` prevents a duplicit load', () => {
+  it('a plain `hydrate` prevents a duplicit load', () => {
     const instance = new i18n({ loaders, parser, log });
 
-    instance.addTranslations(TRANSLATIONS);
+    instance.hydrate({ translations: TRANSLATIONS });
     void instance.loadTranslations(initLocale);
 
     expect(instance.loading).toBe(false);
@@ -168,7 +168,7 @@ describe('i18n instance', () => {
   it('a cache-served load still activates the locale', async () => {
     const instance = new i18n({ loaders, parser, log });
 
-    instance.addTranslations(TRANSLATIONS);
+    instance.hydrate({ translations: TRANSLATIONS });
     await instance.loadTranslations(initLocale);
 
     expect(instance.locale).toBe(initLocale);
@@ -924,7 +924,7 @@ describe('i18n instance', () => {
     });
 
     await instance.loadTranslations('en', '/item/5');
-    instance.addTranslations({ en: { item: { static: 'Static' } } });
+    instance.hydrate({ translations: { en: { item: { static: 'Static' } } } });
     await instance.loadTranslations('en', '/item');
 
     expect(instance.translations.en).toEqual({ 'item.static': 'Static', 'item.list': 'All' });
@@ -998,17 +998,17 @@ describe('i18n instance', () => {
       loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/article\/(?<articleId>\d+)/], loader }],
     });
 
-    instance.addTranslations({ en: { article: { title: 'Five' } } });
+    instance.hydrate({ translations: { en: { article: { title: 'Five' } } } });
     await instance.loadTranslations('en', '/article/6');
 
     expect(loader).toHaveBeenCalledTimes(1);
     expect(instance.translations.en).toEqual({ 'article.title': 'Six' });
   });
-  it('lets a loader run again once data supplied without a loader is invalidated', async () => {
+  it('lets a loader run again once a plain hand-off is invalidated', async () => {
     const loader = vi.fn(async () => ({ greeting: 'Hello' }));
     const instance = new i18n({ parser, log, loaders: [{ namespace: 'common', locale: 'en', loader }] });
 
-    instance.addTranslations({ en: { common: { greeting: 'Hi' } } });
+    instance.hydrate({ translations: { en: { common: { greeting: 'Hi' } } } });
     await instance.loadTranslations('en', '/');
     expect(loader).not.toHaveBeenCalled();
 
@@ -1212,19 +1212,19 @@ describe('i18n locale keys', () => {
     expect(instance.l('EN', 'greeting')).toBe('Hello');
   });
 
-  it('a non-canonical `config.translations` key still suppresses its loader', async () => {
+  it('a non-canonical `config.translations` key seeds the table its loader merges into', async () => {
     let calls = 0;
     const instance = new i18n({
       parser: valueParser,
       log,
       translations: { EN: { common: { greeting: 'Hello' } } },
-      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { greeting: 'Hello' }; } }],
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => { calls += 1; return { farewell: 'Bye' }; } }],
     });
 
     await instance.loadTranslations('en');
 
-    expect(calls).toBe(0);
-    expect(instance.t('common.greeting')).toBe('Hello');
+    expect(calls).toBe(1);
+    expect(instance.translations).toEqual({ en: { 'common.greeting': 'Hello', 'common.farewell': 'Bye' } });
   });
 
   it('`snapshot` carries data added under a non-canonical locale', async () => {
@@ -1790,13 +1790,9 @@ describe('i18n warm loads', () => {
 
   it('a warm load with nothing to fetch does not activate', async () => {
     const loader = vi.fn(async () => ({ greeting: 'Hallo' }));
-    const instance = new i18n({
-      parser,
-      log,
-      translations: { de: { common: { greeting: 'Hallo' } } },
-      loaders: [{ namespace: 'common', locale: 'de', loader }],
-    });
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'common', locale: 'de', loader }] });
 
+    instance.hydrate({ translations: { de: { common: { greeting: 'Hallo' } } } });
     await instance.loadTranslations('de', '/', { activate: false });
 
     expect(loader).not.toHaveBeenCalled();
@@ -2516,7 +2512,9 @@ describe('i18n cache and invalidation', () => {
 
     const stale = instance.loadTranslations('en', '/');
     instance.invalidate('en');
-    instance.addTranslations({ en: { common: { greeting: 'supplied' } } });
+    // A hand-off while a load is in flight is unsupported, and warns; it is the
+    // one way to record the namespace before its severed load settles.
+    instance.hydrate({ translations: { en: { common: { greeting: 'supplied' } } } });
 
     void instance.loadTranslations('en', '/');
 
@@ -2540,7 +2538,6 @@ describe('i18n cache and invalidation', () => {
       log,
       initLocale: 'en',
       translations: { en: { common: { greeting: 'new' } } },
-      loaders,
     });
 
     await vi.waitFor(() => expect(instance.locale).toBe('en'));
@@ -2645,9 +2642,10 @@ describe('i18n cache and invalidation', () => {
       const instance = new i18n({
         parser: valueParser,
         log,
-        translations: { cs: { editor: { seeded: 'Seeded' } } },
         loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en'), counted(calls, 'editor', 'cs')],
       });
+
+      instance.hydrate({ translations: { cs: { editor: { seeded: 'Seeded' } } } });
 
       await instance.loadTranslations('cs', '/');
       await instance.loadTranslations('en', '/');
@@ -2662,14 +2660,15 @@ describe('i18n cache and invalidation', () => {
       expect(calls).toEqual({ 'common.en': 1, 'editor.en': 2, 'editor.cs': 1 });
     });
 
-    it('drops the namespace record of data supplied without a loader', async () => {
+    it('drops the namespace record of a plain hand-off', async () => {
       const calls: Calls = {};
       const instance = new i18n({
         parser: valueParser,
         log,
-        translations: { en: { editor: { seeded: 'Seeded' }, common: { seeded: 'Seeded' } } },
         loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en')],
       });
+
+      instance.hydrate({ translations: { en: { editor: { seeded: 'Seeded' }, common: { seeded: 'Seeded' } } } });
 
       await instance.loadTranslations('en', '/');
 
@@ -3260,6 +3259,120 @@ describe('i18n loaders with `cache: false`', () => {
   });
 });
 
+describe('i18n seeded translations', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  const extra = (loader: () => Promise<Record<string, string>>, routes?: string[]) => ({ namespace: 'extra', locale: 'en', ...(routes && { routes }), loader });
+
+  it('lets the loader of a namespace seeded through `config.translations` run, and merges the two', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { extra: { a: 'static-a' } } }, loaders: [extra(loader)] });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('lets the loader of a namespace seeded through `addTranslations()` run, and merges the two', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, loaders: [extra(loader)] });
+
+    instance.addTranslations({ en: { extra: { a: 'static-a' } } });
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('runs a route-scoped loader of a seeded namespace once its route is reached', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { extra: { a: 'static-a' } } }, loaders: [extra(loader, ['/other'])] });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).not.toHaveBeenCalled();
+
+    await instance.setRoute('/other');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('lets `loadNamespace()` fetch a seeded namespace off its loader\'s routes', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { extra: { a: 'static-a' } } }, loaders: [extra(loader, ['/other'])] });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('extra');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('keeps a dotted leaf from claiming its namespace', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { 'extra.a': 'static-a' } }, loaders: [extra(loader)] });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('starts no `cache` window, which its loader\'s first delivery starts', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+      const instance = new i18n({ parser: valueParser, log, cache: 1000, translations: { en: { extra: { a: 'static-a' } } }, loaders: [extra(loader)] });
+
+      vi.advanceTimersByTime(600);
+      await instance.loadTranslations('en', '/');
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(999);
+      await instance.loadTranslations('en', '/');
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1);
+      await instance.loadTranslations('en', '/');
+      expect(loader).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts no `cache` window when a hand-off carries it', async () => {
+    vi.useFakeTimers();
+    try {
+      const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+      const instance = new i18n({ parser: valueParser, log, cache: 1000, loaders: [extra(loader)] });
+
+      instance.hydrate({ translations: { en: { labels: { en: 'English' } } }, records: [], locale: 'en', route: '/' });
+
+      vi.advanceTimersByTime(600);
+      await instance.loadTranslations('en', '/');
+
+      vi.advanceTimersByTime(999);
+      await instance.loadTranslations('en', '/');
+      expect(loader).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still suppresses the loader when the same data arrives as a plain hand-off', async () => {
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const instance = new i18n({ parser: valueParser, log, loaders: [extra(loader)] });
+
+    instance.hydrate({ translations: { en: { extra: { a: 'static-a' } } } });
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).not.toHaveBeenCalled();
+    expect(instance.translations.en).toEqual({ 'extra.a': 'static-a' });
+  });
+});
+
 describe('i18n snapshot', () => {
   const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
 
@@ -3316,7 +3429,7 @@ describe('i18n snapshot', () => {
     const calls: Record<string, number> = {};
     const client = new i18n({ parser: valueParser, log, loaders: shared(calls) });
 
-    client.addTranslations(server.snapshot());
+    client.hydrate({ translations: server.snapshot() });
     await client.loadTranslations('en', '/');
     await client.setRoute('/about');
 
@@ -3340,7 +3453,7 @@ describe('i18n snapshot', () => {
 
     const client = new i18n({ parser: valueParser, log, loaders: [article] });
 
-    client.addTranslations(server.snapshot());
+    client.hydrate({ translations: server.snapshot() });
     await client.loadTranslations('en', '/article/6');
     await client.setRoute('/article/7');
 
@@ -3373,13 +3486,15 @@ describe('i18n snapshot', () => {
     expect(instance.snapshot().en.common).toEqual({ greeting: 'Hello' });
   });
 
-  it('hydrates a fresh instance through `config.translations` without refetching', async () => {
+  it('hydrates a fresh instance through a plain `hydrate()` without refetching', async () => {
     const server = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
 
     await server.loadTranslations('en', '/');
 
     const calls: Record<string, number> = {};
-    const client = new i18n({ parser: valueParser, log, translations: server.snapshot(), loaders: countingLoaders(calls) });
+    const client = new i18n({ parser: valueParser, log, loaders: countingLoaders(calls) });
+
+    client.hydrate({ translations: server.snapshot() });
 
     await client.loadTranslations('en', '/');
 
@@ -3403,7 +3518,7 @@ describe('i18n snapshot', () => {
 
     const client = new i18n({ parser: valueParser, log, loaders: [article] });
 
-    client.addTranslations(server.snapshot());
+    client.hydrate({ translations: server.snapshot() });
     await client.loadTranslations('en', '/articles/5');
 
     expect(client.translations.en).toEqual({ 'article.title': 'T5' });
@@ -3416,7 +3531,9 @@ describe('i18n snapshot', () => {
     await server.setRoute('/');
 
     const calls: Record<string, number> = {};
-    const client = new i18n({ parser: valueParser, log, translations: server.snapshot(), loaders: countingLoaders(calls) });
+    const client = new i18n({ parser: valueParser, log, loaders: countingLoaders(calls) });
+
+    client.hydrate({ translations: server.snapshot() });
 
     await client.loadTranslations('en', '/');
     await client.setRoute('/about');

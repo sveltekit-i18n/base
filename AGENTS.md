@@ -110,10 +110,13 @@ translation state, loading, caching, route matching, and preprocessing — but
   current route (or it has no `routes`). A load record names the loader that
   DELIVERED, never the namespace its data landed in: `#loaderRecords` maps the
   resolved descriptor to the signature of the params its routes captured, and
-  a loader that threw records nothing. Data supplied without a loader records
-  its namespace instead (`#namespaceRecords`, null-prototype, keyed by
-  user-supplied locales), which suppresses that namespace's loaders without
-  params. When a loader's params change, its new data REPLACES what it
+  a loader that threw records nothing. A plain hand-off (`hydrate()` without
+  records) records the namespaces its data names instead (`#namespaceRecords`,
+  null-prototype, keyed by user-supplied locales), which suppresses those
+  namespaces' loaders without params. A seed (`config.translations`,
+  `addTranslations()`) records nothing and starts no `cache` window: it lands
+  in `#externalTranslations`, and its namespace's loaders still run and merge
+  into it. When a loader's params change, its new data REPLACES what it
   delivered before — the namespace is rebuilt from `#externalTranslations` and
   each loader's last delivery (`#deliveries`), so no stale key survives and a
   sibling keeps its part. Last request wins for params too: every ACTIVATING
@@ -150,8 +153,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   namespace becomes its delivery, so new params replace it; data no record
   names is displayed but records no namespace, so whatever the envelope does
   not cover loads again instead of going missing. An envelope without
-  `records` is plain data and records namespaces, as `addTranslations` does,
-  and hands off the `cache: false` loaders of the namespaces it carries.
+  `records` is a plain hand-off, the only writer of `#namespaceRecords`: it
+  records every namespace its data names and hands off the `cache: false`
+  loaders of those namespaces.
 - **A loader receives plain data.** `Loader.Props` holds strings and plain
   objects of strings: the locale, the route, and whatever else a loader is
   handed later. Never an `event`, a `fetch`, or any `@sveltejs/kit` type. That

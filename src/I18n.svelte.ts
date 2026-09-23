@@ -52,8 +52,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // Load records keep a loader from running twice. A loader's own record holds
   // the params signature it last delivered for; a namespace record stands for
-  // data that reached the instance without a loader, and keeps the namespace's
-  // loaders from fetching it again unless their params ask for other data.
+  // a namespace a plain hand-off delivered, and keeps its loaders from fetching
+  // it again unless their params ask for other data. Seeded data records
+  // nothing.
   #loaderRecords = new Map<Loader.Resolved, string>();
 
   // Null prototype: these tables are indexed by user-supplied locales, and a
@@ -385,8 +386,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * A loader named by a record does not run again for the same params — one
    * with `cache: false` only for the pass the envelope arrived with; data no
    * record names is displayed but keeps no loader from running. An envelope
-   * without `records` is applied as plain data instead, which holds a
-   * `cache: false` loader of a namespace it carries back for that pass. Nothing
+   * without `records` is a plain hand-off instead: every namespace its data
+   * names keeps its loaders without params from running, and holds one with
+   * `cache: false` back for that pass. Nothing
    * happens for `undefined`, so a load whose server half sent nothing can call
    * it unconditionally.
    */
@@ -416,17 +418,17 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Serializes what this instance holds for the active locale and the fallback
-   * locale. The result is shaped like `config.translations`, so a client
-   * hydrates by passing it to `addTranslations()` — the bookkeeping derived
-   * from it then keeps the matching loaders, but one with `cache: false`, from
-   * fetching the same data again.
-   * Apply it to the instance rather than assigning it to `config.translations`:
-   * the payload covers two locales, so assigning it would drop the rest of the
-   * config's own data.
+   * locale. The result is shaped like `config.translations`, and a client
+   * hands it over with `hydrate({ translations })`: a plain hand-off, whose
+   * namespace records keep the matching loaders without params from fetching
+   * it again and hold one with `cache: false` back for that pass. Passed to
+   * `addTranslations()` or assigned to `config.translations` it only seeds,
+   * and every loader runs again.
    * A namespace plain data cannot hand over is left out, for the client to
    * load: one fed by several loaders, whose record would suppress a part the
-   * payload lacks, and one whose loader's routes can capture params, whose data
-   * the client could not tell apart from data supplied without a loader.
+   * payload lacks, and one whose loader's routes can capture params, whose
+   * data a plain hand-off keeps as data no loader delivered, so the next
+   * params could not replace it.
    * A literal `__proto__` key is left out too: the serializer SvelteKit hands
    * load data to refuses an object that carries one.
    *
@@ -633,9 +635,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Merges data supplied without a loader. Its namespaces are recorded as
-   * loaded, so the loaders that would fetch them do not, and the data is kept
-   * to rebuild a namespace a loader later replaces its part of.
+   * Merges seeded data. It records no namespace, so the namespace's loaders
+   * still run and merge into it, and it starts no `cache` window. It is kept to
+   * rebuild a namespace a loader later replaces its part of.
    */
   #addTranslations(translations?: Translations.SerializedTranslations): void {
     if (!translations) return;
@@ -643,34 +645,35 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const sanitized = sanitizeTranslationLocales(translations, this.#sanitize);
 
     this.#addSanitized(sanitized);
-    this.#stamp(Object.keys(sanitized));
   }
 
   #addSanitized(sanitized: Translations.SerializedTranslations): void {
-    Object.keys(sanitized).forEach((locale) => {
-      // A `null` payload for a locale must not take the whole call down —
-      // every step of the merge tolerates it, so this bookkeeping does too.
-      const data = read(sanitized, locale) ?? {};
-
-      this.#namespaceRecords[locale] = Array.from(new Set([
-        ...(read(this.#namespaceRecords, locale) || []),
-        ...Object.keys(data).map((key) => `${key}`.split('.')[0]),
-      ]));
-    });
-
     this.#keepExternal(sanitized);
     this.#mergeTranslations(sanitized);
   }
 
   /**
-   * Applies plain hand-off data. A loader with `cache: false` is served by its
-   * namespace for the pass the data arrived with.
+   * Applies plain hand-off data. It records every namespace the data names,
+   * which keeps its loaders without params from running, and a loader with
+   * `cache: false` is served by its namespace for the pass the data arrived
+   * with.
    */
   #hydratePlain(translations: Translations.SerializedTranslations): void {
     const { loaders = [] } = this.#config ?? {};
 
     const served = loaders.filter((loader) => loader.cache === false
       && Object.keys(read(translations, loader.locale) ?? {}).some((key) => isNamespaceKey(key, loader.namespace)));
+
+    Object.keys(translations).forEach((locale) => {
+      // A `null` payload for a locale must not take the whole call down —
+      // every step of the merge tolerates it, so this bookkeeping does too.
+      const data = read(translations, locale) ?? {};
+
+      this.#namespaceRecords[locale] = Array.from(new Set([
+        ...(read(this.#namespaceRecords, locale) || []),
+        ...Object.keys(data).map((key) => `${key}`.split('.')[0]),
+      ]));
+    });
 
     this.#addSanitized(translations);
     served.forEach((loader) => this.#handedOff.set(loader, ''));
@@ -681,7 +684,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Applies hand-off data with the records of the loaders that delivered it.
    * A recorded loader's namespace is kept as that loader's delivery, so params
    * that change later replace it; the rest is kept as data supplied without a
-   * loader, but records no namespace — the hand-off says which loaders it
+   * loader and, like a seed, records no namespace — the hand-off says which loaders it
    * covers, and anything else loads again rather than going missing. A record
    * naming no loader of this config is dropped, and its loader runs again.
    */
@@ -776,20 +779,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Stamps each locale hand-off data holds something for besides a namespace
-   * only loaders with `cache: false` feed: those start no window.
+   * Stamps each locale hand-off data holds something for that a caching
+   * loader feeds: seeded data and a namespace only loaders with `cache: false`
+   * feed start no window.
    */
   #stampHandOff(translations: Translations.SerializedTranslations): void {
     const { loaders = [] } = this.#config ?? {};
 
-    const uncached = (locale: Config.Locale, key: string) => {
-      const feeding = loaders.filter((loader) => loader.locale === locale && isNamespaceKey(key, loader.namespace));
-
-      return feeding.length > 0 && feeding.every((loader) => loader.cache === false);
-    };
+    const cached = (locale: Config.Locale, key: string) => loaders.some(
+      (loader) => loader.locale === locale && loader.cache !== false && isNamespaceKey(key, loader.namespace),
+    );
 
     this.#stamp(Object.keys(translations).filter(
-      (locale) => Object.keys(read(translations, locale) ?? {}).some((key) => !uncached(locale, key)),
+      (locale) => Object.keys(read(translations, locale) ?? {}).some((key) => cached(locale, key)),
     ));
   }
 
@@ -953,8 +955,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * The matching loaders a load has to run: all but those whose own record
-   * holds the params the route yields now. A namespace supplied without a
-   * loader stands in for the record of a loader without params that has none.
+   * holds the params the route yields now. A namespace a plain hand-off
+   * delivered stands in for the record of a loader without params that has
+   * none.
    * A loader with `cache: false` runs unless a hand-off serves it: its record
    * only names what it delivered.
    */

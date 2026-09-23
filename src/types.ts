@@ -94,7 +94,7 @@ export namespace Config {
      */
     loaders?: readonly Loader.LoaderModule[];
     /**
-     * Locale-indexed translations, which should be in place before loaders will trigger. It's useful for static pages and synchronous translations – for example locally defined language names which are the same for all of the language mutations.
+     * Locale-indexed translations, in place before any loader runs. They seed the tables: they record nothing, so the loaders of a namespace they name still run and their data merges in. Useful for static pages and synchronous translations – for example locally defined language names which are the same for all of the language mutations. Hand server-rendered data over with `hydrate()` instead.
      *
      * @example {
      *  "en": {"lang": {"en": "English", "cs": "Česky"}}
@@ -621,8 +621,10 @@ export namespace Snapshot {
    * What `snapshot({ records: true })` returns and `hydrate()` applies. Plain
    * data throughout – strings, arrays and plain objects – so `devalue`, the
    * serializer SvelteKit hands load data to, accepts it. Its locales are held
-   * sanitized and are not sanitized again, so take it from `snapshot()` rather
-   * than building it by hand.
+   * sanitized and are not sanitized again, and `locale` and `route` are applied
+   * as they are, so take it from the server: the whole envelope from
+   * `snapshot({ records: true })`, or for a plain hand-off the data of
+   * `snapshot()` with the server's `i18n.locale`.
    */
   export type Envelope = {
     /** What the instance held for its active locale and the fallback locale, shaped like `config.translations`. */
@@ -632,8 +634,7 @@ export namespace Snapshot {
      * for the same params – one with `cache: false` only for the pass the
      * envelope arrived with. Without it, the data is handed over as plain data:
      * it keeps every loader without params of every namespace it names from
-     * running, as `addTranslations()` does, and holds one with `cache: false`
-     * back for that pass.
+     * running, and holds one with `cache: false` back for that pass.
      */
     records?: LoadRecord[];
     /** The active locale. */

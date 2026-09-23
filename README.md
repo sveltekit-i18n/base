@@ -221,7 +221,7 @@ Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config
 
 ### `translations`
 
-Synchronous translations loaded immediately:
+Synchronous translations, available immediately. They seed the tables: the loaders of a namespace they name still run and merge into it. Hand a server's state over with [`hydrate()`](./docs/README.md#hydrateenvelope) instead:
 
 ```javascript
 translations: {
@@ -359,9 +359,9 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `setLocale(locale)` – request a locale; loads once a route is known
 - `setRoute(route)` – update the current route
 - `loadConfig(config)` – (re)configure the instance
-- `addTranslations(translations)` – add synchronous translations
-- `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`
-- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for), its locale and its route
+- `addTranslations(translations)` – seed synchronous translations; the loaders of their namespaces still run and merge into them
+- `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`, for a plain `hydrate({ translations })`
+- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for), its locale and its route; an envelope without records keeps the loaders of the namespaces its data names from running
 - `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with its data discarded — an activating trigger fetches it again before it activates
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 
