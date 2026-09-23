@@ -2165,20 +2165,75 @@ describe('i18n snapshot', () => {
     expect(instance.snapshot()).toEqual({});
   });
 
-  it('narrows the active locale to the current route', async () => {
+  it('serializes what the active locale holds, whichever route loaded it', async () => {
     const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
 
     await instance.loadTranslations('en', '/about');
     await instance.setRoute('/');
 
-    // '/about' data is still held, but it belongs to another route — sending
-    // it would let the client hydrate keys its own loaders never claim back.
     expect(instance.snapshot()).toEqual({
       en: {
         common: { greeting: 'Hello' },
         home: { title: 'Home' },
+        about: { title: 'About' },
       },
     });
+  });
+
+  it('keeps data supplied without a loader in a namespace a loader claims', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
+
+    await instance.loadTranslations('en', '/about');
+    await instance.setRoute('/');
+    instance.addTranslations({ en: { about: { note: 'static' } } });
+
+    expect(instance.snapshot().en.about).toEqual({ title: 'About', note: 'static' });
+  });
+
+  it('leaves out a namespace fed by several loaders, for the client to load', async () => {
+    const shared = (calls: Record<string, number>) => [
+      { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
+      { namespace: 'nav', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { home: 'Home' }; } },
+      { namespace: 'nav', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { about: 'About' }; } },
+    ];
+    const server = new i18n({ parser: valueParser, log, loaders: shared({}) });
+
+    await server.loadTranslations('en', '/');
+
+    expect(server.snapshot()).toEqual({ en: { common: { greeting: 'Hello' } } });
+
+    const calls: Record<string, number> = {};
+    const client = new i18n({ parser: valueParser, log, loaders: shared(calls) });
+
+    client.addTranslations(server.snapshot());
+    await client.loadTranslations('en', '/');
+    await client.setRoute('/about');
+
+    expect(calls).toEqual({ home: 1, about: 1 });
+    expect(client.t('nav.home')).toBe('Home');
+    expect(client.t('nav.about')).toBe('About');
+  });
+
+  it('leaves out a namespace a loader delivered for route params', async () => {
+    const article = {
+      namespace: 'article',
+      locale: 'en',
+      routes: [/^\/article\/(?<articleId>\d+)/],
+      loader: async ({ params }: Loader.Props) => ({ title: `Article ${params.articleId}`, [`only${params.articleId}`]: 'x' }),
+    };
+    const server = new i18n({ parser: valueParser, log, loaders: [article] });
+
+    await server.loadTranslations('en', '/article/6');
+
+    expect(server.snapshot()).toEqual({});
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article] });
+
+    client.addTranslations(server.snapshot());
+    await client.loadTranslations('en', '/article/6');
+    await client.setRoute('/article/7');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x' });
   });
 
   it('keeps keys no loader claims', async () => {
@@ -2222,7 +2277,28 @@ describe('i18n snapshot', () => {
     expect(client.t('home.title')).toBe('Home');
   });
 
-  it('leaves the loaders of other routes to run on navigation', async () => {
+  it('leaves out a namespace a loader delivered on a route that captured no params', async () => {
+    const article = {
+      namespace: 'article',
+      locale: 'en',
+      routes: [/^\/articles$/, /^\/articles\/(?<id>\d+)$/],
+      loader: async ({ params }: Loader.Props) => (params.id ? { title: `T${params.id}` } : { list: 'All' }),
+    };
+    const server = new i18n({ parser: valueParser, log, loaders: [article] });
+
+    await server.loadTranslations('en', '/articles');
+
+    expect(server.snapshot()).toEqual({});
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article] });
+
+    client.addTranslations(server.snapshot());
+    await client.loadTranslations('en', '/articles/5');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'T5' });
+  });
+
+  it('keeps the loaders of every route it carries from running on the client', async () => {
     const server = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
 
     await server.loadTranslations('en', '/about');
@@ -2232,10 +2308,9 @@ describe('i18n snapshot', () => {
     const client = new i18n({ parser: valueParser, log, translations: server.snapshot(), loaders: countingLoaders(calls) });
 
     await client.loadTranslations('en', '/');
-    expect(calls).toEqual({});
-
     await client.setRoute('/about');
-    expect(calls).toEqual({ about: 1 });
+
+    expect(calls).toEqual({});
     expect(client.t('about.title')).toBe('About');
   });
 

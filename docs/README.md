@@ -1417,7 +1417,7 @@ i18n.addTranslations({
 **Type:** `() => Record<string, any>`
 
 Serializes what the instance currently holds for the **active locale** and the
-**`fallbackLocale`**, narrowed to the current route. The result is shaped like
+**`fallbackLocale`**, whichever routes loaded it. The result is shaped like
 [`translations`](#translations), so the receiving instance hydrates by passing
 it to [`addTranslations()`](#addtranslationstranslations) — the bookkeeping
 derived from it keeps the matching loaders from fetching the same data again:
@@ -1455,16 +1455,18 @@ export const load = async ({ data, url }) => {
 The payload is **applied on top of** the config rather than assigned to
 `config.translations`: it is a subset of what the server held, so a config that
 carries its own `translations` keeps them either way. Assigning it would drop
-both of the things the list below leaves out.
+whatever the list below leaves out.
 
 What the payload leaves out:
 
 - **Other locales** — only the active locale and the fallback are serialized.
-- **Other routes** — a key claimed *only* by loaders whose `routes` do not match
-  the current route is dropped; the client loads it when it navigates there. A
-  key no loader claims (added through `addTranslations()`) is always kept. A key
-  some loader claims is dropped whole, including whatever `config.translations`
-  contributed to it.
+- **A namespace fed by several loaders.** Plain data cannot say which of them
+  delivered, and the namespace it records on the client would keep a loader
+  whose part is missing from running. The client loads the namespace itself.
+- **A namespace of a loader whose `routes` can capture [route
+  params](#route-params)**, whichever of them loaded it. On the client it would
+  count as data supplied without a loader, which the loader's next params could
+  not replace. The client loads it with its own params.
 - **A literal `__proto__` key**, at any depth — SvelteKit serializes load data
   with `devalue`, which refuses an object carrying one, so keeping it would fail
   the render. The key is dropped with a warning; the rest of its namespace is
@@ -1611,12 +1613,13 @@ export const load = async ({ data, url }) => {
 This `load` runs on the server for the SSR pass and again in the browser on
 hydration. Both start from the server's snapshot, so the loaders behind it do
 not run a second time; only data the snapshot left out — the route-scoped
-translations of pages the visitor has not opened yet — is fetched. Every later
+translations of pages the visitor has not opened yet, and the namespaces the
+snapshot cannot hand over — is fetched. Every later
 client-side navigation reuses the same instance, so its cache survives.
 
 The hand-off is applied to the instance instead of being assigned to
 `config.translations`, so whatever the config declares stays where it is: the
-snapshot covers two locales and drops a key its loaders claim for another route,
+snapshot covers two locales and leaves out the namespaces it cannot hand over,
 so assigning it would take the rest of the config's static data down with it.
 It is applied once, inside the branch that builds the instance — replaying it
 on a later navigation would mark loaders loaded again after an
