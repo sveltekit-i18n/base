@@ -90,7 +90,7 @@ export namespace Config {
 
   export type T<P extends Parser.Params = Parser.Params, O = Parser.Output, S = any> = {
     /**
-     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again when the params its `routes` capture change, once the `config.cache` window elapses, or after `invalidate()` is called.
+     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again when the params its `routes` capture change, once the `config.cache` window elapses, or after `invalidate()` is called. A loader with `cache: false` runs on every load trigger that selects it.
      */
     loaders?: readonly Loader.LoaderModule[];
     /**
@@ -306,11 +306,15 @@ export namespace Loader {
     */
     loader: T;
     /**
-    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once per set of params). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once per set of params, unless the loader sets `cache: false`). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
     *
     * Named capture groups in a route `RegExp` are load parameters: their matches reach the loader as `Props.params`, and the loader runs again when they change, its data replacing what it delivered for the previous ones. Use a non-capturing group (`(?:...)`) where you only need grouping.
     */
     routes?: readonly Route[];
+    /**
+    * Set to `false` when the loader's source does the caching – a SvelteKit remote `query`, an SWR layer, an HTTP cache. The core then keeps no freshness of its own for it: it runs on every load trigger that selects it, its data is applied each time like any refetch, and `config.cache` does not apply to it – refreshing the source is the app's business. Data hydrated from a snapshot still holds it back for the pass it arrived with, until an activating trigger asks for another locale or route; `invalidate()` ends that hand-off and discards a fetch of it in flight. Only `false` is accepted.
+    */
+    cache?: false;
   };
 
   /**
@@ -625,9 +629,11 @@ export namespace Snapshot {
     translations: Translations.SerializedTranslations;
     /**
      * The loaders that delivered, which `hydrate()` keeps from running again
-     * for the same params. Without it, the data is handed over as plain data:
+     * for the same params – one with `cache: false` only for the pass the
+     * envelope arrived with. Without it, the data is handed over as plain data:
      * it keeps every loader without params of every namespace it names from
-     * running, as `addTranslations()` does.
+     * running, as `addTranslations()` does, and holds one with `cache: false`
+     * back for that pass.
      */
     records?: LoadRecord[];
     /** The active locale. */

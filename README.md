@@ -215,6 +215,8 @@ A named capture group in a `RegExp` route is a load parameter: its match reaches
 
 See [route params](./docs/README.md#route-params) for the rules.
 
+A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](./docs/README.md#cache-optional).
+
 Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
 
 ### `translations`
@@ -285,7 +287,7 @@ Hand-write it for a small set of messages, or point the slot at a generated arti
 
 ### `cache`
 
-Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — each loader runs once per locale and [route params](./docs/README.md#route-params) (a loader's `routes` decide whether a load trigger considers it, and the params their named groups capture decide when it runs again).
+Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — each loader (but one with [`cache: false`](./docs/README.md#cache-optional)) runs once per locale and [route params](./docs/README.md#route-params) (a loader's `routes` decide whether a load trigger considers it, and the params their named groups capture decide when it runs again).
 
 Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 
@@ -359,7 +361,7 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `loadConfig(config)` – (re)configure the instance
 - `addTranslations(translations)` – add synchronous translations
 - `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`
-- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again), its locale and its route
+- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for), its locale and its route
 - `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with its data discarded — an activating trigger fetches it again before it activates
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 

@@ -442,9 +442,13 @@ export const resolveLoaders = (
 
   return withIds(input.reduce<Array<Omit<Loader.Resolved, 'id'>>>((acc, descriptor) => {
     try {
-      const { namespace, key, locale, loader, routes } = descriptor;
+      const { namespace, key, locale, loader, routes, cache } = descriptor;
 
       if (key !== undefined) logger.warn(`Loader '${String(key)}' uses 'key', which is deprecated. Rename it to 'namespace'.`);
+
+      if (cache !== undefined && cache !== false) {
+        logger.error(`Ignoring the 'cache' of loader '${String(namespace ?? key)}': only 'false' is accepted.`);
+      }
 
       const namespaces = unique(asList(namespace ?? key).filter((name) => name != null));
       const locales = unique(sanitize(...asList(locale).filter((name) => name != null)));
@@ -457,7 +461,13 @@ export const resolveLoaders = (
 
       return [
         ...acc,
-        ...locales.flatMap((pairLocale) => namespaces.map((pairNamespace) => ({ namespace: pairNamespace, locale: pairLocale, loader, routes }))),
+        ...locales.flatMap((pairLocale) => namespaces.map((pairNamespace) => ({
+          namespace: pairNamespace,
+          locale: pairLocale,
+          loader,
+          routes,
+          ...(cache === false ? { cache } : {}),
+        }))),
       ];
     } catch (error) {
       logError('Skipping a loader that cannot be read.', error);

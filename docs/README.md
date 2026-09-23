@@ -195,7 +195,7 @@ with no keys, just as one returning `{}` does.
 **⚠️ `route` is context, not a cache key.** A loader runs at most once per
 locale per freshness window (see [`cache`](#cache)) and per set of
 [route params](#route-params) — a later route yielding the same params does not
-run it again. So a loader whose payload varies by `route` itself would serve the
+run it again, unless the loader sets [`cache: false`](#cache-optional). So a loader whose payload varies by `route` itself would serve the
 first route's data everywhere. Capture the part of the route the data depends
 on as a route param, or scope the data with [`routes`](#routes-optional), and
 use the `route` argument for diagnostics:
@@ -319,7 +319,8 @@ the loader as `params`, and the loader runs again whenever the params change:
   them all in memory. Its siblings in the namespace keep their part. The
   tradeoff: going back to article 5 fetches it again.
 - **The params are the cache key, not the route.** Two routes yielding the same
-  params describe the same data and load it once.
+  params describe the same data and load it once — unless the loader sets
+  [`cache: false`](#cache-optional).
 - **The current route's params win.** Loads that settle out of order apply only
   the data of the params the current route asks for; an older load for other
   params is discarded.
@@ -364,8 +365,49 @@ it pure — a matcher may be consulted more than once per load:
 
 **💡 Tip:** Keep common translations small and use route-based loading for page-specific content to optimize performance.
 
-**Loader descriptors are read once.** `locale`, `namespace`, `loader` and `routes`
-are captured when the config is applied, so a property implemented as a getter
+##### `cache` (optional)
+
+**Type:** `false`
+
+Set when the loader's source does the caching itself — a SvelteKit remote
+`query`, an SWR layer, an HTTP cache. Without it, a loader that answers from its
+own cache after [`invalidate()`](#invalidatelocale-namespace) hands back the same
+stale table, and the core stamps it fresh anyway.
+
+```javascript
+{
+  locale: 'en',
+  namespace: 'editor',
+  cache: false,
+  loader: ({ locale }) => messages({ locale, namespace: 'editor' }),
+}
+```
+
+For such a loader the core keeps no freshness of its own:
+
+- It **runs on every load trigger that selects it**, by locale and route, and
+  [`loadNamespace()`](#loadnamespacenamespace-locale) runs it too — off its
+  `routes` only until it has delivered, like any loader. Freshness and
+  deduplication across triggers are its source's job; concurrent triggers still
+  share one load.
+- Its data is applied each time it delivers, like any refetch.
+- It starts no [`cache`](#cache) window, and the config's `cache` does not apply
+  to it: an expiry neither runs it again nor discards what it is fetching.
+- Refreshing the source is the app's business (`query.refresh()`); the next
+  trigger picks the new data up.
+  [`invalidate()`](#invalidatelocale-namespace) still covers it: the call ends
+  the hand-off below, which would hold the loader back until its pass ends, and
+  discards a fetch of it still in flight.
+- The SSR hand-off still counts: data [`hydrate()`](#hydrateenvelope) applied
+  serves the pass it arrived with — until an activating trigger asks for
+  another locale or route than the envelope named, or than the first activating
+  trigger after it where the envelope named none — so a server-rendered page
+  does not refetch right after hydration.
+
+Only `false` is accepted; any other value is reported and ignored.
+
+**Loader descriptors are read once.** `locale`, `namespace`, `loader`, `routes`
+and `cache` are captured when the config is applied, so a property implemented as a getter
 is not re-evaluated on later loads. A descriptor that throws while being read
 is reported through the [logger](#loglevel) and dropped — the remaining loaders
 keep working, and [`locales`](#locales) lists the ones that resolved.
@@ -907,7 +949,7 @@ window.
 
 ```javascript
 const config = {
-  // cache: Number.POSITIVE_INFINITY — each loader runs once per locale and route params
+  // cache: Number.POSITIVE_INFINITY — each loader (but one with `cache: false`) runs once per locale and route params
 };
 ```
 
@@ -957,6 +999,9 @@ prevent a refetch, neither clears the tables.
 translations" action), keep the infinite default and call
 [`invalidate()`](#invalidatelocale-namespace) instead — expiry and manual invalidation
 compose.
+
+A loader with [`cache: false`](#cache-optional) starts no window and is not
+covered by one: its source does the caching.
 
 **Use Cases:**
 - **Static translation files:** Keep the default — nothing ever refetches needlessly
@@ -1341,7 +1386,8 @@ It does not evaluate the
 [`cache`](#cache) window; the next activating trigger does. An activating trigger
 selecting the same loaders for the same locale joins it: `loading` turns `true`, and the locale
 activates when the shared load settles. Once it has settled, the activating call
-fetches nothing and activates at once, unless the locale's `cache` window has elapsed in the meantime.
+fetches nothing (a [`cache: false`](#cache-optional) loader aside) and activates
+at once, unless the locale's `cache` window has elapsed in the meantime.
 
 ```javascript
 // Fetch what a link needs without switching to it.
@@ -1384,7 +1430,8 @@ async function openEditor() {
   delivered last serves, and only a loader that has not delivered yet is
   called — with none.
 - It honours the load records like every other trigger: calling it on every
-  interaction fetches once, and concurrent calls share one fetch, whichever
+  interaction fetches once (a [`cache: false`](#cache-optional) loader runs
+  each time on its routes), and concurrent calls share one fetch, whichever
   route they come from.
 - What it loads **stays loaded across routes**, so a namespace can be present
   outside every route its loader declares, and it reaches
@@ -1435,7 +1482,8 @@ the rejection.
 Adds translations synchronously (static tables known ahead of time). Payload is
 preprocessed per `config.preprocess` and merged into the tables; already-added
 namespaces count as loaded, so their loaders do not refire — except a loader
-whose [route params](#route-params) ask for data of their own. Locale keys are
+whose [route params](#route-params) ask for data of their own, and one with
+[`cache: false`](#cache-optional). Locale keys are
 normalized ([`sanitizeLocales`](#sanitizelocales)) before they are merged.
 
 Merging goes branch by branch, so a payload for a namespace that already holds
@@ -1465,7 +1513,8 @@ Serializes what the instance currently holds for the **active locale** and the
 - **`snapshot()`** returns the data alone, shaped like
   [`translations`](#translations). Applied with
   [`addTranslations()`](#addtranslationstranslations), it keeps every loader of
-  every namespace it names from running.
+  every namespace it names from running, but one with
+  [`cache: false`](#cache-optional).
 
 ```javascript
 // +layout.server.js — one instance per request
@@ -1528,7 +1577,9 @@ hand-off](#server-side-rendering):
 - the **data** is displayed at once;
 - a loader named by the **records** does not run again for the same [route
   params](#route-params), while its siblings on other routes still run when
-  their route matches; new params replace its data as they would after a load;
+  their route matches; new params replace its data as they would after a load.
+  One with [`cache: false`](#cache-optional) is held back only for the pass the
+  envelope arrived with;
 - data no record names is displayed, but keeps no loader from running — a
   loader the records do not cover loads again rather than going missing;
 - the **active locale** and the **route** are restored, so the instance is
@@ -1556,7 +1607,9 @@ The envelope is **applied on top of** the config: a config that carries its own
 
 `hydrate(undefined)` does nothing, so a `load` whose server half sent nothing
 can call it unconditionally. An envelope without `records` is applied as plain
-data, the way [`addTranslations()`](#addtranslationstranslations) applies it.
+data, the way [`addTranslations()`](#addtranslationstranslations) applies it —
+save that it also holds a [`cache: false`](#cache-optional) loader of a
+namespace it carries back for the pass it arrived with.
 A record naming no loader of the client's config — one whose `routes` the two
 sides spell differently, say — is dropped, and its loader runs again.
 
@@ -1600,6 +1653,10 @@ data from after the invalidation. It leaves that to the next trigger when
 another locale was asked for meanwhile, when later params replaced the ones it
 asked for, or when the config was replaced. `invalidate()` itself still starts
 nothing: only a trigger that was already running finishes its job.
+
+A loader with [`cache: false`](#cache-optional) is covered too: the call ends
+the hand-off that holds it back after [`hydrate()`](#hydrateenvelope), and a
+fetch of it in flight is severed like any other.
 
 A namespace invalidation leaves the locale's [`cache`](#cache) window where it
 was: the refetched namespace expires together with the rest of the locale, so
