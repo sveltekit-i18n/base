@@ -748,7 +748,7 @@ How locale identifiers are normalized before they key anything —
 [`initLocale`](#initlocale), [`fallbackLocale`](#fallbacklocale), the
 [translation tables](#translations--rawtranslations) and every locale you pass
 to `l()`, `setLocale()`, `loadTranslations()` or
-[`invalidate()`](#invalidatelocale).
+[`invalidate()`](#invalidatelocale-namespace).
 
 **Default (`true`) — ISO normalization:**
 
@@ -950,12 +950,12 @@ Fresh data merges over the stale keys; freshness is stamped per locale
 **Expiry refreshes, it never removes.** A refetch merges leaf by leaf into what
 is already displayed, so a message the source dropped since the first load stays
 until the instance is recreated. The same holds for
-[`invalidate()`](#invalidatelocale) — both drop the bookkeeping that would
+[`invalidate()`](#invalidatelocale-namespace) — both drop the bookkeeping that would
 prevent a refetch, neither clears the tables.
 
 **💡 Tip:** For event-driven refreshes (a CMS webhook, a manual "reload
 translations" action), keep the infinite default and call
-[`invalidate()`](#invalidatelocale) instead — expiry and manual invalidation
+[`invalidate()`](#invalidatelocale-namespace) instead — expiry and manual invalidation
 compose.
 
 **Use Cases:**
@@ -1333,15 +1333,15 @@ by every request in the process — see
 current route and [`locale`](#locale) stay as they were, and the load does not
 count towards [`loading`](#loading), so nothing on screen changes. It uses the
 same loader selection, bookkeeping and in-flight deduplication as an activating
-call, and `invalidate()` severs it the same way. A loader whose
+call, and `invalidate()` severs it the same way — but it does not fetch the
+severed part again, as an activating trigger does; the next trigger will. A loader whose
 [route params](#route-params) differ from the ones the current route asks for
 still runs, but its data is discarded rather than replacing what is displayed.
 It does not evaluate the
 [`cache`](#cache) window; the next activating trigger does. An activating trigger
 selecting the same loaders for the same locale joins it: `loading` turns `true`, and the locale
 activates when the shared load settles. Once it has settled, the activating call
-fetches nothing and activates at once, unless the locale's `cache` window has
-elapsed in the meantime.
+fetches nothing and activates at once, unless the locale's `cache` window has elapsed in the meantime.
 
 ```javascript
 // Fetch what a link needs without switching to it.
@@ -1393,7 +1393,7 @@ async function openEditor() {
   not change, [`loading`](#loading) stays `false` — track the returned promise
   for a spinner of the component's own — and the [`cache`](#cache) window is
   evaluated by the next activating trigger, after which the next call refetches.
-- [`invalidate()`](#invalidatelocale) severs it like any other load, and a
+- [`invalidate()`](#invalidatelocale-namespace) severs it like any other load, and a
   loader that throws is logged and records nothing, so the next call retries.
 
 ---
@@ -1494,7 +1494,7 @@ What the payload leaves out:
   namespace each loader delivered, so the next params could not replace theirs.
   The client loads the namespace itself. The same goes for a namespace whose
   one loader can capture params but holds no record — after an
-  [`invalidate()`](#invalidatelocale), say.
+  [`invalidate()`](#invalidatelocale-namespace), say.
 - **A loader that cannot be named off-process** — two loaders the config spells
   the same, or whose only difference is a `RouteMatcher` — stays out of the
   records. Its data is handed over, and the client runs the loader again.
@@ -1566,26 +1566,44 @@ regardless; `hydrate()` warns when that happens.
 
 ---
 
-### `invalidate(locale?)`
+### `invalidate(locale?, namespace?)`
 
-**Type:** `(locale?: string) => void`
+**Type:** `(locale?: string, namespace?: string) => void`
 
 Marks loaded translations stale — for one locale, or for all of them when
-called without arguments. The call itself starts **no** load and the currently
-displayed translations stay in place; loaders run again on the next load
-trigger and fresh data replaces the old.
+called without a locale, and for one namespace, or for all of them when called
+without one. The call itself starts **no** load and the currently displayed
+translations stay in place; loaders run again on the next load trigger and
+fresh data replaces the old.
 
 ```javascript
 // A CMS webhook / admin action told us the English content changed:
 i18n.invalidate('en');
 
+// Only the editor catalogue changed — the rest of English stays loaded:
+i18n.invalidate('en', 'editor');
+
+// The editor catalogue changed in every language:
+i18n.invalidate(undefined, 'editor');
+
 // Nothing happens yet — the next navigation (or explicit load) refetches:
 await i18n.loadTranslations('en', location.pathname);
 ```
 
-A load already in flight when `invalidate()` is called is severed: it still
-settles, but its data is discarded — it predates the invalidation — and the
-next load trigger starts a fresh fetch instead of joining it.
+A loader already in flight for what was invalidated is severed: its load still
+settles, but that loader's data is discarded — it predates the invalidation —
+and the next load trigger starts a fresh fetch instead of joining it. The rest
+of the load lands. An activating trigger still in flight (`setLocale`,
+`setRoute`, `loadTranslations`) then fetches the severed part again and only
+activates once it arrives, so awaiting it still means its locale is loaded, with
+data from after the invalidation. It leaves that to the next trigger when
+another locale was asked for meanwhile, when later params replaced the ones it
+asked for, or when the config was replaced. `invalidate()` itself still starts
+nothing: only a trigger that was already running finishes its job.
+
+A namespace invalidation leaves the locale's [`cache`](#cache) window where it
+was: the refetched namespace expires together with the rest of the locale, so
+no table outlives the window.
 
 Works independently of `config.cache`: with the default infinite cache it is
 the way to pick up runtime content changes; with a finite cache it forces a
@@ -1708,7 +1726,7 @@ same instance, so its cache survives.
 
 The hand-off is applied once, inside the branch that builds the instance —
 replaying it on a later navigation would mark loaders loaded again after an
-[`invalidate()`](#invalidatelocale). It is applied on top of the config, so
+[`invalidate()`](#invalidatelocale-namespace). It is applied on top of the config, so
 whatever the config declares stays where it is.
 
 Leave [`initLocale`](#initlocale) out of a config used this way. It starts its

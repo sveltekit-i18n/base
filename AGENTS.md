@@ -86,14 +86,16 @@ translation state, loading, caching, route matching, and preprocessing — but
   return the promise of the MATCHING load — the in-flight key is what a
   trigger SELECTED (locale, then each loader and params signature), not the
   route it came from, so concurrent duplicates join instead of fetching twice
-  and a namespace load never joins an unrelated route load; `loading` is
+  and a namespace load never joins an unrelated route load. A trigger joins a
+  load under its key only while that load delivers everything the trigger has
+  to fetch — nothing severed, nothing left out; `loading` is
   derived from the set of in-flight ACTIVATING loads. A warm load
   (`loadTranslations(…, { activate: false })`, and every `loadNamespace`,
   which selects by namespace and ignores `routes`) only fills the tables: it
   writes neither the requested locale nor the route, never activates on its
   own, counts towards `loading` only once an activating trigger joins it, and
-  never evaluates `cache` expiry — expiry severs the locale's in-flight loads,
-  and nothing a warm trigger records would restart a severed activating one.
+  never evaluates `cache` expiry: it fills the tables and leaves their
+  freshness to the activating triggers, which the `cache` docs promise.
   There is no loader-trigger store,
   no promise purge, no `toPromise()`. A failed load rejects the caller's
   promise; a discarded one is reported through the logger and never becomes an
@@ -118,12 +120,20 @@ translation state, loading, caching, route matching, and preprocessing — but
   trigger records the params it wants per matching loader (`#wanted`), even one
   that joins a load or fetches nothing, and a delivery for other params is
   discarded — a warm load wants nothing, so it never replaces what is shown. Per-locale expiry (`config.cache`, default
-  `Infinity` — never expires) and `invalidate(locale?)` drop that bookkeeping
-  so the NEXT load trigger refetches. Invalidation also severs matching
-  in-flight loads — a severed load settles but applies nothing, so its
-  pre-invalidation data cannot resurrect the dropped bookkeeping. Neither
-  expiry nor `invalidate` ever removes displayed translations or starts a
-  load by itself. Don't break load-once semantics.
+  `Infinity` — never expires) and `invalidate(locale?, namespace?)` drop that
+  bookkeeping so the NEXT load trigger refetches; a namespace invalidation
+  leaves `#loadedAt` alone, so no table outlives the window. Invalidation also
+  severs the matching loaders of in-flight loads, per loader — a load that
+  lost a loader discards that loader's data when it settles, while the rest of
+  it lands, so pre-invalidation data cannot resurrect the dropped bookkeeping.
+  A load stays in `#inflight` until it settles, so a later invalidation,
+  reconfiguration or `destroy()` still reaches the rest of it. An ACTIVATING
+  load then fetches its severed part again (`#resume`) and activates once it
+  arrives, so a trigger's promise keeps meaning "loaded"; it stands down when
+  the instance was destroyed, another locale was requested, the config was
+  replaced or a later trigger wants other params, and a warm load never
+  resumes. Neither expiry nor `invalidate` ever removes displayed translations
+  or starts a load by itself. Don't break load-once semantics.
 - **The SSR hand-off is a pair.** `snapshot({ records: true })` serializes the
   data, the records of the loaders that delivered it (their `id` and params
   signature — never a reference), the active locale and the route;

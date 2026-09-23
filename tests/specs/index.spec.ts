@@ -2274,7 +2274,41 @@ describe('i18n cache and invalidation', () => {
     expect(calls.cs).toBe(1);
   });
 
-  it('`invalidate` severs an in-flight load so its data cannot resurrect the loaded state', async () => {
+  it('`invalidate` severs an in-flight load, and its trigger fetches again before it activates', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+      ],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    expect(calls).toBe(1);
+
+    instance.invalidate('en');
+
+    resolvers[0]?.({ greeting: 'stale', old: 'stale' });
+    await vi.waitFor(() => expect(calls).toBe(2));
+
+    // The severed load's data is discarded — it predates the invalidation —
+    // and the trigger is still loading.
+    expect(instance.rawTranslations).toEqual({});
+    expect(instance.locale).toBeUndefined();
+    expect(instance.loading).toBe(true);
+
+    resolvers[1]?.({ greeting: 'fresh' });
+    await pending;
+
+    expect(instance.t('common.greeting')).toBe('fresh');
+    expect(instance.t('common.old')).toBe('common.old');
+    expect(instance.locale).toBe('en');
+    expect(instance.loading).toBe(false);
+  });
+
+  it('a severed trigger joins the load a later trigger started instead of fetching again', async () => {
     let calls = 0;
     const resolvers: Array<(value: any) => void> = [];
     const instance = new i18n({
@@ -2286,26 +2320,154 @@ describe('i18n cache and invalidation', () => {
     });
 
     const stale = instance.loadTranslations('en', '/');
-    expect(calls).toBe(1);
-
     instance.invalidate('en');
+
+    const fresh = instance.loadTranslations('en', '/');
+
+    resolvers[0]?.({ greeting: 'stale' });
+    resolvers[1]?.({ greeting: 'fresh' });
+    await stale;
+    await fresh;
+
+    expect(calls).toBe(2);
+    expect(instance.t('common.greeting')).toBe('fresh');
+    expect(instance.locale).toBe('en');
+  });
+
+  it('a severed trigger activates at once when a warm load delivered its part first', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/');
+    instance.invalidate('en');
+
+    const warm = instance.loadTranslations('en', '/', { activate: false });
+
+    resolvers[1]?.({ greeting: 'fresh' });
+    await warm;
+
+    expect(instance.locale).toBeUndefined();
 
     resolvers[0]?.({ greeting: 'stale' });
     await stale;
 
-    // The severed load's data is discarded — it predates the invalidation —
-    // and a discarded load activates nothing.
-    expect(instance.rawTranslations).toEqual({});
-    expect(instance.locale).toBeUndefined();
-
-    const fresh = instance.loadTranslations('en', '/');
     expect(calls).toBe(2);
-
-    resolvers[1]?.({ greeting: 'fresh' });
-    await fresh;
-
     expect(instance.t('common.greeting')).toBe('fresh');
     expect(instance.locale).toBe('en');
+  });
+
+  it('a severed trigger makes the warm load it joins activate', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+        { namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) },
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/');
+    instance.invalidate('en', 'common');
+
+    const warm = instance.loadTranslations('en', '/', { activate: false });
+
+    // The part the invalidation left lands once the severed load settles.
+    resolvers[0]?.({ greeting: 'stale' });
+    await vi.waitFor(() => expect(instance.translations.en).toEqual({ 'nav.home': 'Home' }));
+
+    expect(instance.locale).toBeUndefined();
+
+    resolvers[1]?.({ greeting: 'fresh' });
+    await stale;
+    await warm;
+
+    expect(calls).toBe(2);
+    expect(instance.t('common.greeting')).toBe('fresh');
+    expect(instance.locale).toBe('en');
+  });
+
+  it('a severed trigger superseded by another locale fetches nothing again', async () => {
+    const calls: Record<string, number> = {};
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls.en = (calls.en ?? 0) + 1; resolvers.push(resolve); }) },
+        counterLoader('cs', calls),
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/');
+    instance.invalidate('en');
+
+    await instance.setLocale('cs');
+
+    resolvers[0]?.({ greeting: 'stale' });
+    await stale;
+
+    expect(calls).toEqual({ en: 1, cs: 1 });
+    expect(instance.locale).toBe('cs');
+  });
+
+  it('a severed trigger whose params a later trigger no longer wants fetches nothing again', async () => {
+    const received: Loader.Params[] = [];
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/article\/(?<articleId>\d+)/],
+          loader: ({ params }: Loader.Props) => new Promise<any>((resolve) => { received.push(params); resolvers.push(resolve); }),
+        },
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/article/1');
+    instance.invalidate('en');
+
+    const current = instance.loadTranslations('en', '/article/2');
+
+    resolvers[0]?.({ title: 'Article 1' });
+    await stale;
+
+    resolvers[1]?.({ title: 'Article 2' });
+    await current;
+
+    expect(received).toEqual([{ articleId: '1' }, { articleId: '2' }]);
+    expect(instance.t('article.title')).toBe('Article 2');
+  });
+
+  it('a reconfiguration leaves a severed trigger to the next one', async () => {
+    let calls = 0;
+    const resolvers: Array<(value: any) => void> = [];
+    const loaders = [
+      { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { calls += 1; resolvers.push(resolve); }) },
+    ];
+    const instance = new i18n({ parser: valueParser, log, loaders });
+
+    const stale = instance.loadTranslations('en', '/');
+
+    await instance.loadConfig({ parser: valueParser, log, loaders });
+
+    resolvers[0]?.({ greeting: 'stale' });
+    await stale;
+
+    expect(calls).toBe(1);
+    expect(instance.locale).toBeUndefined();
+    expect(instance.rawTranslations).toEqual({});
   });
 
   it('a load trigger after a mid-flight `invalidate` refetches instead of joining the severed load', async () => {
@@ -2340,6 +2502,374 @@ describe('i18n cache and invalidation', () => {
 
     await instance.loadTranslations('en', '/');
     expect(calls).toBe(2);
+  });
+
+  it('a load trigger with nothing to fetch activates at once instead of waiting for a severed load', async () => {
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { resolvers.push(resolve); }) },
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/');
+    instance.invalidate('en');
+    instance.addTranslations({ en: { common: { greeting: 'supplied' } } });
+
+    void instance.loadTranslations('en', '/');
+
+    expect(instance.locale).toBe('en');
+
+    resolvers[0]?.({ greeting: 'stale' });
+    await stale;
+
+    expect(instance.t('common.greeting')).toBe('supplied');
+  });
+
+  it('a reconfiguration with nothing to fetch activates without waiting for the load it replaced', async () => {
+    const resolvers: Array<(value: any) => void> = [];
+    const loaders = [
+      { namespace: 'common', locale: 'en', loader: () => new Promise<any>((resolve) => { resolvers.push(resolve); }) },
+    ];
+    const instance = new i18n({ parser: valueParser, log, initLocale: 'en', loaders });
+
+    const reconfigured = instance.loadConfig({
+      parser: valueParser,
+      log,
+      initLocale: 'en',
+      translations: { en: { common: { greeting: 'new' } } },
+      loaders,
+    });
+
+    await vi.waitFor(() => expect(instance.locale).toBe('en'));
+
+    resolvers[0]?.({ greeting: 'old' });
+    await reconfigured;
+
+    expect(resolvers).toHaveLength(1);
+    expect(instance.t('common.greeting')).toBe('new');
+  });
+
+  it('`invalidate` severs the loaders of a locale that ride in the load of another one', async () => {
+    const calls: Record<string, number> = {};
+    const resolvers: Array<(value: any) => void> = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      fallbackLocale: 'de',
+      loaders: [
+        counterLoader('en', calls),
+        { namespace: 'common', locale: 'de', loader: () => new Promise<any>((resolve) => { calls.de = (calls.de ?? 0) + 1; resolvers.push(resolve); }) },
+      ],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    instance.invalidate('de');
+
+    resolvers[0]?.({ greeting: 'stale' });
+    await vi.waitFor(() => expect(calls.de).toBe(2));
+
+    // The fallback locale's part predates the invalidation; the rest lands,
+    // and the locale waits for the part fetched again.
+    expect(instance.translations.de).toBeUndefined();
+    expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello en' });
+    expect(instance.locale).toBeUndefined();
+
+    resolvers[1]?.({ greeting: 'fresh' });
+    await pending;
+
+    expect(calls).toEqual({ en: 1, de: 2 });
+    expect(instance.translations.de).toEqual({ 'common.greeting': 'fresh' });
+    expect(instance.locale).toBe('en');
+  });
+
+  describe('of one namespace', () => {
+    type Calls = Record<string, number>;
+
+    const counted = (calls: Calls, namespace: string, locale: string) => ({
+      namespace,
+      locale,
+      loader: async () => {
+        const name = `${namespace}.${locale}`;
+
+        calls[name] = (calls[name] ?? 0) + 1;
+
+        return { title: `${name} ${calls[name]}` };
+      },
+    });
+
+    type Resolvers = Record<string, Array<(value: any) => void>>;
+
+    const deferred = (calls: Calls, resolvers: Resolvers, namespace: string) => ({
+      namespace,
+      locale: 'en',
+      loader: () => new Promise<any>((resolve) => {
+        const name = `${namespace}.en`;
+
+        calls[name] = (calls[name] ?? 0) + 1;
+        (resolvers[name] ??= []).push(resolve);
+      }),
+    });
+
+    // Resolves the `round`th call of every deferred loader.
+    const release = (resolvers: Resolvers, round: number, title: string) => {
+      Object.values(resolvers).forEach((queue) => queue[round]?.({ title }));
+    };
+
+    it('refetches only that namespace of that locale, and keeps it displayed meanwhile', async () => {
+      const calls: Calls = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en'), counted(calls, 'editor', 'cs')],
+      });
+
+      await instance.loadTranslations('cs', '/');
+      await instance.loadTranslations('en', '/');
+
+      instance.invalidate('en', 'editor');
+
+      expect(instance.t('editor.title')).toBe('editor.en 1');
+
+      await instance.loadTranslations('cs', '/');
+      await instance.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 2, 'editor.cs': 1 });
+      expect(instance.t('editor.title')).toBe('editor.en 2');
+    });
+
+    it('covers every locale when no locale is named', async () => {
+      const calls: Calls = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        translations: { cs: { editor: { seeded: 'Seeded' } } },
+        loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en'), counted(calls, 'editor', 'cs')],
+      });
+
+      await instance.loadTranslations('cs', '/');
+      await instance.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 1 });
+
+      instance.invalidate(undefined, 'editor');
+
+      await instance.loadTranslations('cs', '/');
+      await instance.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 2, 'editor.cs': 1 });
+    });
+
+    it('drops the namespace record of data supplied without a loader', async () => {
+      const calls: Calls = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        translations: { en: { editor: { seeded: 'Seeded' }, common: { seeded: 'Seeded' } } },
+        loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en')],
+      });
+
+      await instance.loadTranslations('en', '/');
+
+      expect(calls).toEqual({});
+
+      instance.invalidate('en', 'editor');
+      await instance.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ 'editor.en': 1 });
+    });
+
+    it('severs only the loaders of that namespace, lets the rest of the load land, and fetches them again', async () => {
+      const calls: Calls = {};
+      const resolvers: Array<(value: any) => void> = [];
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [
+          counted(calls, 'common', 'en'),
+          { namespace: 'editor', locale: 'en', loader: () => new Promise<any>((resolve) => { calls['editor.en'] = (calls['editor.en'] ?? 0) + 1; resolvers.push(resolve); }) },
+        ],
+      });
+
+      const pending = instance.loadTranslations('en', '/');
+      instance.invalidate('en', 'editor');
+
+      resolvers[0]?.({ title: 'stale' });
+      await vi.waitFor(() => expect(calls['editor.en']).toBe(2));
+
+      expect(instance.translations.en).toEqual({ 'common.title': 'common.en 1' });
+      expect(instance.locale).toBeUndefined();
+
+      resolvers[1]?.({ title: 'fresh' });
+      await pending;
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 2 });
+      expect(instance.t('editor.title')).toBe('fresh');
+      expect(instance.locale).toBe('en');
+    });
+
+    it('leaves the rest of the load it severed within reach of a later invalidation', async () => {
+      const calls: Calls = {};
+      const resolvers: Resolvers = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [deferred(calls, resolvers, 'common'), deferred(calls, resolvers, 'editor')],
+      });
+
+      const pending = instance.loadTranslations('en', '/');
+      instance.invalidate('en', 'editor');
+      instance.invalidate('en', 'common');
+
+      release(resolvers, 0, 'stale');
+      await vi.waitFor(() => expect(calls).toEqual({ 'common.en': 2, 'editor.en': 2 }));
+
+      expect(instance.rawTranslations).toEqual({});
+
+      release(resolvers, 1, 'fresh');
+      await pending;
+
+      expect(instance.translations.en).toEqual({ 'common.title': 'fresh', 'editor.title': 'fresh' });
+      expect(instance.locale).toBe('en');
+    });
+
+    it('leaves the rest of the load it severed within reach of `destroy()`', async () => {
+      const calls: Calls = {};
+      const resolvers: Resolvers = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [deferred(calls, resolvers, 'common'), deferred(calls, resolvers, 'editor')],
+      });
+
+      const pending = instance.loadTranslations('en', '/');
+      instance.invalidate('en', 'editor');
+      instance.destroy();
+
+      release(resolvers, 0, 'late');
+      await pending;
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 1 });
+      expect(instance.rawTranslations).toEqual({});
+    });
+
+    it('leaves the rest of the load it severed within reach of a reconfiguration', async () => {
+      const calls: Calls = {};
+      const resolvers: Resolvers = {};
+      const loaders = [deferred(calls, resolvers, 'common'), deferred(calls, resolvers, 'editor')];
+      const instance = new i18n({ parser: valueParser, log, loaders });
+
+      const pending = instance.loadTranslations('en', '/');
+      instance.invalidate('en', 'editor');
+      await instance.loadConfig({ parser: valueParser, log, loaders });
+
+      release(resolvers, 0, 'stale');
+      await pending;
+
+      expect(calls).toEqual({ 'common.en': 1, 'editor.en': 1 });
+      expect(instance.rawTranslations).toEqual({});
+    });
+
+    it('keeps a trigger from joining a load in flight that leaves the invalidated namespace out', async () => {
+      const calls: Calls = {};
+      const resolvers: Resolvers = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [deferred(calls, resolvers, 'common'), deferred(calls, resolvers, 'editor')],
+      });
+
+      const loaded = instance.loadTranslations('en', '/');
+      release(resolvers, 0, 'first');
+      await loaded;
+
+      instance.invalidate('en', 'common');
+      const commonOnly = instance.loadTranslations('en', '/');
+
+      instance.invalidate('en', 'editor');
+      const both = instance.loadTranslations('en', '/');
+
+      expect(both).not.toBe(commonOnly);
+      expect(calls['editor.en']).toBe(2);
+
+      release(resolvers, 1, 'second');
+      release(resolvers, 2, 'second');
+      await commonOnly;
+      await both;
+
+      expect(instance.translations.en).toEqual({ 'common.title': 'second', 'editor.title': 'second' });
+    });
+
+    it('retries a loader that failed rather than join the load fetching a severed part again', async () => {
+      const calls: Calls = {};
+      const resolvers: Resolvers = {};
+      let failing = true;
+      const instance = new i18n({
+        parser: valueParser,
+        log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+        loaders: [
+          {
+            namespace: 'common',
+            locale: 'en',
+            loader: async () => {
+              calls['common.en'] = (calls['common.en'] ?? 0) + 1;
+
+              if (failing) throw new Error('down');
+
+              return { title: 'recovered' };
+            },
+          },
+          deferred(calls, resolvers, 'editor'),
+        ],
+      });
+
+      const first = instance.loadTranslations('en', '/');
+      instance.invalidate('en', 'editor');
+
+      release(resolvers, 0, 'stale');
+      await vi.waitFor(() => expect(calls['editor.en']).toBe(2));
+
+      failing = false;
+      const second = instance.loadTranslations('en', '/');
+
+      release(resolvers, 1, 'fresh');
+      release(resolvers, 2, 'fresh');
+      await first;
+      await second;
+
+      expect(calls['common.en']).toBe(2);
+      expect(instance.translations.en).toEqual({ 'common.title': 'recovered', 'editor.title': 'fresh' });
+    });
+
+    it('leaves the locale to expire at its original stamp', async () => {
+      vi.useFakeTimers();
+      try {
+        const calls: Calls = {};
+        const instance = new i18n({
+          parser: valueParser,
+          log,
+          cache: 1000,
+          loaders: [counted(calls, 'common', 'en'), counted(calls, 'editor', 'en')],
+        });
+
+        await instance.loadTranslations('en', '/');
+
+        vi.advanceTimersByTime(600);
+        instance.invalidate('en', 'editor');
+        await instance.loadTranslations('en', '/');
+
+        expect(calls).toEqual({ 'common.en': 1, 'editor.en': 2 });
+
+        vi.advanceTimersByTime(500);
+        await instance.loadTranslations('en', '/');
+
+        expect(calls).toEqual({ 'common.en': 2, 'editor.en': 3 });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('`loadConfig` marks previous loads stale so a reconfiguration refetches', async () => {
