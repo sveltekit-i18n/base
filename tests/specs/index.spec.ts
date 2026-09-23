@@ -3542,6 +3542,40 @@ describe('i18n snapshot', () => {
     expect(client.t('about.title')).toBe('About');
   });
 
+  it('leaves out a namespace no loader delivered and no hand-off named, so a seed in it keeps no loader from running on the client', async () => {
+    const config = (loader: () => Promise<Record<string, string>>) => ({
+      parser: valueParser,
+      log,
+      translations: { en: { extra: { a: 'static-a' } } },
+      loaders: [{ namespace: 'extra', locale: 'en', routes: ['/other'], loader }],
+    });
+    const server = new i18n(config(async () => ({ b: 'loaded-b' })));
+
+    await server.loadTranslations('en', '/');
+
+    expect(server.snapshot()).toEqual({});
+
+    const loader = vi.fn(async () => ({ b: 'loaded-b' }));
+    const client = new i18n(config(loader));
+
+    client.hydrate({ translations: server.snapshot(), locale: 'en', route: '/' });
+    await client.setRoute('/other');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(client.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
+  });
+
+  it('hands on a namespace a plain hand-off named on the server', async () => {
+    const loader = vi.fn(async () => ({ greeting: 'Fetched' }));
+    const server = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'common', locale: 'en', loader }] });
+
+    server.hydrate({ translations: { en: { common: { greeting: 'Cached' } } }, locale: 'en', route: '/' });
+    await server.loadTranslations('en', '/');
+
+    expect(loader).not.toHaveBeenCalled();
+    expect(server.snapshot()).toEqual({ en: { common: { greeting: 'Cached' } } });
+  });
+
   it('leaves out a literal `__proto__` key, which the serializers of load data refuse', async () => {
     const hasOwnProtoKey = (value: any): boolean => !!value && typeof value === 'object'
       && (Object.hasOwn(value, '__proto__') || Object.values(value).some(hasOwnProtoKey));

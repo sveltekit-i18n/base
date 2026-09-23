@@ -155,7 +155,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   not cover loads again instead of going missing. An envelope without
   `records` is a plain hand-off, the only writer of `#namespaceRecords`: it
   records every namespace its data names and hands off the `cache: false`
-  loaders of those namespaces.
+  loaders of those namespaces. The plain `snapshot()` therefore leaves out a
+  namespace none of whose loaders delivered and no hand-off named — its
+  seeded data would otherwise suppress the client's loaders.
 - **A loader receives plain data.** `Loader.Props` holds strings and plain
   objects of strings: the locale, the route, and whatever else a loader is
   handed later. Never an `event`, a `fetch`, or any `@sveltejs/kit` type. That

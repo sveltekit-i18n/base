@@ -1572,7 +1572,11 @@ Without records, plain data cannot say which loader delivered what, so
   missing from running;
 - every namespace of a loader whose `routes` can capture params, which a plain
   hand-off keeps as data no loader delivered, so new params could not replace
-  it.
+  it;
+- every namespace none of whose loaders delivered on this instance and no
+  hand-off named — one they never matched, whose loader threw, or that was
+  invalidated since. Its seeded data would keep the client's loaders from ever
+  running. Seeded data of such a namespace travels in the records form only.
 
 The client loads those itself.
 
