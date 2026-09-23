@@ -76,17 +76,20 @@ translation state, loading, caching, route matching, and preprocessing — but
   bundler, not at publish time. The public surface is one reactive instance:
   properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
   `rawTranslations`), reactive functions (`t`, `l`), promise-returning
-  methods (`loadTranslations`, `loadConfig`, `setLocale`, `setRoute`) and
-  the synchronous `addTranslations`, `snapshot`, `hydrate`, `invalidate` and
-  `destroy`.
+  methods (`loadTranslations`, `loadNamespace`, `loadConfig`, `setLocale`,
+  `setRoute`) and the synchronous `addTranslations`, `snapshot`, `hydrate`,
+  `invalidate` and `destroy`.
   There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
-  `setRoute`/`loadTranslations` start loads directly and return the promise of
-  the MATCHING load — concurrent duplicate triggers for the same locale and
-  route join the in-flight load instead of fetching twice; `loading` is
+  `setRoute`/`loadTranslations`/`loadNamespace` start loads directly and
+  return the promise of the MATCHING load — the in-flight key is what a
+  trigger SELECTED (locale, then each loader and params signature), not the
+  route it came from, so concurrent duplicates join instead of fetching twice
+  and a namespace load never joins an unrelated route load; `loading` is
   derived from the set of in-flight ACTIVATING loads. A warm load
-  (`loadTranslations(…, { activate: false })`) only fills the tables: it
+  (`loadTranslations(…, { activate: false })`, and every `loadNamespace`,
+  which selects by namespace and ignores `routes`) only fills the tables: it
   writes neither the requested locale nor the route, never activates on its
   own, counts towards `loading` only once an activating trigger joins it, and
   never evaluates `cache` expiry — expiry severs the locale's in-flight loads,

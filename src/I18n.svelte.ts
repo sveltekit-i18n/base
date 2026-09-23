@@ -281,6 +281,25 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   };
 
   /**
+   * Loads one namespace for the active locale (or `locale`), whatever the
+   * routes of its loaders say — for what an interaction needs rather than a
+   * route: a modal, a panel, an editor. Warm, like `{ activate: false }`: it
+   * changes neither the locale nor `loading`, and it leaves `cache` expiry to
+   * the next activating trigger. It honours the load records, so calling it
+   * on every interaction fetches once, and what it loads stays loaded across
+   * routes.
+   */
+  loadNamespace = (namespace: Loader.Key, locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
+    if (this.#inert('loadNamespace')) return Promise.resolve();
+
+    const target = locale ?? this.#locale;
+
+    if (!target) return Promise.resolve();
+
+    return this.#load(target, this.#route ?? '', false, namespace);
+  };
+
+  /**
    * Marks loaded translations stale — for one locale, or all of them. Loaders
    * run again on the NEXT load trigger; the call itself starts no load and
    * keeps the currently displayed translations in place. A load still in
@@ -789,6 +808,28 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
   }
 
+  /**
+   * The loaders of `namespace` for `sanitizedLocale` (and the fallback
+   * locale), whatever their routes. A loader whose routes match `route` gets
+   * the params they yield. Any other has no params to ask for, so whatever it
+   * delivered last serves; only a loader with no record is asked, for none.
+   */
+  #matchNamespace(sanitizedLocale: Config.Locale, namespace: Loader.Key, route: string): LoadRequest[] {
+    const { loaders = [], fallbackLocale } = this.#config ?? {};
+
+    return loaders.flatMap((loader) => {
+      if (loader.namespace !== namespace) return [];
+
+      if (loader.locale !== sanitizedLocale && loader.locale !== fallbackLocale) return [];
+
+      const params = routeParams(loader.routes, route);
+
+      if (params) return [{ loader, params, signature: paramsSignature(params) }];
+
+      return this.#loaderRecords.has(loader) ? [] : [{ loader, params: {}, signature: '' }];
+    });
+  }
+
   /** Records the params the current route asks each matching loader for. */
   #want(matching: LoadRequest[]): void {
     matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
@@ -809,14 +850,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Starts (or joins) a load. A load already in flight for the same locale
-   * and route is returned as-is, so concurrent duplicate triggers share one
-   * fetch. The pending entry is registered synchronously, so `loading` is
+   * that selected the same loaders for the same params is returned as-is, so
+   * concurrent duplicate triggers share one fetch — whichever route they came
+   * from, and whether they selected by route or by `namespace`. The pending entry is registered synchronously, so `loading` is
    * observable right after the triggering call; a load with nothing to fetch
    * never registers at all, so cache-served navigations do not flicker the flag.
    * A load that does not `activate` never registers either — until an
    * activating trigger joins it.
    */
-  #load(requestedLocale: Config.Locale, route: string, activate = true): Promise<void> {
+  #load(requestedLocale: Config.Locale, route: string, activate = true, namespace?: Loader.Key): Promise<void> {
     const locale = this.#resolveLocale(requestedLocale);
 
     if (!locale) return Promise.resolve();
@@ -829,14 +871,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // would restart a severed activating load.
     if (activate) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
 
-    const matching = this.#matchLoaders(locale, route);
+    const matching = namespace === undefined ? this.#matchLoaders(locale, route) : this.#matchNamespace(locale, namespace, route);
 
     // Recorded before the in-flight check, so a trigger joining a load, or one
     // served from the records, still decides which params the route shows.
     if (activate) this.#want(matching);
 
-    // NUL never appears in a sanitized locale, so the key is unambiguous.
-    const inflightKey = `${locale}\u0000${route}`;
+    const { loaders = [] } = this.#config ?? {};
+
+    // Keyed by what the trigger selected, not by the route it came from. NUL
+    // never appears in a sanitized locale, so the locale prefix `invalidate()`
+    // severs by is unambiguous.
+    const inflightKey = [locale, ...matching.map(({ loader, signature }) => `${loaders.indexOf(loader)}:${signature}`)].join('\u0000');
     const inflight = this.#inflight.get(inflightKey);
 
     if (inflight) {

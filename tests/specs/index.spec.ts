@@ -32,6 +32,7 @@ describe('i18n instance', () => {
     expect(instance).toHaveProperty('l');
     expect(instance).toHaveProperty('loadConfig');
     expect(instance).toHaveProperty('loadTranslations');
+    expect(instance).toHaveProperty('loadNamespace');
     expect(instance).toHaveProperty('addTranslations');
     expect(instance).toHaveProperty('setLocale');
     expect(instance).toHaveProperty('setRoute');
@@ -1869,6 +1870,251 @@ describe('i18n warm loads', () => {
     } finally {
       clock.mockRestore();
     }
+  });
+});
+
+describe('i18n loadNamespace', () => {
+  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+  type Calls = Record<string, number>;
+
+  const loaders = (calls: Calls, editor: () => Promise<any> = async () => ({ title: 'Editor' })) => [
+    { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
+    { namespace: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
+    { namespace: 'editor', locale: 'en', routes: ['/editor'], loader: () => { calls.editor = (calls.editor ?? 0) + 1; return editor(); } },
+    { namespace: 'editor', locale: 'cs', routes: ['/editor'], loader: async () => { calls.editorCs = (calls.editorCs ?? 0) + 1; return { title: 'Editor CS' }; } },
+  ];
+
+  const deferred = () => {
+    const resolvers: Array<(value: any) => void> = [];
+
+    return { resolvers, loader: () => new Promise<any>((resolve) => { resolvers.push(resolve); }) };
+  };
+
+  it('loads a namespace outside every route its loader declares, and keeps it across routes', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls) });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+
+    expect(instance.t('editor.title')).toBe('Editor');
+
+    await instance.setRoute('/about');
+
+    expect(instance.t('editor.title')).toBe('Editor');
+    expect(calls).toEqual({ common: 1, home: 1, editor: 1 });
+  });
+
+  it('fetches once for concurrent calls, whichever route they come from', async () => {
+    const calls: Calls = {};
+    const { resolvers, loader } = deferred();
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls, loader) });
+
+    await instance.loadTranslations('en', '/');
+
+    const first = instance.loadNamespace('editor');
+
+    await instance.setRoute('/about');
+
+    const second = instance.loadNamespace('editor');
+
+    resolvers[0]?.({ title: 'Editor' });
+    await Promise.all([first, second]);
+
+    expect(calls.editor).toBe(1);
+    expect(instance.t('editor.title')).toBe('Editor');
+  });
+
+  it('fetches nothing once the namespace is loaded', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls) });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+    await instance.loadNamespace('editor');
+    await instance.loadTranslations('en', '/editor');
+
+    expect(calls.editor).toBe(1);
+  });
+
+  it('neither activates what it loads nor raises `loading`', async () => {
+    const { resolvers, loader } = deferred();
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [...loaders({}), { namespace: 'common', locale: 'cs', loader }],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    const pending = instance.loadNamespace('common', 'cs');
+
+    expect(instance.loading).toBe(false);
+
+    resolvers[0]?.({ greeting: 'Ahoj' });
+    await pending;
+
+    expect(instance.locale).toBe('en');
+    expect(instance.l('cs', 'common.greeting')).toBe('Ahoj');
+  });
+
+  it('loads the fallback locale\'s part of the namespace too', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, fallbackLocale: 'cs', loaders: loaders(calls) });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+
+    expect(calls).toMatchObject({ editor: 1, editorCs: 1 });
+    expect(instance.l('cs', 'editor.title')).toBe('Editor CS');
+  });
+
+  it('does not join a route load in flight that selected other loaders', async () => {
+    const calls: Calls = {};
+    const { resolvers, loader } = deferred();
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{ namespace: 'common', locale: 'en', loader }, ...loaders(calls).slice(1)],
+    });
+
+    const route = instance.loadTranslations('en', '/');
+
+    await instance.loadNamespace('editor', 'en');
+
+    expect(calls.editor).toBe(1);
+    expect(instance.l('en', 'editor.title')).toBe('Editor');
+
+    resolvers.forEach((resolve) => resolve({ greeting: 'Hello' }));
+    await route;
+  });
+
+  it('hands a parameterized loader the params of the current route, and none off its routes', async () => {
+    const received: Loader.Params[] = [];
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/article\/(?<articleId>\d+)/],
+          loader: async ({ params }: Loader.Props) => { received.push(params); return { title: `Article ${params.articleId}` }; },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('article');
+    await instance.setRoute('/article/5');
+
+    expect(received).toEqual([{}, { articleId: '5' }]);
+
+    await instance.loadNamespace('article');
+
+    expect(received).toHaveLength(2);
+
+    await instance.setRoute('/');
+    await instance.loadNamespace('article');
+    await instance.loadNamespace('article');
+
+    expect(received).toHaveLength(2);
+    expect(instance.t('article.title')).toBe('Article 5');
+  });
+
+  it('refetches once `cache` expired and an activating trigger evaluated it', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, cache: 0, loaders: loaders(calls) });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+    await instance.loadNamespace('editor');
+
+    expect(calls.editor).toBe(1);
+
+    await instance.setRoute('/');
+    await instance.loadNamespace('editor');
+
+    expect(calls.editor).toBe(2);
+  });
+
+  it('is severed by `invalidate()` like any other load', async () => {
+    const calls: Calls = {};
+    const { resolvers, loader } = deferred();
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls, loader) });
+
+    await instance.loadTranslations('en', '/');
+
+    const pending = instance.loadNamespace('editor');
+
+    instance.invalidate('en');
+    resolvers[0]?.({ title: 'Stale' });
+    await pending;
+
+    expect(instance.t('editor.title')).toBe('editor.title');
+
+    const again = instance.loadNamespace('editor');
+
+    resolvers[1]?.({ title: 'Fresh' });
+    await again;
+
+    expect(calls.editor).toBe(2);
+    expect(instance.t('editor.title')).toBe('Fresh');
+  });
+
+  it('fails soft like any other load, and the next call retries', async () => {
+    let fail = true;
+    const calls: Calls = {};
+    const instance = new i18n({
+      parser: valueParser,
+      log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+      loaders: loaders(calls, async () => {
+        if (fail) throw new Error('down');
+
+        return { title: 'Editor' };
+      }),
+    });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+
+    expect(instance.t('editor.title')).toBe('editor.title');
+
+    fail = false;
+    await instance.loadNamespace('editor');
+
+    expect(calls.editor).toBe(2);
+    expect(instance.t('editor.title')).toBe('Editor');
+  });
+
+  it('reaches the snapshot, with its record', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders({}) });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadNamespace('editor');
+
+    const envelope = instance.snapshot({ records: true });
+
+    expect(envelope.translations.en).toHaveProperty('editor', { title: 'Editor' });
+    expect(envelope.records).toContainEqual({ id: resolveLoaders(loaders({}))[2].id });
+    expect(instance.snapshot().en).toHaveProperty('editor');
+  });
+
+  it('does nothing without a locale, and after `destroy()`', async () => {
+    const calls: Calls = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls) });
+
+    await instance.loadNamespace('editor');
+
+    expect(calls).toEqual({});
+
+    await instance.loadTranslations('en', '/');
+    instance.destroy();
+    await instance.loadNamespace('editor');
+
+    expect(calls.editor).toBeUndefined();
   });
 });
 
