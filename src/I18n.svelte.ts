@@ -45,8 +45,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /** When each locale first received data — drives the `cache` expiry. */
   #loadedAt: Translations.LocaleIndexed<number> = Object.create(null);
 
-  /** In-flight loads keyed by locale and route; duplicate triggers share the promise. */
-  #inflight = new Map<string, Promise<void>>();
+  /**
+   * In-flight loads keyed by locale and route; duplicate triggers share the
+   * promise. `activate` is set by the first activating trigger, so a warm load
+   * joined by one activates when it settles.
+   */
+  #inflight = new Map<string, { promise: Promise<void>; activate: boolean }>();
 
   #destroyed = false;
 
@@ -229,13 +233,25 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return Promise.resolve();
   };
 
-  loadTranslations = (locale: Config.LocaleInput<LocaleUnion>, route = this.#route ?? ''): Promise<void> => {
+  /**
+   * `{ activate: false }` only fills the tables: it leaves the requested
+   * locale, the route and `locale` untouched and does not count towards
+   * `loading` — what is rendered does not change. It leaves `cache` expiry to
+   * the next activating trigger.
+   */
+  loadTranslations = (
+    locale: Config.LocaleInput<LocaleUnion>,
+    route = this.#route ?? '',
+    { activate = true }: { activate?: boolean } = {},
+  ): Promise<void> => {
     if (!locale || this.#inert('loadTranslations')) return Promise.resolve();
 
-    this.#requestedLocale = locale;
-    this.#route = route;
+    if (activate) {
+      this.#requestedLocale = locale;
+      this.#route = route;
+    }
 
-    return this.#load(locale, route);
+    return this.#load(locale, route, activate);
   };
 
   /**
@@ -585,27 +601,39 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * fetch. The pending entry is registered synchronously, so `loading` is
    * observable right after the triggering call; a load with nothing to fetch
    * never registers at all, so cache-served navigations do not flicker the flag.
+   * A load that does not `activate` never registers either — until an
+   * activating trigger joins it.
    */
-  #load(requestedLocale: Config.Locale, route: string): Promise<void> {
+  #load(requestedLocale: Config.Locale, route: string, activate = true): Promise<void> {
     const locale = this.#resolveLocale(requestedLocale);
 
     if (!locale) return Promise.resolve();
 
-    // Expiry is evaluated per load trigger, BEFORE the in-flight check. That
-    // order is safe: a locale is stamped only once its data arrived, so a
-    // shared in-flight load cannot be invalidated by its own duplicates.
-    this.#invalidateExpired(locale, this.#sanitize(this.#config?.fallbackLocale)[0]);
+    // Expiry is evaluated per activating trigger, BEFORE the in-flight check.
+    // That order is safe: a locale is stamped only once its data arrived, so a
+    // shared in-flight load cannot be invalidated by its own duplicates. A
+    // warm trigger leaves it to the next activating one: expiry severs every
+    // in-flight load of the locale, and a warm trigger records no request that
+    // would restart a severed activating load.
+    if (activate) this.#invalidateExpired(locale, this.#sanitize(this.#config?.fallbackLocale)[0]);
 
     // NUL never appears in a sanitized locale, so the key is unambiguous.
     const inflightKey = `${locale}\u0000${route}`;
     const inflight = this.#inflight.get(inflightKey);
 
-    if (inflight) return inflight;
+    if (inflight) {
+      if (activate && !inflight.activate) {
+        inflight.activate = true;
+        this.#pending = new Set(this.#pending).add(inflight.promise);
+      }
+
+      return inflight.promise;
+    }
 
     if (!this.#filterLoaders(locale, route).length) {
       // Nothing to fetch — the locale still becomes active (its data is
       // already present or it has no loaders).
-      this.#activate(locale);
+      if (activate) this.#activate(locale);
 
       return Promise.resolve();
     }
@@ -615,20 +643,29 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // that raced this load severed it from `#inflight`. Its data predates
       // the invalidation: applying it would resurrect the dropped bookkeeping
       // and permanently suppress the promised refetch.
-      if (this.#inflight.get(inflightKey) !== promise) return;
+      if (this.#inflight.get(inflightKey) !== entry) return;
+
+      // Released before the load settles: a trigger arriving in between must
+      // not join a load whose activation step has already run — it finds the
+      // data recorded and activates at once.
+      this.#inflight.delete(inflightKey);
 
       if (props.length) this.#addTranslations(...props);
 
-      this.#activate(locale);
+      if (entry.activate) this.#activate(locale);
     });
 
-    this.#inflight.set(inflightKey, promise);
-    this.#pending = new Set(this.#pending).add(promise);
+    const entry = { promise, activate };
+
+    this.#inflight.set(inflightKey, entry);
+    if (activate) this.#pending = new Set(this.#pending).add(promise);
 
     const settle = () => {
       // Guarded by identity — a later load under the same key must not be
       // evicted by this one settling.
-      if (this.#inflight.get(inflightKey) === promise) this.#inflight.delete(inflightKey);
+      if (this.#inflight.get(inflightKey) === entry) this.#inflight.delete(inflightKey);
+
+      if (!this.#pending.has(promise)) return;
 
       const next = new Set(this.#pending);
       next.delete(promise);

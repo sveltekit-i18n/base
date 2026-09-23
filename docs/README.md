@@ -846,9 +846,11 @@ output.
 **Default:** `Number.POSITIVE_INFINITY` (never expires)
 
 How long loaded translations stay fresh. Once a locale's translations are
-older than this window, the **next load trigger** (`loadTranslations`,
-`setLocale`, `setRoute`) runs its loaders again; nothing refetches on its own
-in the background.
+older than this window, the **next activating load trigger**
+(`loadTranslations`, `setLocale`, `setRoute`) runs its loaders again; nothing
+refetches on its own in the background, and a `loadTranslations()` call with
+[`{ activate: false }`](#loadtranslationslocale-route-options) does not evaluate the
+window.
 
 **Default (never expires):**
 
@@ -885,7 +887,7 @@ const config = {
 **How it works:**
 
 ```
-Load trigger (loadTranslations / setLocale / setRoute)
+Activating load trigger (loadTranslations / setLocale / setRoute)
    ↓
 Locale's translations older than `cache`? → drop its loaded state
    ↓
@@ -1213,9 +1215,11 @@ All known locales (from loaders and added translations).
 
 **Type:** `boolean` (reactive)
 
-`true` while **any** load is in flight; back to `false` once the last one
-settles. To wait for a specific load, await the promise returned by the method
-that started it — never poll this flag.
+`true` while **any** activating load is in flight; back to `false` once the
+last one settles. A load started with `{ activate: false }` does not count until
+an activating trigger joins it — it does not change what is rendered. To wait
+for a specific load, await the promise returned by the method that started it —
+never poll this flag.
 
 ```svelte
 {#if i18n.loading}
@@ -1252,9 +1256,9 @@ to write.
 
 ---
 
-### `loadTranslations(locale, route?)`
+### `loadTranslations(locale, route?, options?)`
 
-**Type:** `(locale: string, route?: string) => Promise<void>`
+**Type:** `(locale: string, route?: string, options?: { activate?: boolean }) => Promise<void>`
 
 Loads translations for a locale and route, and activates the locale once they
 resolved.
@@ -1272,6 +1276,25 @@ export const load = async ({ url }) => {
 The instance above is a module-level singleton, which on the server is shared
 by every request in the process — see
 [Server-Side Rendering](#server-side-rendering) for the per-request wiring.
+
+**`{ activate: false }`** only fills the tables. The requested locale, the
+current route and [`locale`](#locale) stay as they were, and the load does not
+count towards [`loading`](#loading), so nothing on screen changes. It uses the
+same loader selection, bookkeeping and in-flight deduplication as an activating
+call, and `invalidate()` severs it the same way. It does not evaluate the
+[`cache`](#cache) window; the next activating trigger does. An activating trigger
+for the same locale and route joins it: `loading` turns `true`, and the locale
+activates when the shared load settles. Once it has settled, the activating call
+fetches nothing and activates at once, unless the locale's `cache` window has
+elapsed in the meantime.
+
+```javascript
+// Fetch what a link needs without switching to it.
+await i18n.loadTranslations('de', '/about', { activate: false });
+```
+
+The option exists only here. On `setLocale()` and `setRoute()` activation is the
+whole point of the call.
 
 **Errors:** a loader that throws is caught and logged individually, so one
 broken loader does not fail the batch. Anything that throws afterwards — a
