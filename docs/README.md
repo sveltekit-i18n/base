@@ -1153,8 +1153,9 @@ const config = {
 Everything lives on one reactive instance. Reading its properties is reactive
 wherever reads are tracked (component templates, `$derived`, `$effect`); the
 load-triggering methods return the promise of the **matching** load —
-concurrent duplicate triggers for the same locale and route join the load
-already in flight (and receive its promise) instead of fetching twice.
+concurrent duplicate triggers that select the same loaders for the same locale
+join the load already in flight (and receive its promise) instead of fetching
+twice, whichever route they were called from.
 
 ```javascript
 export const i18n = new I18n(config);
@@ -1337,7 +1338,7 @@ call, and `invalidate()` severs it the same way. A loader whose
 still runs, but its data is discarded rather than replacing what is displayed.
 It does not evaluate the
 [`cache`](#cache) window; the next activating trigger does. An activating trigger
-for the same locale and route joins it: `loading` turns `true`, and the locale
+selecting the same loaders for the same locale joins it: `loading` turns `true`, and the locale
 activates when the shared load settles. Once it has settled, the activating call
 fetches nothing and activates at once, unless the locale's `cache` window has
 elapsed in the meantime.
@@ -1356,6 +1357,44 @@ custom `preprocess`, a malformed payload — **rejects the returned promise**, s
 `await` surfaces it (in SvelteKit, straight to the error boundary). A result
 you discard is safe: the failure is logged through the configured logger and
 never becomes an unhandled rejection — but it is then only visible in the log.
+
+---
+
+### `loadNamespace(namespace, locale?)`
+
+**Type:** `(namespace: string, locale?: string) => Promise<void>`
+
+Loads one namespace on demand — for what an interaction needs rather than a
+route: a modal, a rarely opened panel, an editor. `locale` defaults to the
+active [`locale`](#locale); without one the call does nothing.
+
+```javascript
+async function openEditor() {
+  await i18n.loadNamespace('editor');
+
+  editorOpen = true;
+}
+```
+
+- It selects the loaders of that namespace **whatever their `routes` say** —
+  bypassing route matching is the point — for the locale and the
+  [`fallbackLocale`](#fallbacklocale). A loader whose routes capture [route
+  params](#route-params) receives the params of the current route when its
+  routes match it. Off its routes it has none to ask for, so whatever it
+  delivered last serves, and only a loader that has not delivered yet is
+  called — with none.
+- It honours the load records like every other trigger: calling it on every
+  interaction fetches once, and concurrent calls share one fetch, whichever
+  route they come from.
+- What it loads **stays loaded across routes**, so a namespace can be present
+  outside every route its loader declares, and it reaches
+  [`snapshot()`](#snapshotoptions).
+- It is warm, like `loadTranslations(…, { activate: false })`: the locale does
+  not change, [`loading`](#loading) stays `false` — track the returned promise
+  for a spinner of the component's own — and the [`cache`](#cache) window is
+  evaluated by the next activating trigger, after which the next call refetches.
+- [`invalidate()`](#invalidatelocale) severs it like any other load, and a
+  loader that throws is logged and records nothing, so the next call retries.
 
 ---
 
@@ -1560,9 +1599,9 @@ refresh before the window elapses.
 
 Detaches the instance from its loading lifecycle. Loads still in flight settle
 with their data discarded, [`loading`](#loading) drops to `false`, and every
-further load or mutation call (`loadTranslations`, `setLocale`, `setRoute`,
-`loadConfig`, `addTranslations`, `hydrate`, `invalidate`) is ignored with a
-warning.
+further load or mutation call (`loadTranslations`, `loadNamespace`,
+`setLocale`, `setRoute`, `loadConfig`, `addTranslations`, `hydrate`,
+`invalidate`) is ignored with a warning.
 
 Reads keep working — `t`, `l`, `locale`, `translations` and `snapshot()` still
 return the instance's last state, so a component that is still tearing down
