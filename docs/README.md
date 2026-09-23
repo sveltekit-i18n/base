@@ -137,55 +137,37 @@ config-time `logger.error` reports such namespaces, but the loader still runs):
 - Their data is **merged** where they fill in different parts of the
   namespace — every loader contributes its own branches.
 - A value is **replaced** where the same translation is declared twice (or one
-  loader's object meets another's string). The loader declared later in
-  `loaders` wins and the collision is reported through the
-  [logger](#loglevel).
+  loader's object meets another's string). Within one load the loader
+  declared later in `loaders` wins; across loads the data delivered last does.
+  The collision is reported through the [logger](#loglevel).
 
-**A namespace is loaded only once per locale.** Loaders sharing a namespace
-therefore merge only when they run in the same load — when their `routes` all
-match the route that triggered it:
-
-```javascript
-loaders: [
-  { locale: 'en', namespace: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-  { locale: 'en', namespace: 'common', loader: async () => ({ menu: { about: 'About' } }) },
-]
-// both loaders run when '/' is loaded
-// i18n.t('common.menu.home')  => 'Home'
-// i18n.t('common.menu.about') => 'About'
-```
-
-As soon as one loader has supplied `common`, every other `common` loader is
-skipped — including one that never had the chance to run, because its `routes`
-did not match.
-
-**⚠️ Common Pitfall:** Splitting one namespace into `routes`-scoped chunks. Give
-each route a namespace of its own instead:
+**Each loader is recorded on its own.** A loader that has run does not count
+for its siblings, so a namespace can be split into `routes`-scoped chunks —
+each chunk loads on its own route and merges into what the others delivered:
 
 ```javascript
-// ❌ Bad — a visitor landing on '/about' loads `common` from the second loader,
-// and moving to '/' no longer runs the first one
 loaders: [
   { locale: 'en', namespace: 'common', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
   { locale: 'en', namespace: 'common', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
 ]
-// i18n.t('common.menu.home') => not loaded
-
-// ✅ Good
-loaders: [
-  { locale: 'en', namespace: 'home', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
-  { locale: 'en', namespace: 'about', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
-]
+// after visiting '/' and then '/about'
+// i18n.t('common.menu.home')  => 'Home'
+// i18n.t('common.menu.about') => 'About'
 ```
 
 ##### `loader` (required)
 
-**Type:** `(props: { locale: string; namespace: string; route: string }) => Promise<Record<any, any>>`
+**Type:** `(props: { locale: string; namespace: string; route: string; params: Record<string, string> }) => Promise<Record<any, any>>`
 
 Async function that returns translation data. It receives the load context —
 the sanitized `locale` and the `namespace` this run fetches translations for,
-and the `route` the load was triggered for. Loaders that don't need the context
-can simply take no parameters.
+the `route` the load was triggered for, and the `params` its
+[`routes`](#route-params) captured (`{}` when they capture none). Loaders that
+don't need the context can simply take no parameters.
+
+A loader that throws is reported and runs again on the next load trigger. One
+that returns nothing (`undefined` or `null`) has answered: it counts as loaded,
+with no keys, just as one returning `{}` does.
 
 **Loading from local files:**
 
@@ -211,12 +193,12 @@ can simply take no parameters.
 ```
 
 **⚠️ `route` is context, not a cache key.** A loader runs at most once per
-locale per freshness window (see [`cache`](#cache)) — its `namespace` is recorded as
-loaded and it is skipped on later routes. So a loader whose payload varies by
-`route` would serve the first route's data everywhere. Scope such data with
-[`routes`](#routes-optional) instead, one loader entry per route group, and use
-the `route` argument for diagnostics, or in a loader that is scoped to exactly
-one route:
+locale per freshness window (see [`cache`](#cache)) and per set of
+[route params](#route-params) — a later route yielding the same params does not
+run it again. So a loader whose payload varies by `route` itself would serve the
+first route's data everywhere. Capture the part of the route the data depends
+on as a route param, or scope the data with [`routes`](#routes-optional), and
+use the `route` argument for diagnostics:
 
 ```javascript
 {
@@ -306,12 +288,43 @@ This will match:
 - `/shop`
 - `/shop/cart`
 
-**⚠️ Named capture groups are reserved.** A named group in a route `RegExp` —
-`/^\/article\/(?<articleId>[^/]+)/` — matches today exactly as any other group
-does, and the loader still runs at most once per locale per freshness window.
-A future minor may read those matches as load parameters and re-run the loader
-when they change, so don't rely on named groups staying inert. Use a
-non-capturing group (`(?:...)`) where you only need grouping.
+##### Route params
+
+A named capture group in a route `RegExp` is a load parameter. Its match reaches
+the loader as `params`, and the loader runs again whenever the params change:
+
+```javascript
+{
+  locale: 'en',
+  namespace: 'article',
+  routes: [/^\/article\/(?<articleId>[^/]+)/],
+  loader: async ({ locale, params }) => {
+    const response = await fetch(`/api/articles/${params.articleId}/i18n/${locale}`);
+    return await response.json();
+  },
+}
+// '/article/5'          => runs with { articleId: '5' }
+// '/article/6'          => runs again with { articleId: '6' }
+// '/article/6/comments' => same params, does not run
+```
+
+- **Only a `RegExp` yields params.** A string route (an exact match) and a
+  custom matcher yield `{}`, and so does a loader without `routes`.
+- **The first matching route decides.** Where several `routes` match, the
+  params come from the first one in the array. A group that took no part in the
+  match is left out.
+- **New params replace the old data.** What the loader delivered for the
+  previous params is removed before its new data is added, so no key of
+  article 5 survives on article 6, and browsing many articles does not keep
+  them all in memory. Its siblings in the namespace keep their part. The
+  tradeoff: going back to article 5 fetches it again.
+- **The params are the cache key, not the route.** Two routes yielding the same
+  params describe the same data and load it once.
+- **The current route's params win.** Loads that settle out of order apply only
+  the data of the params the current route asks for; an older load for other
+  params is discarded.
+
+Use a non-capturing group (`(?:...)`) where you only need grouping.
 
 **Custom matchers:**
 
@@ -894,7 +907,7 @@ window.
 
 ```javascript
 const config = {
-  // cache: Number.POSITIVE_INFINITY — loaders run once per locale and namespace
+  // cache: Number.POSITIVE_INFINITY — each loader runs once per locale and route params
 };
 ```
 
@@ -1319,7 +1332,10 @@ by every request in the process — see
 current route and [`locale`](#locale) stay as they were, and the load does not
 count towards [`loading`](#loading), so nothing on screen changes. It uses the
 same loader selection, bookkeeping and in-flight deduplication as an activating
-call, and `invalidate()` severs it the same way. It does not evaluate the
+call, and `invalidate()` severs it the same way. A loader whose
+[route params](#route-params) differ from the ones the current route asks for
+still runs, but its data is discarded rather than replacing what is displayed.
+It does not evaluate the
 [`cache`](#cache) window; the next activating trigger does. An activating trigger
 for the same locale and route joins it: `loading` turns `true`, and the locale
 activates when the shared load settles. Once it has settled, the activating call
@@ -1379,7 +1395,8 @@ the rejection.
 
 Adds translations synchronously (static tables known ahead of time). Payload is
 preprocessed per `config.preprocess` and merged into the tables; already-added
-keys count as loaded, so matching loaders will not refire. Locale keys are
+namespaces count as loaded, so their loaders do not refire — except a loader
+whose [route params](#route-params) ask for data of their own. Locale keys are
 normalized ([`sanitizeLocales`](#sanitizelocales)) before they are merged.
 
 Merging goes branch by branch, so a payload for a namespace that already holds

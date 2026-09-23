@@ -1,11 +1,15 @@
-import { fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, read, resolveLoaders, sanitizerFactory, sanitizeTranslationLocales, testRoute, toDotNotation, translate } from './utils.js';
+import { fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, testRoute, toDotNotation, translate, unique } from './utils.js';
+import type { Delivery, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Schema, Translations } from './types.js';
 
 const defaultCache = Number.POSITIVE_INFINITY;
 
-type LoadedKeys = Translations.LocaleIndexed<Loader.Key[]>;
+type NamespaceRecords = Translations.LocaleIndexed<Loader.Key[]>;
+
+/** A top-level key holding part of `namespace` — the namespace itself or a key flattened out of it. */
+const isNamespaceKey = (key: string, namespace: Loader.Key) => key === namespace || key.startsWith(`${namespace}.`);
 
 /**
  * The config as it is held, rather than as it arrives: `resolveLoaders` has
@@ -38,9 +42,28 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- plain internal state ---------------------------------------------------
 
+  // Load records keep a loader from running twice. A loader's own record holds
+  // the params signature it last delivered for; a namespace record stands for
+  // data that reached the instance without a loader, and keeps the namespace's
+  // loaders from fetching it again unless their params ask for other data.
+  #loaderRecords = new Map<Loader.Resolved, string>();
+
   // Null prototype: these tables are indexed by user-supplied locales, and a
   // plain object would resolve a '__proto__' assignment via the setter.
-  #loadedKeys: LoadedKeys = Object.create(null);
+  #namespaceRecords: NamespaceRecords = Object.create(null);
+
+  // What each source last put into a namespace, so a loader whose params
+  // changed can replace its own part and leave its siblings' in place. Kept
+  // apart from the records: invalidation drops those, not what is displayed,
+  // and a reconfiguration hands them on to the loaders with the same id.
+  #deliveries = new Map<Loader.Resolved, Delivery>();
+
+  #externalTranslations: Translations.SerializedTranslations = {};
+
+  // The params signature the latest activating trigger asked each loader for.
+  // Loads settle out of order, and a delivery for params the route no longer
+  // asks for must not replace what it displays; a warm load asks for nothing.
+  #wanted = new Map<Loader.Resolved, string>();
 
   /** When each locale first received data — drives the `cache` expiry. */
   #loadedAt: Translations.LocaleIndexed<number> = Object.create(null);
@@ -181,6 +204,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // A reconfiguration can swap loaders or cache policy — bookkeeping from
     // the previous config must not suppress the new loaders.
     this.invalidate();
+    this.#wanted.clear();
+    this.#handOnDeliveries(loaders);
 
     if (translations) this.addTranslations(translations);
     if (sanitizedInitLocale) await this.loadTranslations(initLocale!);
@@ -236,8 +261,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * `{ activate: false }` only fills the tables: it leaves the requested
    * locale, the route and `locale` untouched and does not count towards
-   * `loading` — what is rendered does not change. It leaves `cache` expiry to
-   * the next activating trigger.
+   * `loading` — what is rendered does not change: data of a loader whose route
+   * params differ from the ones the current route asks for is discarded. It
+   * leaves `cache` expiry to the next activating trigger.
    */
   loadTranslations = (
     locale: Config.LocaleInput<LocaleUnion>,
@@ -268,8 +294,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       const [sanitized] = this.#sanitize(locale);
 
       if (sanitized !== undefined) {
-        delete this.#loadedKeys[sanitized];
+        delete this.#namespaceRecords[sanitized];
         delete this.#loadedAt[sanitized];
+
+        this.#loaderRecords.forEach((_, loader) => {
+          if (loader.locale === sanitized) this.#loaderRecords.delete(loader);
+        });
 
         // Sever matching in-flight loads — applying their pre-invalidation
         // data would resurrect the bookkeeping dropped above, permanently
@@ -282,7 +312,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return;
     }
 
-    this.#loadedKeys = Object.create(null);
+    this.#loaderRecords.clear();
+    this.#namespaceRecords = Object.create(null);
     this.#loadedAt = Object.create(null);
     this.#inflight.clear();
   };
@@ -378,58 +409,149 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Resolves loader data for a locale and route WITHOUT applying it. Returns
-   * `[]` when there is nothing to load. The `cache` expiry is evaluated by
-   * load triggers, not here.
+   * Runs the loaders a locale and route select, WITHOUT applying their data.
+   * The `cache` expiry is evaluated by load triggers, not here.
    */
-  async #getTranslationProps(
-    locale: Config.Locale,
-    route: string,
-  ): Promise<[Translations.SerializedTranslations, LoadedKeys] | []> {
-    if (!this.#config || !locale) return [];
-
-    // Resolved against `locales`, so already sanitized.
-    const filteredLoaders = this.#filterLoaders(locale, route);
-
-    if (!filteredLoaders.length) return [];
-
+  async #fetch(requests: LoadRequest[], route: string): Promise<Delivery[]> {
     logger.debug('Fetching translations...');
 
-    const rawTranslations = await fetchTranslations(filteredLoaders, route);
-
-    const loadedKeys = Object.entries(rawTranslations).reduce(
-      (acc, [translationLocale, data]) => ({ ...acc, [translationLocale]: Object.keys(data ?? {}) }),
-      {} as LoadedKeys,
-    );
-
-    const keys = filteredLoaders
-      .filter(({ namespace, locale: loaderLocale }) => (read<Loader.Key[]>(loadedKeys, loaderLocale) || []).some(
-        // Exact or namespaced match only — `navbar` data must not mark a
-        // sibling `nav` loader as loaded.
-        (loadedKey) => `${loadedKey}` === namespace || `${loadedKey}`.startsWith(`${namespace}.`),
-      ))
-      .reduce<LoadedKeys>((acc, { namespace, locale: loaderLocale }) => ({
-        ...acc,
-        [loaderLocale]: [...(read<Loader.Key[]>(acc, loaderLocale) || []), namespace],
-      }), {});
-
-    return [rawTranslations, keys];
+    return fetchTranslations(requests, route);
   }
 
   /**
-   * Merges translations into the tables and registers their bookkeeping.
-   * `keys` carries the exact loader keys of a load; without it (the public
-   * `addTranslations` path) loaded keys derive from the data's top-level keys.
+   * Gives each delivery of the previous config to the loader of the new one
+   * with the same id, so its params can still replace it. What no loader can
+   * take over is kept as data supplied without a loader, so a namespace rebuilt
+   * later keeps it rather than losing it.
    */
-  #addTranslations(translations?: Translations.SerializedTranslations, keys?: LoadedKeys): void {
+  #handOnDeliveries(loaders: Loader.Resolved[]): void {
+    const takers = new Map(loaders.flatMap((loader) => (loader.id === null ? [] : [[loader.id, loader] as const])));
+
+    const deliveries = Array.from(this.#deliveries.values());
+
+    const orphaned = deliveries.filter(({ loader }) => loader.id === null || !takers.has(loader.id));
+
+    this.#deliveries = new Map(deliveries.flatMap((delivery) => {
+      const taker = delivery.loader.id === null ? undefined : takers.get(delivery.loader.id);
+
+      return taker ? [[taker, { ...delivery, loader: taker }]] : [];
+    }));
+
+    this.#keepExternal(serialize(orphaned.map(({ loader, data }) => ({ ...loader, data }))));
+  }
+
+  /**
+   * Applies what loaders delivered and records them as loaded. A loader whose
+   * params changed replaces the part of its namespace it delivered before:
+   * the namespace is rebuilt from the data supplied without a loader and from
+   * what each of its loaders last delivered, so no key of the previous params
+   * survives and a sibling's part stays in place. The preprocessed table of a
+   * locale that lost data is derived again from the raw one, since a custom
+   * `preprocess` may have renamed the keys that would have to go.
+   */
+  #applyDeliveries(deliveries: Delivery[]): void {
+    const replaced = deliveries
+      .filter(({ loader, signature }) => {
+        const previous = this.#deliveries.get(loader);
+
+        return previous !== undefined && previous.signature !== signature;
+      })
+      .map(({ loader }) => loader);
+
+    deliveries.forEach((delivery) => {
+      this.#deliveries.set(delivery.loader, delivery);
+      this.#loaderRecords.set(delivery.loader, delivery.signature);
+    });
+
+    const isReplaced = ({ locale, namespace }: Loader.Resolved) => replaced.some(
+      (loader) => loader.locale === locale && loader.namespace === namespace,
+    );
+
+    const { loaders = [] } = this.#config ?? {};
+
+    const rebuilt = loaders
+      .filter(isReplaced)
+      .map((loader) => this.#deliveries.get(loader))
+      .filter((delivery): delivery is Delivery => delivery !== undefined);
+
+    replaced.forEach(({ locale, namespace }) => {
+      const data = read(this.#rawTranslations, locale) ?? {};
+
+      this.#rawTranslations = {
+        ...this.#rawTranslations,
+        [locale]: Object.fromEntries(Object.entries(data).filter(([key]) => !isNamespaceKey(key, namespace))),
+      };
+    });
+
+    const external = replaced.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => {
+      const data = read(this.#externalTranslations, locale) ?? {};
+
+      const own = Object.fromEntries(Object.entries(data).filter(([key]) => isNamespaceKey(key, namespace)));
+
+      if (!Object.keys(own).length) return acc;
+
+      return { ...acc, [locale]: { ...read(acc, locale), ...own } };
+    }, {});
+
+    this.#mergeTranslations(external);
+    this.#mergeTranslations(serialize([
+      ...deliveries.filter(({ loader }) => !isReplaced(loader)),
+      ...rebuilt,
+    ].map(({ loader, data }) => ({ ...loader, data }))));
+
+    this.#translations = unique(replaced.map(({ locale }) => locale)).reduce(
+      (acc, locale) => ({ ...acc, [locale]: this.#preprocess(read(this.#rawTranslations, locale)) }),
+      this.#translations,
+    );
+  }
+
+  /**
+   * Merges data supplied without a loader. Its namespaces are recorded as
+   * loaded, so the loaders that would fetch them do not, and the data is kept
+   * to rebuild a namespace a loader later replaces its part of.
+   */
+  #addTranslations(translations?: Translations.SerializedTranslations): void {
     if (!translations) return;
 
+    const sanitized = sanitizeTranslationLocales(translations, this.#sanitize);
+
+    Object.keys(sanitized).forEach((locale) => {
+      // A `null` payload for a locale must not take the whole call down —
+      // every step of the merge tolerates it, so this bookkeeping does too.
+      const data = read(sanitized, locale) ?? {};
+
+      this.#namespaceRecords[locale] = Array.from(new Set([
+        ...(read(this.#namespaceRecords, locale) || []),
+        ...Object.keys(data).map((key) => `${key}`.split('.')[0]),
+      ]));
+    });
+
+    this.#keepExternal(sanitized);
+    this.#mergeTranslations(sanitized);
+  }
+
+  /** Keeps data held without a loader, to rebuild a namespace from. */
+  #keepExternal(sanitized: Translations.SerializedTranslations): void {
+    this.#externalTranslations = Object.keys(sanitized).reduce((acc, locale) => ({
+      ...acc,
+      [locale]: mergeTranslations(read(acc, locale) || {}, read(sanitized, locale) ?? {}, locale),
+    }), this.#externalTranslations);
+  }
+
+  /** A locale's table as `config.preprocess` asks for it. */
+  #preprocess(input: any): Translations.Input {
     const { preprocess } = this.#config ?? {};
 
-    logger.debug('Adding translations...');
+    if (typeof preprocess === 'function') return preprocess(input) ?? {};
 
-    // A load's data is keyed by its loaders' locales, which are sanitized already.
-    const sanitized = keys ? translations : sanitizeTranslationLocales(translations, this.#sanitize);
+    if (preprocess === 'none') return input ?? {};
+
+    return toDotNotation(input, preprocess === 'preserveArrays') ?? {};
+  }
+
+  /** Merges data keyed by sanitized locales into both tables. */
+  #mergeTranslations(sanitized: Translations.SerializedTranslations): void {
+    logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(sanitized);
 
@@ -442,41 +564,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     );
 
     this.#translations = translationLocales.reduce(
-      (acc, locale) => {
-        let dotnotate = true;
-        let input = read(sanitized, locale);
-
-        if (typeof preprocess === 'function') {
-          input = preprocess(input);
-        }
-
-        if (typeof preprocess === 'function' || preprocess === 'none') {
-          dotnotate = false;
-        }
-
-        return ({
-          ...acc,
-          [locale]: mergeTranslations(
-            read(acc, locale) || {},
-            (dotnotate ? toDotNotation(input, preprocess === 'preserveArrays') : input) ?? {},
-            locale,
-          ),
-        });
-      },
+      (acc, locale) => ({
+        ...acc,
+        [locale]: mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
+      }),
       this.#translations,
     );
 
     translationLocales.forEach((locale) => {
-      // A `null` payload for a locale must not take the whole call down —
-      // every step above tolerates it, so this bookkeeping does too.
-      let localeKeys: Loader.Key[] | undefined = Object.keys(read(sanitized, locale) ?? {}).map((key) => `${key}`.split('.')[0]);
-      if (keys) localeKeys = read(keys, locale);
-
-      this.#loadedKeys[locale] = Array.from(new Set([
-        ...(read(this.#loadedKeys, locale) || []),
-        ...(localeKeys || []),
-      ]));
-
       // Freshness is measured from the locale's FIRST data — later partial
       // loads (other routes) must not extend the window.
       if (read(this.#loadedAt, locale) === undefined) this.#loadedAt[locale] = Date.now();
@@ -571,22 +666,33 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return offRoute;
   }
 
-  #filterLoaders(sanitizedLocale: Config.Locale, route: string): Loader.Resolved[] {
-    const { loaders, fallbackLocale = '' } = this.#config ?? {};
+  /**
+   * The loaders of `sanitizedLocale` (and the fallback locale) whose routes
+   * match `route`, with the params the route yields for each.
+   */
+  #matchLoaders(sanitizedLocale: Config.Locale, route: string): LoadRequest[] {
+    const { loaders = [], fallbackLocale } = this.#config ?? {};
 
-    const translationForLocale = read(this.#translations, sanitizedLocale);
-    const translationForFallbackLocale = read(this.#translations, fallbackLocale);
+    return loaders.flatMap((loader) => {
+      if (loader.locale !== sanitizedLocale && loader.locale !== fallbackLocale) return [];
 
-    return (loaders || [])
-      .filter(({ routes }) => !routes || (routes || []).some(testRoute(route)))
-      .filter(({ namespace, locale }) => (locale === sanitizedLocale && (
-        !translationForLocale || !(read<Loader.Key[]>(this.#loadedKeys, sanitizedLocale) || []).includes(namespace)
-      )) || (
-        fallbackLocale && locale === fallbackLocale && (
-          !translationForFallbackLocale
-            || !(read<Loader.Key[]>(this.#loadedKeys, fallbackLocale) || []).includes(namespace)
-        )
-      ));
+      const params = routeParams(loader.routes, route);
+
+      return params ? [{ loader, params, signature: paramsSignature(params) }] : [];
+    });
+  }
+
+  /**
+   * The matching loaders a load has to run: all but those whose own record
+   * holds the params the route yields now. A namespace supplied without a
+   * loader stands in for the record of a loader without params that has none.
+   */
+  #unloaded(matching: LoadRequest[]): LoadRequest[] {
+    return matching.filter(({ loader, signature }) => {
+      if (this.#loaderRecords.has(loader)) return this.#loaderRecords.get(loader) !== signature;
+
+      return signature !== '' || !(read<Loader.Key[]>(this.#namespaceRecords, loader.locale) || []).includes(loader.namespace);
+    });
   }
 
   /**
@@ -611,6 +717,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // would restart a severed activating load.
     if (activate) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
 
+    const matching = this.#matchLoaders(locale, route);
+
+    // Recorded before the in-flight check, so a trigger joining a load, or one
+    // served from the records, still decides which params the route shows.
+    if (activate) matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
+
     // NUL never appears in a sanitized locale, so the key is unambiguous.
     const inflightKey = `${locale}\u0000${route}`;
     const inflight = this.#inflight.get(inflightKey);
@@ -624,7 +736,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return inflight.promise;
     }
 
-    if (!this.#filterLoaders(locale, route).length) {
+    const requests = this.#unloaded(matching);
+
+    if (!requests.length) {
       // Nothing to fetch — the locale still becomes active (its data is
       // already present or it has no loaders).
       if (activate) this.#activate(locale);
@@ -632,7 +746,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return Promise.resolve();
     }
 
-    const promise: Promise<void> = this.#getTranslationProps(locale, route).then((props) => {
+    const promise: Promise<void> = this.#fetch(requests, route).then((deliveries) => {
       // An `invalidate()` — explicit, via expiry, or via reconfiguration —
       // that raced this load severed it from `#inflight`. Its data predates
       // the invalidation: applying it would resurrect the dropped bookkeeping
@@ -644,9 +758,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // data recorded and activates at once.
       this.#inflight.delete(inflightKey);
 
-      if (props.length) this.#addTranslations(...props);
+      const wanted = deliveries.filter(({ loader, signature }) => (this.#wanted.get(loader) ?? signature) === signature);
 
-      if (entry.activate) this.#activate(locale);
+      if (wanted.length) this.#applyDeliveries(wanted);
+
+      // A load that delivered params the route no longer asks for leaves the
+      // activation to the load of the params it asks for.
+      if (entry.activate && wanted.length === deliveries.length) this.#activate(locale);
     });
 
     const entry = { promise, activate };

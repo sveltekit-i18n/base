@@ -99,10 +99,21 @@ translation state, loading, caching, route matching, and preprocessing — but
   Never surface a locale whose translations have not resolved, and never let a
   superseded load overwrite the most recently requested locale when loads
   resolve out of order.
-- **Loaders are lazy and run once per freshness window.** A loader fires only
-  when its `locale` matches and its `routes` match the current route (or it
-  has no `routes`). `loadedKeys` (null-prototype, keyed by user-supplied
-  locales) prevents refetching; per-locale expiry (`config.cache`, default
+- **Loaders are lazy and run once per freshness window and route params.** A
+  loader fires only when its `locale` matches and its `routes` match the
+  current route (or it has no `routes`). A load record names the loader that
+  DELIVERED, never the namespace its data landed in: `#loaderRecords` maps the
+  resolved descriptor to the signature of the params its routes captured, and
+  a loader that threw records nothing. Data supplied without a loader records
+  its namespace instead (`#namespaceRecords`, null-prototype, keyed by
+  user-supplied locales), which suppresses that namespace's loaders without
+  params. When a loader's params change, its new data REPLACES what it
+  delivered before — the namespace is rebuilt from `#externalTranslations` and
+  each loader's last delivery (`#deliveries`), so no stale key survives and a
+  sibling keeps its part. Last request wins for params too: every ACTIVATING
+  trigger records the params it wants per matching loader (`#wanted`), even one
+  that joins a load or fetches nothing, and a delivery for other params is
+  discarded — a warm load wants nothing, so it never replaces what is shown. Per-locale expiry (`config.cache`, default
   `Infinity` — never expires) and `invalidate(locale?)` drop that bookkeeping
   so the NEXT load trigger refetches. Invalidation also severs matching
   in-flight loads — a severed load settles but applies nothing, so its
@@ -308,9 +319,9 @@ chat (§3).
   single spread before it escapes to consumers — that restores a normal
   prototype while keeping the same pollution safety (see `toDotNotation`).
   Long-lived internal state may be written in place only when it is
-  null-prototype and never exposed (see `#loadedKeys` in §11) — never a plain
+  null-prototype and never exposed (see `#namespaceRecords` in §11) — never a plain
   object indexed by consumer input. The locale-indexed folds in `serialize` and
-  `#getTranslationProps` keep the spread form deliberately, even though it is
+  `#applyDeliveries` keep the spread form deliberately, even though it is
   quadratic in the number of locales: the counts are small, and only a
   measurement showing otherwise justifies moving them to the accumulator form.
 - Keep `I18n.svelte.ts` for orchestration; put pure, testable logic in
@@ -346,8 +357,8 @@ not RCE/XSS.
   no own key is recorded and the object's prototype is replaced. Write with a
   computed-key spread (`{ ...table, [locale]: value }`, which is
   `DefineProperty`) or target an `Object.create(null)` object — that is why
-  `#loadedKeys` has a null prototype. The locale-indexed accumulators in
-  `serialize` and `#getTranslationProps` are plain objects and stay correct only
+  `#namespaceRecords` has a null prototype. The locale-indexed accumulators in
+  `serialize` and `#applyDeliveries` are plain objects and stay correct only
   while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
   batch; a missing config/parser must not throw on `t()`/`l()`.

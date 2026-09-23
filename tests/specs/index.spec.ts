@@ -597,7 +597,7 @@ describe('i18n instance', () => {
 
     await instance.loadTranslations('en', '/path');
 
-    expect(received).toEqual([{ locale: 'en', namespace: 'common', route: '/path' }]);
+    expect(received).toEqual([{ locale: 'en', namespace: 'common', route: '/path', params: {} }]);
   });
   it('a fallback-locale loader receives its own locale, not the requested one', async () => {
     const received: unknown[] = [];
@@ -615,8 +615,8 @@ describe('i18n instance', () => {
     await instance.loadTranslations('de', '/path');
 
     expect(received).toEqual(expect.arrayContaining([
-      { locale: 'de', namespace: 'common', route: '/path' },
-      { locale: 'en', namespace: 'common', route: '/path' },
+      { locale: 'de', namespace: 'common', route: '/path', params: {} },
+      { locale: 'en', namespace: 'common', route: '/path', params: {} },
     ]));
     expect(received).toHaveLength(2);
   });
@@ -663,13 +663,374 @@ describe('i18n instance', () => {
 
     expect(received).toHaveLength(4);
     expect(received).toEqual(expect.arrayContaining([
-      { locale: 'en', namespace: 'common', route: '/path' },
-      { locale: 'en', namespace: 'nav', route: '/path' },
-      { locale: 'de', namespace: 'common', route: '/path' },
-      { locale: 'de', namespace: 'nav', route: '/path' },
+      { locale: 'en', namespace: 'common', route: '/path', params: {} },
+      { locale: 'en', namespace: 'nav', route: '/path', params: {} },
+      { locale: 'de', namespace: 'common', route: '/path', params: {} },
+      { locale: 'de', namespace: 'nav', route: '/path', params: {} },
     ]));
     expect(instance.translations.de).toEqual({ 'common.title': 'de:common', 'nav.title': 'de:nav' });
     expect(instance.locales).toEqual(['en', 'de']);
+  });
+  it('passes the named groups of the first matching route to a loader as `params`', async () => {
+    const received: Loader.Params[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: ['/article/list', /^\/article\/(?<articleId>\d+)(?:\/(?<section>[a-z]+))?/, /^\/article\/(?<other>.+)/],
+          loader: async ({ params }) => { received.push(params); return { title: 'Article' }; },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/article/5');
+    await instance.loadTranslations('en', '/article/list');
+
+    // A group that took no part is left out; a string route yields none.
+    expect(received).toEqual([{ articleId: '5' }, {}]);
+    expect(Object.getPrototypeOf(received[0])).toBe(Object.prototype);
+  });
+  it('runs a loader again when its params change, replacing the data of the previous ones', async () => {
+    const calls: string[] = [];
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/article\/(?<articleId>\d+)/],
+          loader: async ({ params }) => {
+            calls.push(params.articleId);
+
+            return params.articleId === '5' ? { title: 'Five', only5: 'stale' } : { title: 'Six' };
+          },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/article/5');
+    expect(instance.translations.en).toEqual({ 'article.title': 'Five', 'article.only5': 'stale' });
+
+    await instance.loadTranslations('en', '/article/6');
+    expect(instance.translations.en).toEqual({ 'article.title': 'Six' });
+    expect(instance.rawTranslations.en).toEqual({ article: { title: 'Six' } });
+
+    // The params decide, not the route that yielded them.
+    await instance.loadTranslations('en', '/article/6/comments');
+    expect(calls).toEqual(['5', '6']);
+  });
+  it('applies only the latest params when an older load settles after a newer one', async () => {
+    const resolvers: Record<string, () => void> = {};
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        {
+          namespace: 'item',
+          locale: 'en',
+          routes: [/^\/item\/(?<id>\d+)$/],
+          loader: ({ params }) => new Promise((resolve) => { resolvers[params.id] = () => resolve({ id: params.id }); }),
+        },
+      ],
+    });
+
+    await instance.setLocale('en');
+    const first = instance.setRoute('/item/1');
+    const second = instance.setRoute('/item/2');
+
+    resolvers['2']?.();
+    await second;
+    resolvers['1']?.();
+    await first;
+
+    expect(instance.translations.en).toEqual({ 'item.id': '2' });
+
+    // The record holds item 2's params, so staying on it fetches nothing more.
+    await instance.setRoute('/item/2');
+    expect(Object.keys(resolvers)).toEqual(['1', '2']);
+  });
+  it('treats a loader that returns nothing as having delivered no keys', async () => {
+    const loader = vi.fn(async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'One' } : undefined as any));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader }],
+    });
+
+    await instance.loadTranslations('en', '/item/1');
+    await instance.loadTranslations('en', '/item/2');
+
+    expect(instance.translations.en).toEqual({});
+
+    await instance.loadTranslations('en', '/item/2');
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+  it('applies an older load of a loader whose newer load asks for the same params', async () => {
+    const resolvers: Array<() => void> = [];
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'de', loader: () => new Promise((resolve) => { resolvers.push(() => resolve({ greeting: 'Hallo' })); }) },
+      ],
+    });
+
+    await instance.setRoute('/');
+    const activating = instance.setLocale('de');
+    void instance.loadTranslations('de', '/about', { activate: false });
+
+    resolvers[0]?.();
+    await activating;
+
+    expect(instance.locale).toBe('de');
+    expect(instance.translations.de).toEqual({ 'common.greeting': 'Hallo' });
+  });
+  it('replaces the data of the previous params across a reconfiguration', async () => {
+    const config = {
+      parser,
+      log,
+      loaders: [
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/a\/(?<id>\d+)/],
+          loader: async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'One', only1: 'x' } : { title: 'Two' }),
+        },
+      ],
+    };
+    const instance = new i18n(config);
+
+    await instance.loadTranslations('en', '/a/1');
+    await instance.loadConfig(config);
+    await instance.loadTranslations('en', '/a/2');
+
+    expect(instance.translations.en).toEqual({ 'article.title': 'Two' });
+  });
+  it('keeps both tables consistent when a custom `preprocess` renames the keys of replaced data', async () => {
+    const instance = new i18n({
+      parser,
+      log,
+      preprocess: (table: any) => Object.fromEntries(Object.entries(toDotNotation(table) as Record<string, unknown>).map(([key, value]) => [key.replace('article.', 'A/'), value])),
+      loaders: [
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/a\/(?<id>\d+)/],
+          loader: async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'One', only1: 'x' } : { title: 'Two' }),
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/a/1');
+    await instance.loadTranslations('en', '/a/2');
+
+    expect(instance.rawTranslations.en).toEqual({ article: { title: 'Two' } });
+    expect(instance.translations.en).toEqual({ 'A/title': 'Two' });
+  });
+  describe('params wanted by the current route', () => {
+    const itemLoader = (resolvers: Record<string, () => void>, locale = 'en') => ({
+      namespace: 'item',
+      locale,
+      routes: [/^\/item\/(?<id>\d+)$/],
+      loader: ({ params }: Loader.Props) => new Promise<Record<string, string>>((resolve) => { resolvers[params.id] = () => resolve({ id: params.id }); }),
+    });
+
+    it('drops an older load for other params once the route returned to the params it holds', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const instance = new i18n({ parser, log, loaders: [itemLoader(resolvers)] });
+
+      await instance.setLocale('en');
+      const first = instance.setRoute('/item/1');
+      resolvers['1']?.();
+      await first;
+
+      const second = instance.setRoute('/item/2');
+      await instance.setRoute('/item/1');
+      resolvers['2']?.();
+      await second;
+
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('applies a joined load once the route asks for its params again', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const instance = new i18n({ parser, log, loaders: [itemLoader(resolvers)] });
+
+      await instance.setLocale('en');
+      const first = instance.setRoute('/item/1');
+      const second = instance.setRoute('/item/2');
+      const third = instance.setRoute('/item/1');
+
+      resolvers['1']?.();
+      await third;
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+
+      resolvers['2']?.();
+      await Promise.all([first, second]);
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('leaves what the current route displays to its own load when a warm load asks for other params', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const instance = new i18n({ parser, log, loaders: [itemLoader(resolvers)] });
+
+      await instance.setLocale('en');
+      const active = instance.setRoute('/item/1');
+      const warm = instance.loadTranslations('en', '/item/2', { activate: false });
+
+      resolvers['1']?.();
+      await active;
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+
+      resolvers['2']?.();
+      await warm;
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('activates a locale only through the load of the params its route asks for', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const instance = new i18n({ parser, log, loaders: [itemLoader(resolvers, 'de')] });
+
+      await instance.setRoute('/item/1');
+      const first = instance.setLocale('de');
+      const second = instance.setRoute('/item/2');
+
+      resolvers['1']?.();
+      await first;
+      expect(instance.locale).toBeUndefined();
+
+      resolvers['2']?.();
+      await second;
+      expect(instance.locale).toBe('de');
+      expect(instance.translations.de).toEqual({ 'item.id': '2' });
+    });
+  });
+  it('runs a params loader again for a route without params though its namespace arrived as plain data', async () => {
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        {
+          namespace: 'item',
+          locale: 'en',
+          routes: [/^\/item$/, /^\/item\/(?<id>\d+)$/],
+          loader: async ({ params }: Loader.Props) => (params.id ? { [`only${params.id}`]: params.id } : { list: 'All' }),
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/item/5');
+    instance.addTranslations({ en: { item: { static: 'Static' } } });
+    await instance.loadTranslations('en', '/item');
+
+    expect(instance.translations.en).toEqual({ 'item.static': 'Static', 'item.list': 'All' });
+  });
+  it('keeps the part of a loader that cannot be handed on across a reconfiguration', async () => {
+    const config = {
+      parser,
+      log,
+      loaders: [
+        // Identical content: neither loader is identifiable.
+        { namespace: 'a', locale: 'en', routes: ['/a/1'], loader: async () => ({ first: 'First' }) },
+        { namespace: 'a', locale: 'en', routes: ['/a/1'], loader: async () => ({ second: 'Second' }) },
+        {
+          namespace: 'a',
+          locale: 'en',
+          routes: [/^\/a\/(?<id>\d+)/],
+          loader: async ({ params }: Loader.Props) => ({ [`only${params.id}`]: params.id }),
+        },
+      ],
+    };
+    const instance = new i18n(config);
+
+    await instance.loadTranslations('en', '/a/1');
+    await instance.loadConfig(config);
+    await instance.loadTranslations('en', '/a/2');
+
+    expect(instance.translations.en).toEqual({ 'a.first': 'First', 'a.second': 'Second', 'a.only2': '2' });
+  });
+  it('keeps a sibling loader\'s part and data supplied without a loader when a loader\'s params change', async () => {
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'article', locale: 'en', loader: async () => ({ shared: 'Shared' }) },
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/article\/(?<articleId>\d+)/],
+          loader: async ({ params }) => ({ [`only${params.articleId}`]: params.articleId }),
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/article/5');
+    instance.addTranslations({ en: { article: { static: 'Static' } } });
+    await instance.loadTranslations('en', '/article/6');
+
+    expect(instance.translations.en).toEqual({ 'article.static': 'Static', 'article.shared': 'Shared', 'article.only6': '6' });
+    expect(instance.rawTranslations.en).toEqual({ article: { static: 'Static', shared: 'Shared', only6: '6' } });
+  });
+  it('runs each route-scoped loader of a shared namespace on its own route', async () => {
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
+        { namespace: 'common', locale: 'en', routes: ['/about'], loader: async () => ({ menu: { about: 'About' } }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadTranslations('en', '/about');
+
+    expect(instance.translations.en).toEqual({ 'common.menu.home': 'Home', 'common.menu.about': 'About' });
+  });
+  it('refetches for a parameterized loader whose namespace arrived as plain data', async () => {
+    const loader = vi.fn(async () => ({ title: 'Six' }));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/article\/(?<articleId>\d+)/], loader }],
+    });
+
+    instance.addTranslations({ en: { article: { title: 'Five' } } });
+    await instance.loadTranslations('en', '/article/6');
+
+    expect(loader).toHaveBeenCalledTimes(1);
+    expect(instance.translations.en).toEqual({ 'article.title': 'Six' });
+  });
+  it('lets a loader run again once data supplied without a loader is invalidated', async () => {
+    const loader = vi.fn(async () => ({ greeting: 'Hello' }));
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'common', locale: 'en', loader }] });
+
+    instance.addTranslations({ en: { common: { greeting: 'Hi' } } });
+    await instance.loadTranslations('en', '/');
+    expect(loader).not.toHaveBeenCalled();
+
+    instance.invalidate('en');
+    await instance.loadTranslations('en', '/');
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+  it('records no load for a loader that threw, so the next trigger retries it', async () => {
+    const loader = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue({ greeting: 'Hello' });
+    const instance = new i18n({
+      parser,
+      log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+      loaders: [
+        { namespace: 'common', locale: 'en', loader },
+        { namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadTranslations('en', '/other');
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(instance.translations.en).toEqual({ 'nav.home': 'Home', 'common.greeting': 'Hello' });
   });
   it('forwards a thrown loader value to the configured logger unwrapped', async () => {
     const errorSpy = vi.fn();
