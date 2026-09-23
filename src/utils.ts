@@ -609,6 +609,23 @@ export const routeParams = (routes: readonly Loader.Route[] | undefined, route: 
   return routes.reduce<Loader.Params | undefined>((found, input) => found ?? match(input), undefined);
 };
 
+// Whether a route can yield params: a pattern with a named group. Read off an
+// empty match of the pattern made optional, whose `groups` names every group.
+const namesGroups = (input: Loader.Route): boolean => {
+  if (!(input instanceof RegExp)) return false;
+
+  try {
+    const groups = new RegExp(`(?:${input.source})|`, input.flags.replace(/[gy]/g, '')).exec('')?.groups;
+
+    return !!groups && Object.keys(groups).length > 0;
+  } catch {
+    return false;
+  }
+};
+
+/** Whether any of `routes` can yield params. */
+export const capturesParams = (routes: readonly Loader.Route[] | undefined): boolean => !!routes?.some(namesGroups);
+
 // Keyed on the params alone, not the route: two routes yielding the same params
 // describe the same data. Stable in key order, and '' for none, so a loader
 // without params keys the way a namespace record does.

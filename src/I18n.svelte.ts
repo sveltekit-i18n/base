@@ -1,4 +1,4 @@
-import { fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, testRoute, toDotNotation, translate, unique } from './utils.js';
+import { capturesParams, fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, toDotNotation, translate, unique } from './utils.js';
 import type { Delivery, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -326,21 +326,21 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Serializes what this instance holds for the active locale and the fallback
-   * locale, narrowed to the current route: a key owned only by loaders that do
-   * not match the route is left out. The result is shaped like
-   * `config.translations`, so a client hydrates by passing it to
-   * `addTranslations()` — the bookkeeping derived from it then keeps the
-   * matching loaders from fetching the same data again. Apply it to the
-   * instance rather than assigning it to `config.translations`: the payload is
-   * a subset — two locales, and nothing of a key its loaders claim for another
-   * route — so assigning it would drop the rest of the config's own data.
-   * A literal `__proto__` key is left out: the serializer SvelteKit hands load
-   * data to refuses an object that carries one.
+   * locale. The result is shaped like `config.translations`, so a client
+   * hydrates by passing it to `addTranslations()` — the bookkeeping derived
+   * from it then keeps the matching loaders from fetching the same data again.
+   * Apply it to the instance rather than assigning it to `config.translations`:
+   * the payload covers two locales, so assigning it would drop the rest of the
+   * config's own data.
+   * A namespace plain data cannot hand over is left out, for the client to
+   * load: one fed by several loaders, whose record would suppress a part the
+   * payload lacks, and one whose loader's routes can capture params, whose data
+   * the client could not tell apart from data supplied without a loader.
+   * A literal `__proto__` key is left out too: the serializer SvelteKit hands
+   * load data to refuses an object that carries one.
    */
   snapshot = (): Translations.SerializedTranslations => {
     const { fallbackLocale } = this.#config ?? {};
-
-    const route = this.#route ?? '';
 
     // Both are held sanitized, the way the loaders key their data.
     const locales = [this.#locale, fallbackLocale].filter((locale): locale is Config.Locale => !!locale);
@@ -352,15 +352,15 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       if (!data) return acc;
 
-      const offRoute = this.#offRouteKeys(locale, route);
+      const omitted = this.#unsnapshottable(locale);
 
-      const onRoute = Object.keys(data)
-        .filter((key) => !offRoute.has(key))
-        .reduce((keep, key) => ({ ...keep, [key]: read(data, key) }), {});
+      const handable = Object.fromEntries(
+        Object.entries(data).filter(([key]) => !omitted.some((namespace) => isNamespaceKey(key, namespace))),
+      );
 
-      const relevant = omitProtoKeys(onRoute);
+      const relevant = omitProtoKeys(handable);
 
-      if (relevant !== onRoute) {
+      if (relevant !== handable) {
         logger.warn(`Leaving a '__proto__' key of locale '${locale}' out of the snapshot: load data cannot carry it.`);
       }
 
@@ -644,26 +644,16 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     if (this.#locale !== locale) this.#locale = locale;
   }
 
-  /**
-   * Loader keys of `sanitizedLocale` that only ever load on OTHER routes. A key
-   * claimed by a route-matching loader — or by no loader at all — is not
-   * attributable to another route and is therefore absent here.
-   */
-  #offRouteKeys(sanitizedLocale: Config.Locale, route: string): Set<Loader.Key> {
+  /** The namespaces of `sanitizedLocale` `snapshot()` leaves out — see there. */
+  #unsnapshottable(sanitizedLocale: Config.Locale): Loader.Key[] {
     const { loaders = [] } = this.#config ?? {};
 
-    const offRoute = new Set<Loader.Key>();
-    const onRoute = new Set<Loader.Key>();
+    const own = loaders.filter(({ locale }) => locale === sanitizedLocale);
 
-    loaders.forEach(({ namespace, locale, routes }) => {
-      if (locale !== sanitizedLocale) return;
-
-      (routes && !routes.some(testRoute(route)) ? offRoute : onRoute).add(namespace);
-    });
-
-    onRoute.forEach((namespace) => offRoute.delete(namespace));
-
-    return offRoute;
+    return unique(own
+      .filter((loader) => own.some((other) => other !== loader && other.namespace === loader.namespace)
+        || capturesParams(loader.routes))
+      .map(({ namespace }) => namespace));
   }
 
   /**
