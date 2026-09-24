@@ -434,8 +434,9 @@ not RCE/XSS.
   infra, purely visual): say so explicitly in the PR with manual repro steps.
 - Don't assert on the shared module-level `logger` singleton — it leaks across
   async tests; construct a logger/instance locally instead.
-- `t`/`l` resolve via a no-op test parser (`parse: (...) => key`) — design
-  assertions accordingly.
+- `t`/`l` resolve via the shared no-op test `parser` (`parse: (...) => key`) —
+  design assertions accordingly; a spec that asserts on translated output uses
+  the shared `valueParser`, which returns the loaded value.
 
 ## 14. Output style
 

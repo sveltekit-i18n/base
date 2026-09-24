@@ -13,6 +13,10 @@ const TRANSLATIONS = getTranslations();
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
 
+// Unlike the shared no-op `parser`, this one returns the loaded value, so a spec
+// can assert on actual translation output.
+const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
 // The public descriptor type is a union over the two namespace spellings, so
 // reading one takes the same resolution the core applies at the config boundary.
 const resolved = resolveLoaders(loaders);
@@ -518,7 +522,7 @@ describe('i18n instance', () => {
   it('keeps successful translations when one loader throws', async () => {
     const errorSpy = vi.fn();
     const instance = new i18n({
-      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      parser: valueParser,
       log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
       loaders: [
         { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
@@ -533,7 +537,7 @@ describe('i18n instance', () => {
   });
   it('merges loaders sharing a locale and key instead of keeping the last one', async () => {
     const instance = new i18n({
-      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      parser: valueParser,
       log,
       loaders: [
         { namespace: 'common', locale: 'en', routes: ['/'], loader: async () => ({ menu: { home: 'Home' } }) },
@@ -551,7 +555,7 @@ describe('i18n instance', () => {
   it('keeps the last loader value on a leaf conflict and reports it', async () => {
     const warnSpy = vi.fn();
     const instance = new i18n({
-      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      parser: valueParser,
       log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
       loaders: [
         { namespace: 'common', locale: 'en', loader: async () => ({ home: { title: 'Title' } }) },
@@ -567,7 +571,7 @@ describe('i18n instance', () => {
   it('merges data added to a namespace that already holds some', async () => {
     const warnSpy = vi.fn();
     const instance = new i18n({
-      parser: { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) },
+      parser: valueParser,
       log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
       initLocale: 'en',
       loaders: [
@@ -1136,7 +1140,6 @@ describe('i18n instance', () => {
   });
 
   it('refreshes the `t`/`l` identity when the config, the tables or the locale change', async () => {
-    const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
     const instance = new i18n({ parser: valueParser, log, initLocale: 'en' });
 
     const initialT = instance.t;
@@ -1166,7 +1169,6 @@ describe('i18n instance', () => {
   });
 
   it('keeps destructured `t`/`l` translating against live state', async () => {
-    const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
     const instance = new i18n({ parser: valueParser, log, initLocale: 'en' });
 
     // Snapshotted before any data exists: the reads happen when it is CALLED,
@@ -1186,8 +1188,6 @@ describe('i18n instance', () => {
 });
 
 describe('i18n locale keys', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   it('`addTranslations` normalizes the locale key so `t` reaches the data', async () => {
     const instance = new i18n({ parser: valueParser, log, initLocale: 'EN', translations: { EN: { greeting: 'Hello' } } });
 
@@ -1237,8 +1237,6 @@ describe('i18n locale keys', () => {
 });
 
 describe('i18n sanitizeLocales config', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   it('`false` keeps every locale exactly as it was authored', async () => {
     const instance = new i18n({
       parser: valueParser,
@@ -1468,10 +1466,6 @@ describe('i18n extensions', () => {
 });
 
 describe('i18n loading concurrency', () => {
-  // Unlike the shared no-op parser, this one returns the loaded value, so the
-  // specs below can assert on actual translation output.
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   it('concurrent identical load triggers share one in-flight load', async () => {
     let calls = 0;
     const instance = new i18n({
@@ -1870,8 +1864,6 @@ describe('i18n warm loads', () => {
 });
 
 describe('i18n loadNamespace', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   type Calls = Record<string, number>;
 
   const loaders = (calls: Calls, editor: () => Promise<any> = async () => ({ title: 'Editor' })) => [
@@ -2115,8 +2107,6 @@ describe('i18n loadNamespace', () => {
 });
 
 describe('i18n cache and invalidation', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   const counterLoader = (locale: string, calls: Record<string, number>) => ({
     namespace: 'common',
     locale,
@@ -2927,8 +2917,6 @@ describe('i18n cache and invalidation', () => {
 });
 
 describe('i18n loaders with `cache: false`', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   type Calls = Record<string, number>;
 
   const setup = (calls: Calls, source = { version: 1 }) => [
@@ -3260,8 +3248,6 @@ describe('i18n loaders with `cache: false`', () => {
 });
 
 describe('i18n seeded translations', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   const extra = (loader: () => Promise<Record<string, string>>, routes?: string[]) => ({ namespace: 'extra', locale: 'en', ...(routes && { routes }), loader });
 
   it('lets the loader of a namespace seeded through `config.translations` run, and merges the two', async () => {
@@ -3374,8 +3360,6 @@ describe('i18n seeded translations', () => {
 });
 
 describe('i18n snapshot', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   const countingLoaders = (calls: Record<string, number>) => [
     { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
     { namespace: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
@@ -3600,8 +3584,6 @@ describe('i18n snapshot', () => {
 });
 
 describe('i18n hydrate', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   type Calls = Record<string, number>;
 
   const counted = (calls: Calls, name: string, data: any) => async () => {
@@ -3956,8 +3938,6 @@ describe('i18n hydrate', () => {
 });
 
 describe('i18n destroy', () => {
-  const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
-
   it('discards an in-flight load and clears the loading flag', async () => {
     let calls = 0;
     const resolvers: Array<(value: any) => void> = [];
