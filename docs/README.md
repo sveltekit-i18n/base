@@ -210,8 +210,8 @@ every locale.
   route no longer asks for, and the next trigger does not fetch it again (a
   [`cache: false`](#cache-optional) loader aside). The loaders that threw,
   whether control flow or a failure, run again. Should applying it fail — a
-  custom [`preprocess`](#preprocess) that throws — that is logged, and the call
-  still rejects with the control flow.
+  custom [`preprocess`](#preprocess) that throws — that is logged, none of it
+  is kept, and the call still rejects with the control flow.
 - **Control flow a later call replaced is discarded.** The load of a call a
   later one replaced — with another locale, or with other route params for the
   loader that threw — resolves without it; a later route of the same locale
@@ -779,6 +779,15 @@ see [`'none'`](#none)).
 The function is called once per locale with that locale's table. Its top-level
 keys are the loader `namespace`s – or the keys you passed to `addTranslations()` –
 with each payload nested underneath.
+
+Should it throw, what brought the data keeps none of it: neither table
+changes, and no loader counts as loaded, so the next trigger runs them.
+`addTranslations()` and `hydrate()` throw the error, and a load rejects with it
+— unless a loader of the load threw SvelteKit's control flow, which the load
+rejects with instead, the error only logged. A load that fetched part of itself
+again after an [invalidation](#invalidatelocale-namespace) keeps the part that
+landed first. [`loadConfig()`](#loadconfigconfig) rejects with it too, but keeps
+the new config without starting its `initLocale` load.
 
 **Example 1: Add prefixes**
 
@@ -1563,7 +1572,10 @@ whole point of the call.
 broken loader does not fail the batch; only SvelteKit's `redirect()` and an
 `error()` below 500 reject the load ([see `loader`](#loader-required)).
 Anything that throws afterwards — a custom `preprocess`, a malformed payload —
-**rejects the returned promise**, so `await` surfaces it (in SvelteKit, to the
+**rejects the returned promise** and keeps none of what the load delivered, so
+the next trigger fetches it again — a load that fetched part of itself again
+after an [invalidation](#invalidatelocale-namespace) keeps the part that landed
+first — and `await` surfaces it (in SvelteKit, to the
 error page — the static `src/error.html` when it happens in the root layout);
 when a loader's control flow rejects the load too, that failure is only logged
 and the promise rejects with the control flow. A result you discard is safe:
