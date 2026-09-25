@@ -328,8 +328,8 @@ export namespace Loader {
      * Those are logged too, and reject the load with the thrown value once its other loaders have settled. The locale does not advance, and the
      * rejected call is undone: its requested locale, route and route params go back to what it replaced – as do those of a call whose control flow it
      * replaced – unless a later call that has not failed came in the meantime. A locale or a route nothing was asked for before stands. The request
-     * put back activates once a load of it settles: its own, if it is still in flight, or else the next trigger's. What the other loaders delivered is kept without activating anything, unless it was
-     * fetched for params the route no longer asks for.
+     * put back activates once a load of it settles: its own, if it is still in flight, or else the next trigger's. What the other loaders delivered is kept without activating anything; what was
+     * fetched for params the route no longer asks for is kept aside, for the trigger that asks for them.
      *
      * An activating load a later call replaced – with another locale, or with other params for this loader – resolves without the control flow.
      * Nothing replaces a warm load's, unless it shares the load of an activating call, whose outcome it then gets. What a loader throws is discarded,
