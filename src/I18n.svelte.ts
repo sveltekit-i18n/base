@@ -27,12 +27,16 @@ type Call = {
   failed: boolean;
 };
 
+/** A parked delivery an activating load counts on, with the request it serves. */
+type Unparked = { request: LoadRequest; delivery: Delivery };
+
 type InflightLoad = {
   key: string;
   promise: Promise<void>;
   loaders: Loader.Resolved[];
   severed: Set<Loader.Resolved>;
   calls: Call[];
+  unparked: Unparked[];
 };
 
 /** A top-level key holding part of `namespace` — the namespace itself or a key flattened out of it. */
@@ -104,6 +108,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // asks for must not replace what it displays; a warm load asks for nothing.
   #wanted = new Map<Loader.Resolved, string>();
 
+  // The latest delivery of each loader for params nothing wanted yet — a warm
+  // load of another route's params, typically a preload — so the trigger that
+  // wants them applies it instead of fetching again. One per loader, as a
+  // router keeps one preload. It starts its locale's `cache` window, and
+  // invalidation drops it with the records.
+  #parked = new Map<Loader.Resolved, Delivery>();
+
   // What a hand-off delivered for the loaders with `cache: false`, whose
   // records keep no trigger that selects them from running them. It serves the
   // pass it arrived with: until an activating trigger asks for another locale
@@ -121,8 +132,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * trigger with the same key shares the promise of one that delivers all it
    * has to fetch. `calls` holds the activating calls that share it, so a
    * warm load joined by one activates when it settles, or fails them as an
-   * activating load does. `severed` holds the loaders an invalidation cut off
-   * while the load was in flight.
+   * activating load does. `unparked` holds the parked deliveries its calls
+   * claimed, which it applies when it settles. `severed` holds the loaders, of
+   * either kind, an invalidation cut off while the load was in flight.
    */
   #inflight = new Set<InflightLoad>();
 
@@ -334,7 +346,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * `{ activate: false }` only fills the tables: it leaves the requested
    * locale, the route and `locale` untouched and does not count towards
    * `loading` — what is rendered does not change: data of a loader whose route
-   * params differ from the ones the current route asks for is discarded. It
+   * params differ from the ones the current route asks for is kept aside, the
+   * latest per loader, and the activating trigger that asks for them applies
+   * it. It
    * leaves `cache` expiry to the next activating trigger. A loader's
    * `redirect()` or `error()` below 500 rejects it all the same.
    */
@@ -433,6 +447,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#handedOff.forEach((_, loader) => {
       if (covers(loader)) this.#handedOff.delete(loader);
+    });
+
+    this.#parked.forEach((_, loader) => {
+      if (covers(loader)) this.#parked.delete(loader);
     });
 
     // Applying their pre-invalidation data would resurrect the bookkeeping
@@ -692,10 +710,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       merged.translations,
     );
 
-    deliveries.forEach((delivery) => {
-      this.#deliveries.set(delivery.loader, delivery);
-      this.#loaderRecords.set(delivery.loader, delivery.signature);
-    });
+    deliveries.forEach((delivery) => this.#record(delivery));
 
     this.#rawTranslations = merged.raw;
     this.#translations = translations;
@@ -777,8 +792,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#mergeTranslations(translations);
 
     deliveries.forEach((delivery) => {
-      this.#deliveries.set(delivery.loader, delivery);
-      this.#loaderRecords.set(delivery.loader, delivery.signature);
+      this.#record(delivery);
 
       if (delivery.loader.cache === false) this.#handedOff.set(delivery.loader, delivery.signature);
     });
@@ -793,6 +807,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     this.#keepExternal(external);
     this.#stampHandOff(translations);
+  }
+
+  /** Records `delivery` as its loader's; what was parked for its params is older. */
+  #record(delivery: Delivery): void {
+    this.#deliveries.set(delivery.loader, delivery);
+    this.#loaderRecords.set(delivery.loader, delivery.signature);
+
+    if (this.#parked.get(delivery.loader)?.signature === delivery.signature) this.#parked.delete(delivery.loader);
   }
 
   /** Keeps data held without a loader, to rebuild a namespace from. */
@@ -1032,8 +1054,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * lands, and no trigger that has to fetch that loader joins it.
    */
   #sever(covers: (loader: Loader.Resolved) => boolean): void {
-    this.#inflight.forEach(({ loaders, severed }) => {
-      loaders.filter(covers).forEach((loader) => severed.add(loader));
+    this.#inflight.forEach(({ loaders, unparked, severed }) => {
+      [...loaders, ...unparked.map(({ request }) => request.loader)].filter(covers).forEach((loader) => severed.add(loader));
     });
   }
 
@@ -1160,6 +1182,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return matching.filter(({ loader, signature }) => {
       if (loader.cache === false) return this.#handedOff.get(loader) !== signature;
 
+      if (this.#parked.get(loader)?.signature === signature) return false;
+
       if (this.#loaderRecords.has(loader)) return this.#loaderRecords.get(loader) !== signature;
 
       return signature !== '' || !(read<Loader.Key[]>(this.#namespaceRecords, loader.locale) || []).includes(loader.namespace);
@@ -1212,20 +1236,25 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
   #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[], resumed = false): Promise<void> {
     const requests = this.#unloaded(selected);
+    const unparked = calls.length ? this.#claimParked(selected) : [];
 
     if (!requests.length) {
       // Nothing to fetch — the locale still becomes active (its data is
-      // already present or it has no loaders).
-      if (calls.length) this.#activate(locale);
+      // already present, parked or it has no loaders).
+      if (calls.length) {
+        this.#applyWanted(unparked.map(({ delivery }) => delivery));
+        this.#activate(locale);
+      }
 
       return Promise.resolve();
     }
 
+    // What is parked lands with the load, so a call it fails puts it back.
     const inflight = this.#joinable(key, requests);
 
-    if (inflight) return this.#join(inflight, calls);
+    if (inflight) return this.#join(inflight, calls, unparked);
 
-    return this.#start(locale, route, key, requests, calls, resumed);
+    return this.#start(locale, route, key, requests, calls, unparked, resumed);
   }
 
   /** The load in flight under `key` that delivers every one of `requests`. */
@@ -1239,12 +1268,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * and fail with it when a loader of it throws control flow that was not
    * severed.
    */
-  #join(entry: InflightLoad, calls: Call[]): Promise<void> {
+  #join(entry: InflightLoad, calls: Call[], unparked: Unparked[]): Promise<void> {
     if (!calls.length) return entry.promise;
 
     if (!entry.calls.length) this.#pending = new Set(this.#pending).add(entry.promise);
 
     entry.calls = [...entry.calls, ...calls];
+    entry.unparked = [...entry.unparked, ...unparked];
 
     return entry.promise;
   }
@@ -1254,11 +1284,47 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return (this.#wanted.get(loader) ?? signature) === signature;
   }
 
-  /** Applies the deliveries of the params the next trigger asks for. */
+  /**
+   * Applies the deliveries of the params the next trigger asks for, and parks
+   * the rest. A loader no trigger asked for params keeps what it delivered for
+   * others: a warm load parks what would replace it, unless it asks for no
+   * params — `loadNamespace()` off the loader's routes. What an activating load
+   * counts on stays parked until it settles. A loader with `cache: false` runs
+   * on every trigger that selects it, so nothing of it is parked.
+   */
   #applyWanted(deliveries: Delivery[]): void {
-    const wanted = deliveries.filter((delivery) => this.#isWanted(delivery));
+    const wanted = deliveries.filter(({ loader, signature }) => {
+      if (this.#wanted.has(loader)) return this.#wanted.get(loader) === signature;
+
+      const previous = this.#deliveries.get(loader);
+
+      return !previous || previous.signature === signature || signature === '';
+    });
+
+    const parked = deliveries.filter((delivery) => !wanted.includes(delivery)
+      && delivery.loader.cache !== false
+      && !this.#claimed(delivery.loader));
+
+    parked.forEach((delivery) => this.#parked.set(delivery.loader, delivery));
+    this.#stamp(parked.map(({ loader }) => loader.locale));
 
     if (wanted.length) this.#applyDeliveries(wanted);
+  }
+
+  /** What is parked for `requests`, for the load that applies it once it settles. */
+  #claimParked(requests: LoadRequest[]): Unparked[] {
+    return requests.flatMap((request) => {
+      const delivery = this.#parked.get(request.loader);
+
+      return delivery?.signature === request.signature ? [{ request, delivery }] : [];
+    });
+  }
+
+  /** Whether a load in flight counts on what is parked for `loader`. */
+  #claimed(loader: Loader.Resolved): boolean {
+    const delivery = this.#parked.get(loader);
+
+    return delivery !== undefined && Array.from(this.#inflight).some(({ unparked }) => unparked.some((claim) => claim.delivery === delivery));
   }
 
   /**
@@ -1302,7 +1368,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Fetches `requests` as a load in flight under `key`, and settles it. */
-  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], resumed: boolean): Promise<void> {
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], unparked: Unparked[], resumed: boolean): Promise<void> {
     const onRoute = route ? ` and '${route}' route` : '';
 
     let rejection: ControlFlow | undefined;
@@ -1310,7 +1376,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const promise = new Promise<void>((resolve, reject) => { outcome = { resolve, reject }; });
 
-    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls };
+    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls, unparked };
 
     // Registered before any loader is called, so one that invalidates or
     // destroys the instance before its first `await` severs its own load too.
@@ -1328,6 +1394,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // data predates the invalidation: applying it would resurrect the
       // dropped bookkeeping and permanently suppress the promised refetch.
       const current = deliveries.filter(({ loader }) => !entry.severed.has(loader));
+      // What it counts on applies while still parked: a newer record of the
+      // same params dropped it, and an invalidation severed it.
+      const held = entry.unparked
+        .filter(({ request, delivery }) => !entry.severed.has(request.loader) && this.#parked.get(request.loader) === delivery)
+        .map(({ delivery }) => delivery);
+      const served = [...requests, ...entry.unparked.map(({ request }) => request)];
 
       rejection = this.#rejection(entry, locale, controlFlow);
 
@@ -1341,7 +1413,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // load's does. Should applying it fail, that is only logged: the caller
       // gets the control flow.
       try {
-        this.#applyWanted(current);
+        this.#applyWanted([...held, ...current]);
       } catch (error) {
         if (!rejection) throw error;
 
@@ -1352,13 +1424,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       // A load of params the route no longer asks for, whatever it returned,
       // leaves the activation to the load of the params it asks for.
-      const replaced = requests.some((request) => !this.#isWanted(request));
+      const replaced = served.some((request) => !this.#isWanted(request));
 
       if (!entry.calls.length || replaced) return [];
 
       if (!entry.severed.size) this.#activate(locale);
 
-      return requests.filter(({ loader }) => entry.severed.has(loader));
+      return served.filter(({ loader }) => entry.severed.has(loader));
     });
 
     // Reported here so a load nobody awaits is still visible. What a resume

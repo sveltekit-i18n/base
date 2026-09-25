@@ -396,6 +396,32 @@ describe('/kit', () => {
       void unmount(component);
     });
 
+    it('shows the new route params in the commit\'s own flush, fetched once by the load', async () => {
+      const slugs: string[] = [];
+      const wiring = setup({
+        loaders: [{
+          locale: 'cs',
+          namespace: 'common',
+          routes: [/^\/blog\/(?<slug>[^/]+)$/],
+          loader: ({ params }: { params: Record<string, string> }) => {
+            slugs.push(params.slug);
+
+            return Promise.resolve({ greeting: `post ${params.slug}` });
+          },
+        }],
+      });
+      const data = cell<object>(await wiring.load(universalEvent('/blog/a', page('/blog/a'))));
+      const { component } = mountLayout(wiring, data);
+
+      await vi.waitFor(() => expect(document.body.innerHTML).toContain('post a'));
+
+      data.current = await wiring.load(universalEvent('/blog/b', page('/blog/b')));
+      flushSync();
+      expect(document.body.innerHTML).toContain('post b');
+      expect(slugs).toEqual(['a', 'b']);
+      void unmount(component);
+    });
+
     it('takes an answer given while the commit\'s own switch was pending as current', async () => {
       const pending: Array<() => void> = [];
       const wiring = setup({

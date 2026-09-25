@@ -168,7 +168,23 @@ translation state, loading, caching, route matching, and preprocessing — but
   sibling keeps its part. Last request wins for params too: every ACTIVATING
   trigger records the params it wants per matching loader (`#wanted`), even one
   that joins a load or fetches nothing, and a delivery for other params is
-  discarded — a warm load wants nothing, so it never replaces what is shown. Per-locale expiry (`config.cache`, default
+  parked (`#parked`, the latest per loader, as a router keeps one preload)
+  instead of applied — a warm load wants nothing, so it never replaces what is
+  shown, nor what a loader no route wants params of delivered for others
+  (only `loadNamespace()` off the loader's routes, which asks for no params,
+  replaces that). Parking stamps the locale, so parked data lives within the
+  `cache` window. The activating trigger that wants parked params CLAIMS them
+  for its load (`unparked`) and leaves them parked: no later park replaces a
+  claimed delivery, and every other trigger still finds it there, so nothing
+  fetches those params again. The load applies what is still parked through
+  `#applyWanted` after any undo — a failed call leaves it parked. With nothing
+  left to fetch the trigger applies it at once, so a preload's data shows at
+  commit without a second fetch. `#record` drops a parked delivery its params
+  were recorded for since (a newer load or a hand-off), and the claiming load
+  then applies nothing of it; invalidation drops what is parked with the
+  records and severs what a load claimed as it severs a loader the load runs,
+  so an activating load fetches it again (`#resume`) and `destroy()` applies
+  none of it; nothing of a `cache: false` loader is parked. Per-locale expiry (`config.cache`, default
   `Infinity` — never expires) and `invalidate(locale?, namespace?)` drop that
   bookkeeping so the NEXT load trigger refetches; a namespace invalidation
   leaves `#loadedAt` alone, so no table outlives the window. Invalidation also

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, matchLocale, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -1105,6 +1105,235 @@ describe('i18n instance', () => {
       resolvers['2']?.();
       await warm;
       expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('applies what a warm load fetched for other params once the route asks for them, without fetching again', async () => {
+      const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+
+      const load = instance.setRoute('/item/2');
+
+      // Applied as the trigger runs, so a commit shows the new params at once.
+      expect(instance.translations.en).toEqual({ 'item.id': '2' });
+      await load;
+      expect(item.mock.calls.map(([{ params }]) => params.id)).toEqual(['1', '2']);
+      expect(instance.snapshot({ records: true }).records).toEqual([{ id: expect.any(String), signature: paramsSignature({ id: '2' }) }]);
+    });
+    it('parks only the latest warm load of other params per loader', async () => {
+      const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      await instance.loadTranslations('en', '/item/3', { activate: false });
+      await instance.setRoute('/item/2');
+      await instance.setRoute('/item/3');
+
+      // 2 was replaced by 3 before the route asked for it.
+      expect(item.mock.calls.map(([{ params }]) => params.id)).toEqual(['1', '2', '3', '2']);
+      expect(instance.translations.en).toEqual({ 'item.id': '3' });
+    });
+    it('fetches what a warm load fetched for other params again once it was invalidated', async () => {
+      const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      instance.invalidate('en', 'item');
+      await instance.setRoute('/item/2');
+
+      expect(instance.translations.en).toEqual({ 'item.id': '2' });
+      expect(item).toHaveBeenCalledTimes(3);
+    });
+    it('keeps nothing a warm load fetched for other params from a loader with `cache: false`', async () => {
+      const item = vi.fn(async ({ params }: Loader.Props) => {
+        if (item.mock.calls.length > 2) throw new Error('down');
+
+        return { id: params.id };
+      });
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', cache: false, routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      await instance.setRoute('/item/2');
+
+      // The loader runs again and fails soft: nothing of the warm load shows.
+      expect(item).toHaveBeenCalledTimes(3);
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('fetches params again once their parked data was applied and replaced', async () => {
+      const item = vi.fn(async ({ params }: Loader.Props) => ({ id: `${params.id}#${item.mock.calls.length}` }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      await instance.setRoute('/item/2');
+      await instance.setRoute('/item/1');
+      await instance.setRoute('/item/2');
+
+      expect(instance.translations.en).toEqual({ 'item.id': '2#4' });
+    });
+    it('parks a warm load that would replace what a loader no route asks for delivered', async () => {
+      const article = vi.fn(async ({ params }: Loader.Props) => ({ title: `A${params.id}` }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/article\/(?<id>\d+)$/], loader: article }] });
+
+      await instance.loadTranslations('en', '/home');
+      await instance.loadTranslations('en', '/article/2', { activate: false });
+      await instance.loadTranslations('en', '/article/3', { activate: false });
+      expect(instance.translations.en).toEqual({ 'article.title': 'A2' });
+
+      void instance.setRoute('/article/3');
+      expect(instance.translations.en).toEqual({ 'article.title': 'A3' });
+      expect(article).toHaveBeenCalledTimes(2);
+    });
+    it('parks a warm load of other params than a reconfiguration handed on', async () => {
+      const config = () => ({ parser: valueParser, log, loaders: [{ id: 'item', namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: async ({ params }: Loader.Props) => ({ id: params.id }) }] });
+      const instance = new i18n(config());
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadConfig(config());
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    });
+    it('applies a warm load of a loader no route asks for once what it delivered before was invalidated', async () => {
+      const article = vi.fn(async ({ params }: Loader.Props) => ({ title: `A${params.id ?? ''}` }));
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/article\/(?<id>\d+)$/], loader: article }] });
+
+      await instance.loadTranslations('en', '/home');
+      await instance.loadTranslations('en', '/article/2', { activate: false });
+      instance.invalidate('en', 'article');
+      await instance.loadNamespace('article');
+
+      expect(instance.translations.en).toEqual({ 'article.title': 'A' });
+      await instance.loadNamespace('article');
+      expect(article).toHaveBeenCalledTimes(2);
+    });
+
+    describe('while the load that applies them is in flight', () => {
+      // `side` runs on every trigger; `hold` keeps the next one in flight.
+      // `/alt/2` selects `item` for the same params as `/item/2`, and `alt` too.
+      const loaders = (item: Loader.T, side: Loader.T) => [
+        { id: 'item', namespace: 'item', locale: 'en', routes: [/^\/(?:item|alt)\/(?<id>\d+)$/], loader: item },
+        { id: 'side', namespace: 'side', locale: 'en', cache: false as const, loader: side },
+        { id: 'alt', namespace: 'alt', locale: 'en', routes: [/^\/alt\//], loader: async () => ({ ok: 'yes' }) },
+      ];
+
+      const setup = async () => {
+        const releases: Array<() => void> = [];
+        let holding = false;
+        const side = vi.fn(() => (holding ? new Promise<any>((resolve) => { releases.push(() => resolve({})); }) : Promise.resolve({})));
+        const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+        const instance = new i18n({ parser: valueParser, log, loaders: loaders(item, side) });
+
+        await instance.loadTranslations('en', '/item/1');
+        await instance.loadTranslations('en', '/item/2', { activate: false });
+
+        const hold = <T>(trigger: () => T): T => {
+          holding = true;
+          const result = trigger();
+          holding = false;
+
+          return result;
+        };
+
+        return { item, instance, hold, release: () => releases.forEach((release) => release()) };
+      };
+
+      it('keeps what it took when a warm load parks other params meanwhile', async () => {
+        const { item, instance, hold, release } = await setup();
+
+        const load = hold(() => instance.setRoute('/item/2'));
+        await instance.loadTranslations('en', '/item/3', { activate: false });
+        release();
+        await load;
+
+        expect(instance.translations.en).toMatchObject({ 'item.id': '2' });
+        expect(item.mock.calls.map(([{ params }]) => params.id)).toEqual(['1', '2', '3']);
+      });
+      it('fetches what it took again when an invalidation drops it', async () => {
+        for (const namespace of ['item', undefined]) {
+          const { item, instance, hold, release } = await setup();
+
+          const load = hold(() => instance.setRoute('/item/2'));
+          instance.invalidate('en', namespace);
+          release();
+          await load;
+
+          expect(instance.translations.en).toMatchObject({ 'item.id': '2' });
+          expect(item).toHaveBeenCalledTimes(3);
+        }
+      });
+      it('applies nothing it took once the instance was destroyed', async () => {
+        const { instance, hold, release } = await setup();
+
+        const load = hold(() => instance.setRoute('/item/2'));
+        instance.destroy();
+        release();
+        await load;
+
+        expect(instance.translations.en).toMatchObject({ 'item.id': '1' });
+      });
+      it('lets a trigger for the same params join it instead of fetching them', async () => {
+        const { item, instance, hold, release } = await setup();
+
+        const load = hold(() => instance.setRoute('/item/2'));
+        const again = instance.setRoute('/item/2');
+        release();
+        await Promise.all([load, again]);
+
+        expect(instance.translations.en).toMatchObject({ 'item.id': '2' });
+        expect(item).toHaveBeenCalledTimes(2);
+      });
+      it('lets a trigger that selects more use it instead of fetching it again', async () => {
+        const { item, instance, hold, release } = await setup();
+
+        const load = hold(() => instance.setRoute('/item/2'));
+        const warm = instance.loadTranslations('en', '/alt/2', { activate: false });
+        release();
+        await Promise.all([load, warm]);
+
+        expect(instance.translations.en).toMatchObject({ 'item.id': '2' });
+        expect(item).toHaveBeenCalledTimes(2);
+      });
+      it('applies nothing it took once newer data for those params was recorded', async () => {
+        const { instance, hold, release } = await setup();
+        const server = new i18n({ parser: valueParser, log, loaders: loaders(async ({ params }) => ({ id: `new${params.id}` }), async () => ({})) });
+
+        await server.loadTranslations('en', '/item/2');
+
+        const load = hold(() => instance.setRoute('/item/2'));
+        instance.hydrate(server.snapshot({ records: true }));
+        release();
+        await load;
+
+        expect(instance.translations.en).toMatchObject({ 'item.id': 'new2' });
+      });
+    });
+    it('fetches what a warm load fetched for other params again once the locale\'s `cache` window elapsed', async () => {
+      vi.useFakeTimers();
+      try {
+        let version = 0;
+        const item = vi.fn(async ({ params }: Loader.Props) => ({ id: `${params.id}@${version}` }));
+        const instance = new i18n({ parser: valueParser, log, cache: 1000, loaders: [{ namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item }] });
+
+        await instance.loadTranslations('en', '/item/1');
+        instance.invalidate('en');
+        await instance.loadTranslations('en', '/item/2', { activate: false });
+
+        version = 1;
+        vi.advanceTimersByTime(10_000);
+        await instance.setRoute('/item/2');
+
+        expect(instance.translations.en).toEqual({ 'item.id': '2@1' });
+        expect(item).toHaveBeenCalledTimes(3);
+      } finally {
+        vi.useRealTimers();
+      }
     });
     it('activates a locale only through the load of the params its route asks for', async () => {
       const resolvers: Record<string, () => void> = {};
@@ -2805,6 +3034,81 @@ describe('i18n loaders that throw', () => {
     expect(instance.translations.en).toEqual({ 'page.title': 'Page 1' });
   });
 
+  it('applies what was parked with the load, so a call it fails puts it back', async () => {
+    const thrown: unknown = new HttpError(404, { message: 'Not found' });
+    let blocked = true;
+    const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [
+        { namespace: 'item', locale: 'en', routes: items, loader: item },
+        {
+          namespace: 'other',
+          locale: 'en',
+          routes: items,
+          loader: async ({ params }: Loader.Props) => {
+            if (blocked && params.id === '2') throw thrown;
+            return { id: params.id };
+          },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/item/1');
+    await expect(instance.loadTranslations('en', '/item/2', { activate: false })).rejects.toBe(thrown);
+    await expect(instance.setRoute('/item/2')).rejects.toBe(thrown);
+
+    expect(instance.snapshot({ records: true }).route).toBe('/item/1');
+    expect(instance.translations.en).toEqual({ 'item.id': '1', 'other.id': '1' });
+
+    blocked = false;
+    await instance.setRoute('/item/2');
+
+    expect(instance.translations.en).toEqual({ 'item.id': '2', 'other.id': '2' });
+    expect(item).toHaveBeenCalledTimes(2);
+  });
+  it('keeps what a failed call counted on parked, over a warm load of other params meanwhile', async () => {
+    const thrown: unknown = new HttpError(404, { message: 'Not found' });
+    let holding = false;
+    let fail: () => void = () => undefined;
+    const item = vi.fn(async ({ params }: Loader.Props) => ({ id: params.id }));
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [
+        { namespace: 'item', locale: 'en', routes: items, loader: item },
+        {
+          namespace: 'other',
+          locale: 'en',
+          cache: false,
+          routes: items,
+          loader: async ({ params }: Loader.Props) => {
+            if (holding) {
+              await new Promise<void>((resolve) => { fail = resolve; });
+              throw thrown;
+            }
+
+            return { id: params.id };
+          },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/item/1');
+    await instance.loadTranslations('en', '/item/2', { activate: false });
+
+    holding = true;
+    const load = instance.setRoute('/item/2');
+    holding = false;
+    await instance.loadTranslations('en', '/item/3', { activate: false });
+    fail();
+    await expect(load).rejects.toBe(thrown);
+
+    await instance.setRoute('/item/2');
+
+    expect(instance.translations.en).toMatchObject({ 'item.id': '2' });
+    expect(item.mock.calls.map(([{ params }]) => params.id)).toEqual(['1', '2', '3']);
+  });
+
   it('records no params a warm load delivered for a call that is then undone', async () => {
     const gate = held();
     const page = vi.fn(async ({ params }: Loader.Props) => ({ title: `Page ${params.id}` }));
@@ -3038,7 +3342,7 @@ describe('i18n loaders that throw', () => {
     expect(instance.translations.en).toEqual({ 'item.id': '1' });
   });
 
-  it('forgets the params a rejected call asked a loader for when no call asked for any before', async () => {
+  it('forgets the params a rejected call asked a loader for when no call asked for any before, so a warm load parks others', async () => {
     const thrown = new Redirect(307, '/login');
     const instance = new i18n({
       parser,
@@ -3055,6 +3359,10 @@ describe('i18n loaders that throw', () => {
     expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
 
     await instance.loadTranslations('en', '/item/3', { activate: false });
+
+    expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
+
+    void instance.setRoute('/item/3');
 
     expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '3' });
   });
@@ -5673,6 +5981,26 @@ describe('i18n snapshot', () => {
 });
 
 describe('i18n hydrate', () => {
+  it('drops what was parked for the params a hand-off delivers', async () => {
+    const loaderOf = (prefix: string) => ({
+      id: 'item',
+      namespace: 'item',
+      locale: 'en',
+      routes: [/^\/item\/(?<id>\d+)$/],
+      loader: async ({ params }: Loader.Props) => ({ id: `${prefix}${params.id}` }),
+    });
+    const client = new i18n({ parser: valueParser, loaders: [loaderOf('old')] });
+    const server = new i18n({ parser: valueParser, loaders: [loaderOf('new')] });
+
+    await client.loadTranslations('en', '/item/1');
+    await client.loadTranslations('en', '/item/2', { activate: false });
+    await server.loadTranslations('en', '/item/2');
+    client.hydrate(server.snapshot({ records: true }));
+    await client.setRoute('/item/2');
+
+    expect(client.translations.en).toEqual({ 'item.id': 'new2' });
+  });
+
   type Calls = Record<string, number>;
 
   const counted = (calls: Calls, name: string, data: any) => async () => {

@@ -207,9 +207,9 @@ every locale.
   each on its own: it is all there is for the next trigger to load.
 - **What the other loaders delivered is kept**, as a
   [warm load](#loadtranslationslocale-route-options) keeps it: it lands in the
-  tables without activating anything, unless it was fetched for params the
-  route no longer asks for, and the next trigger does not fetch it again (a
-  [`cache: false`](#cache-optional) loader aside). The loaders that threw,
+  tables without activating anything, and the next trigger does not fetch it
+  again (a [`cache: false`](#cache-optional) loader aside). What was fetched
+  for params the route no longer asks for is kept aside, as a warm load's is. The loaders that threw,
   whether control flow or a failure, run again. Should applying it fail — a
   custom [`preprocess`](#preprocess) that throws — that is logged, none of it
   is kept, and the call still rejects with the control flow.
@@ -458,8 +458,12 @@ the loader as `params`, and the loader runs again whenever the params change:
   params describe the same data and load it once — unless the loader sets
   [`cache: false`](#cache-optional).
 - **The current route's params win.** Loads that settle out of order apply only
-  the data of the params the current route asks for; an older load for other
-  params is discarded.
+  the data of the params the current route asks for. The latest data to arrive
+  for other params is kept aside, one set per loader, as a router keeps one
+  preload: the trigger that asks for those params applies it instead of
+  fetching it again. It counts towards its locale's [`cache`](#cache-optional)
+  window, and `invalidate()` drops it — even while a trigger is about to apply
+  it, which then fetches it again.
 
 Use a non-capturing group (`(?:...)`) where you only need grouping.
 
@@ -1604,7 +1608,14 @@ same loader selection, bookkeeping and in-flight deduplication as an activating
 call, and `invalidate()` severs it the same way — but it does not fetch the
 severed part again, as an activating trigger does; the next trigger will. A loader whose
 [route params](#route-params) differ from the ones the current route asks for
-still runs, but its data is discarded rather than replacing what is displayed.
+still runs, and its data is kept aside rather than replacing what is displayed
+— so is data for other params than a loader no route asks for delivered last,
+unless [`loadNamespace()`](#loadnamespacenamespace-locale) asks for none.
+Only the latest is kept per loader. The activating trigger that asks for those
+params applies it with its load, and at once when nothing else is left to
+fetch, so a preloaded page shows its own data as it commits; a later preload
+cannot replace it meanwhile, and should the call fail, it stays aside. A loader with [`cache: false`](#cache-optional)
+runs again instead.
 It does not evaluate the [`cache`](#cache) window; the next activating trigger
 does. An activating trigger selecting the same loaders for the same locale
 joins it: `loading` turns `true`, the locale activates when the shared load
