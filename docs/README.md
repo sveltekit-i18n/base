@@ -163,7 +163,9 @@ Async function that returns translation data. It receives the load context —
 the sanitized `locale` and the `namespace` this run fetches translations for,
 the `route` the load was triggered for, and the `params` its
 [`routes`](#route-params) captured (`{}` when they capture none). Loaders that
-don't need the context can simply take no parameters.
+don't need the context can simply take no parameters. A loader must not
+await a load of the same instance — `setLocale()`, `loadNamespace()` and the
+rest: that load can be the one waiting for the loader, which then never settles.
 
 A loader that throws is reported and runs again on the next load trigger; the
 rest of the load lands without its data. One that returns nothing (`undefined`
@@ -1872,7 +1874,9 @@ again and only activates once it arrives, so awaiting it still means its locale
 is loaded, with data from after the invalidation. That refetch settles the
 trigger like any load: control flow it throws
 [rejects the trigger](#loader-required), while the part that already landed
-stays. It leaves the severed part to the next trigger when another
+stays. The trigger refetches once: should the refetch be severed too — a loader
+that invalidates what it loads each time it runs, say — it resolves without
+activating. It leaves the severed part to the next trigger, too, when another
 loader of its load threw SvelteKit's control flow that still counts (the
 trigger then rejects with it), when another locale was asked for meanwhile,
 when later params replaced the ones it asked for, or when the config was

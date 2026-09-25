@@ -378,9 +378,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * the call itself starts no load and keeps the currently displayed
    * translations in place. A loader still in flight for what was invalidated
    * is severed: its load settles, but what it returns or throws is discarded —
-   * it predates the invalidation — and an activating trigger fetches it again
-   * before its locale activates, unless another loader of its load threw
-   * SvelteKit's control flow that still counts, which rejects the trigger. A
+   * it predates the invalidation — and an activating trigger fetches it again,
+   * once, before its locale activates. It leaves it to the next trigger when
+   * another loader of its load threw SvelteKit's control flow that still
+   * counts, which rejects the trigger, and when the refetch is severed too. A
    * namespace invalidation leaves the locale's `cache` window where it was.
    */
   invalidate = (locale?: Config.LocaleInput<LocaleUnion>, namespace?: Loader.Key): void => {
@@ -1187,7 +1188,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
-  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[]): Promise<void> {
+  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[], resumed = false): Promise<void> {
     const requests = this.#unloaded(selected);
 
     if (!requests.length) {
@@ -1202,7 +1203,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (inflight) return this.#join(inflight, calls);
 
-    return this.#start(locale, route, key, requests, calls);
+    return this.#start(locale, route, key, requests, calls, resumed);
   }
 
   /** The load in flight under `key` that delivers every one of `requests`. */
@@ -1279,10 +1280,20 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Fetches `requests` as a load in flight under `key`, and settles it. */
-  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[]): Promise<void> {
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], resumed: boolean): Promise<void> {
     const onRoute = route ? ` and '${route}' route` : '';
 
     let rejection: ControlFlow | undefined;
+    let outcome!: { resolve: () => void; reject: (reason: unknown) => void };
+
+    const promise = new Promise<void>((resolve, reject) => { outcome = { resolve, reject }; });
+
+    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls };
+
+    // Registered before any loader is called, so one that invalidates or
+    // destroys the instance before its first `await` severs its own load too.
+    this.#inflight.add(entry);
+    if (calls.length) this.#pending = new Set(this.#pending).add(promise);
 
     const settled = this.#fetch(requests, route).then(({ deliveries, controlFlow }) => {
       // Released before the load settles: a trigger arriving in between must
@@ -1334,12 +1345,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
       : `Failed to load translations for '${locale}' locale${onRoute}.`, error));
 
-    const promise = settled.then((severed) => (severed.length ? this.#resume(locale, route, key, severed, entry.calls) : undefined));
-
-    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls };
-
-    this.#inflight.add(entry);
-    if (calls.length) this.#pending = new Set(this.#pending).add(promise);
+    // Resumed once: a loader that invalidates what it loads each time it runs
+    // would otherwise be fetched again for as long as it keeps doing so.
+    settled
+      .then((severed) => (severed.length && !resumed ? this.#resume(locale, route, key, severed, entry.calls) : undefined))
+      .then(outcome.resolve, outcome.reject);
 
     const settle = () => {
       // Only a `#fetch` that rejected skipped the release above.
@@ -1363,9 +1373,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Finishes an activating load an invalidation cut `severed` off: it fetches
    * them again, so a trigger's promise that resolves still means its locale
    * is loaded, and control flow the refetch throws rejects it as any load's
-   * does. It leaves the locale to the next trigger when the instance was
-   * destroyed, another locale was asked for, the config no longer has one of
-   * those loaders or a later trigger wants other params.
+   * does. It runs once: what severs the refetch is left to the next trigger,
+   * as is the locale when the instance was destroyed, another locale was asked
+   * for, the config no longer has one of those loaders or a later trigger
+   * wants other params.
    */
   #resume(locale: Config.Locale, route: string, key: string, severed: LoadRequest[], calls: Call[]): Promise<void> | undefined {
     const { loaders = [] } = this.#config ?? {};
@@ -1374,7 +1385,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (severed.some((request) => !loaders.includes(request.loader) || !this.#isWanted(request))) return undefined;
 
-    return this.#loadSelection(locale, route, key, severed, calls);
+    return this.#loadSelection(locale, route, key, severed, calls, true);
   }
 }
 

@@ -303,6 +303,7 @@ export namespace Loader {
   type LoaderModuleBody = {
     /**
      * Function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
+     * It must not await a load of the same instance: that load can be the one waiting for it, which then never settles.
      *
      * Whatever it throws is logged and the rest of the load lands without this loader's data – except SvelteKit's `redirect()` and `error()` below 500,
      * told by their shape: an integer `status` from 300 to 308 with a string `location`, or from 400 to 499 with an object `body`, each an own property
