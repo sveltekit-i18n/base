@@ -4245,6 +4245,56 @@ describe('i18n cache and invalidation', () => {
     expect(instance.locale).toBe('en');
   });
 
+  it('severs the load of a loader that invalidates before its first `await`, and fetches it again', async () => {
+    let calls = 0;
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{
+        namespace: 'common',
+        locale: 'en',
+        loader: async () => {
+          calls += 1;
+          const stale = calls === 1;
+          if (stale) instance.invalidate('en');
+          return { greeting: stale ? 'stale' : 'fresh' };
+        },
+      }],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(calls).toBe(2);
+    expect(instance.translations.en).toEqual({ 'common.greeting': 'fresh' });
+    expect(instance.locale).toBe('en');
+  });
+
+  it.each(['before', 'after'])('fetches a loader that invalidates what it loads %s its first `await` once more, then leaves it to the next trigger', async (when) => {
+    let calls = 0;
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [{
+        namespace: 'common',
+        locale: 'en',
+        loader: async () => {
+          calls += 1;
+          if (when === 'after') await Promise.resolve();
+          // Bounded, so a loop would show in the count rather than hang.
+          if (calls < 10) instance.invalidate('en');
+          return { greeting: `${calls}` };
+        },
+      }],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(calls).toBe(2);
+    expect(instance.locale).toBeUndefined();
+    expect(instance.loading).toBe(false);
+    expect(instance.translations).toEqual({});
+  });
+
   describe('of one namespace', () => {
     type Calls = Record<string, number>;
 
@@ -5634,6 +5684,28 @@ describe('i18n destroy', () => {
     expect(calls).toBe(1);
     expect(instance.rawTranslations).toEqual({});
     expect(instance.locale).toBeUndefined();
+  });
+
+  it('discards the load of a loader that destroys the instance before its first `await`', async () => {
+    const error = vi.fn();
+    const redirect: unknown = { status: 303, location: '/login' };
+    const instance = new i18n({
+      parser: valueParser,
+      log: { level: 'error', logger: { error, warn: () => {}, debug: () => {} } },
+      loaders: [
+        { namespace: 'guarded', locale: 'en', loader: async () => { await Promise.resolve(); throw redirect; } },
+        { namespace: 'common', locale: 'en', loader: async () => { instance.destroy(); return { greeting: 'late' }; } },
+      ],
+    });
+
+    const pending = instance.loadTranslations('en', '/');
+    expect(instance.loading).toBe(false);
+
+    await pending;
+
+    expect(instance.rawTranslations).toEqual({});
+    expect(instance.locale).toBeUndefined();
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('ignores every further load and mutation', async () => {

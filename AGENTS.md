@@ -166,12 +166,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   load then fetches its severed part again (`#resume`) and activates once it
   arrives, so a trigger's promise keeps meaning "loaded" when it resolves (a
   refetch that throws control flow rejects it, and control flow another of its
-  loaders threw rejects it without the refetch); it stands down when
+  loaders threw rejects it without the refetch); it resumes once — a refetch
+  severed again is left to the next trigger — and stands down when
   the instance was destroyed, another locale was requested, the config was
   replaced or a later trigger wants other params, and a warm load never
-  resumes. The loading calls — `setLocale`, `setRoute`, `loadTranslations`,
-  `loadNamespace` and `loadConfig` — read the state they write untracked, so
-  an `$effect` may call them. Neither expiry nor `invalidate` ever removes displayed translations
+  resumes. A loader must not await a load of its own instance: that load can
+  be the one awaiting the loader. The loading calls — `setLocale`, `setRoute`,
+  `loadTranslations`, `loadNamespace` and `loadConfig` — read the state they
+  write untracked, so an `$effect` may call them. Neither expiry nor `invalidate` ever removes displayed translations
   or starts a load by itself. Don't break load-once semantics. The one opt-out
   is a loader with `cache: false`, whose source caches: it runs on every
   trigger that selects it, writes no `#loadedAt` stamp and is outside expiry.
