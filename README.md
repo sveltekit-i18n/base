@@ -69,65 +69,80 @@ npm install @sveltekit-i18n/parser-i18next
 ### 2. Setup with a parser
 
 ```javascript
-// src/lib/translations/index.js
-import { I18n } from '@sveltekit-i18n/base';
+// src/lib/i18n.js
+import { defineI18n } from '@sveltekit-i18n/base/kit';
 import parser from '@sveltekit-i18n/parser-curly';
 
-/** @type {import('@sveltekit-i18n/base').Config.T} */
-const config = {
+export const config = {
   parser: parser({ onReport: null, /* other parser options */ }),
   loaders: [
     {
       locale: ['en', 'cs'],
       namespace: 'common',
-      loader: async ({ locale, namespace }) => (await import(`./${locale}/${namespace}.json`)).default,
+      loader: async ({ locale, namespace }) => (await import(`./translations/${locale}/${namespace}.json`)).default,
     },
   ],
 };
 
-// One reactive instance. Do NOT destructure its value properties — reading
-// them off the instance is what makes templates reactive. (`t`/`l` are
-// functions and stay reactive even when destructured, since the tracked reads
-// happen at call time. In a component, `const { loading } = $derived(i18n)`
-// destructures value reads without losing reactivity.)
-export const i18n = new I18n(config);
+export const { handle, load, use, get } = defineI18n(config);
 ```
 
-### 3. Load translations in your layout
+### 3. Wire it into SvelteKit
 
 ```javascript
-// src/routes/+layout.js
-import { i18n } from '$lib/translations';
-
-/** @type {import('./$types').LayoutLoad} */
-export const load = async ({ url }) => {
-  const { pathname } = url;
-  const initLocale = 'en';
-
-  await i18n.loadTranslations(initLocale, pathname);
-
-  return {};
-};
+// src/hooks.server.js
+export { handle } from '$lib/i18n';
 ```
 
-> **Rendering per-visitor locales on the server?** The instance above is a
-> module-level singleton — on the server it is shared by every request in the
-> process, so concurrent visitors overwrite each other's locale. Use one
-> instance per request and hand its state to the client with `snapshot()` and
-> `hydrate()`: see [Server-Side Rendering](./docs/README.md#server-side-rendering).
+```javascript
+// src/routes/+layout.server.js and src/routes/+layout.js — the same line in both
+export { load } from '$lib/i18n';
+```
+
+```svelte
+<!-- src/routes/+layout.svelte -->
+<script>
+  import { use } from '$lib/i18n';
+
+  let { data, children } = $props();
+
+  use(() => data);
+</script>
+
+{@render children()}
+```
+
+```html
+<!-- src/app.html -->
+<html lang="%lang%">
+```
+
+The server picks the visitor's locale from the `Accept-Language` header (or
+from a cookie, with `preferredLocale`), loads it per request and hands it to
+the browser, so nothing loads twice and no visitor sees another's locale. See
+[SvelteKit](./docs/README.md#sveltekit) for the details and
+[Server-Side Rendering](./docs/README.md#server-side-rendering) for wiring it
+by hand.
 
 ### 4. Use in components
 
 ```svelte
 <script>
-  import { i18n } from '$lib/translations';
+  import { get } from '$lib/i18n';
+
+  const i18n = get();
 </script>
 
 <p>{i18n.t('common.greeting', { name: 'World' })}</p>
 ```
 
 The call reads the reactive translation table and locale, so the text updates
-automatically when either changes — no stores, no `$` prefix.
+automatically when either changes — no stores, no `$` prefix. Do NOT
+destructure the instance's value properties: reading them off the instance is
+what makes templates reactive. (`t`/`l` are functions and stay reactive even
+when destructured, since the tracked reads happen at call time. In a component,
+`const { loading } = $derived(i18n)` destructures value reads without losing
+reactivity.)
 
 ## Using Different Parsers
 
@@ -379,6 +394,19 @@ import { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } from '@sv
 - `resolveLoaders(loaders, sanitizeLocales?)` – normalizes `config.loaders` the way the instance does, into one loader per locale and namespace pair, for code that reads a config from outside the instance
 - `sanitizeLocales(...locales)` – normalizes a locale from a URL, cookie or `Accept-Language` header the way the instance does, so it can be compared against `locale`
 - `matchLocale(requested, available)` – picks the configured locale a visitor asked for, from an `Accept-Language` header or `navigator.languages`, falling back from `en-GB` to `en` and answering `undefined` when nothing matches
+
+### SvelteKit
+
+```javascript
+import { defineI18n } from '@sveltekit-i18n/base/kit';
+
+export const { handle, load, use, get } = defineI18n(config, { preferredLocale });
+```
+
+- `handle` – the `hooks.server.js` hook; fills `%lang%` in `app.html`
+- `load` – the root layout's `load`, exported from `+layout.server.js` and `+layout.js` alike: negotiates the locale, loads it on the server per request and hands it to the one instance a browser tab keeps
+- `use(() => data)` – called once in the root `+layout.svelte`; provides the instance, follows every navigation and keeps `<html lang>` in sync
+- `get()` – the instance, in any component below the root layout
 
 Full API documentation: [docs/README.md](./docs/README.md)
 

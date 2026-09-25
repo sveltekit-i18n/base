@@ -68,7 +68,7 @@ export default tseslint.config(
     // The public type surface is namespace-shaped (Config.T, Loader.Module…)
     // since v1; its fate is a pending v3 decision (sveltekit-i18n/lib#219,
     // #221), not a lint-migration side effect.
-    files: ['src/types.ts'],
+    files: ['src/types.ts', 'src/kit/types.ts'],
     rules: {
       '@typescript-eslint/no-namespace': 'off',
     },

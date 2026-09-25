@@ -64,4 +64,27 @@ describe('published artifact', () => {
     expect(matchLocale('en-GB,cs;q=0.8', ['cs', 'en'])).toBe('en');
     expect(resolveLoaders([{ locale: ['en-us', 'cs'], namespace: 'common', loader: async () => ({}) }]).map(({ locale }: { locale: string }) => locale)).toEqual(['en-US', 'cs']);
   });
+
+  it('serves the SvelteKit wiring, with the server half on the server only', async ({ task }) => {
+    const specifier = '@sveltekit-i18n/base/kit';
+    const { defineI18n } = await import(specifier);
+    const { handle, load } = defineI18n({
+      parser,
+      log,
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({}) }],
+    });
+    const url = new URL('https://x.test/');
+    const event = {
+      url,
+      params: {},
+      route: { id: '/' },
+      isDataRequest: true,
+      cookies: { get: () => undefined },
+      request: new Request(url, { headers: { 'accept-language': 'en' } }),
+    };
+
+    // The `imports` map picks the half by the `browser` condition.
+    if (task.file.projectName === 'client') expect(() => handle({ event, resolve: () => new Response() })).toThrow('run on the server only');
+    else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
+  });
 });

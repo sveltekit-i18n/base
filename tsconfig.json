@@ -4,6 +4,12 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "outDir": "lib",
+    // The `imports` map points into dist/, where the consumer's bundler picks
+    // a target by condition; the source is what gets checked.
+    "paths": {
+      "#kit-env": ["./src/kit/env.ts"],
+      "#kit-server": ["./src/kit/server.ts"]
+    },
     "sourceMap": false,
     "strict": true,
     // Declaration files of build tooling (vite, rolldown) target newer lib
