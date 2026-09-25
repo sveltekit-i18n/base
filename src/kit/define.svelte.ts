@@ -6,7 +6,7 @@ import { serverHalf } from '#kit-server';
 import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
 import type { Config } from '../types.js';
-import { configLocales, matchLocale } from '../utils.js';
+import { configLocales, matchLocale, textDirection } from '../utils.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -188,7 +188,10 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     $effect(() => {
       const { locale } = i18n;
 
-      if (locale) document.documentElement.lang = locale;
+      if (!locale) return;
+
+      document.documentElement.lang = locale;
+      document.documentElement.dir = textDirection(locale);
     });
 
     return surface;

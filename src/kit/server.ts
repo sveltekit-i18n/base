@@ -1,5 +1,5 @@
 import { logger } from '../logger.js';
-import { matchLocale, routePrefix, withoutBasePath } from '../utils.js';
+import { matchLocale, routePrefix, textDirection, withoutBasePath } from '../utils.js';
 import type { ServerHalf, Shared } from './internal.js';
 import type { Kit } from './types.js';
 
@@ -39,15 +39,19 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
 
       // Negotiated only for a chunk that asks for it, so a data request never
       // negotiates here; a function replacement is inserted as it is.
-      return Promise.resolve(resolve(event, {
-        transformPageChunk: ({ html }) => html.replace('%lang%', () => {
-          if (lang === undefined) {
-            check(event);
-            lang = answer(event) ?? '';
-          }
+      const negotiated = (): string => {
+        if (lang === undefined) {
+          check(event);
+          lang = answer(event) ?? '';
+        }
 
-          return lang;
-        }),
+        return lang;
+      };
+
+      return Promise.resolve(resolve(event, {
+        transformPageChunk: ({ html }) => html
+          .replace('%lang%', negotiated)
+          .replace('%dir%', () => textDirection(negotiated())),
       }));
     },
 

@@ -2067,11 +2067,13 @@ export { load } from '$lib/i18n';
 
 ```html
 <!-- src/app.html -->
-<html lang="%lang%">
+<html lang="%lang%" dir="%dir%">
 ```
 
 - **`handle`** replaces `%lang%` with the negotiated locale, or with an empty
-  string when nothing matches. Without the hook, `%lang%` ships literally.
+  string when nothing matches, and `%dir%` with its
+  [direction](#textdirectionlocale), `ltr` when nothing matches. Without the
+  hook, both ship literally.
 - **`load`** is one function for both layout files: it tells the server's
   event from the universal one. The server branch negotiates, loads the locale
   for the route into a fresh instance and returns its
@@ -2084,7 +2086,7 @@ export { load } from '$lib/i18n';
 - **`use(() => data)`** belongs in the root layout's script, called once with a
   getter of `data`. It provides the instance to every component below, switches
   and follows the route as each navigation commits, keeps
-  `document.documentElement.lang` in sync, and returns the instance (what the
+  `document.documentElement.lang` and `dir` in sync, and returns the instance (what the
   extensions make of it, with extensions). Without the data of `load`, it
   throws.
 - **`get()`** returns the instance `use()` provided, in any component below the
@@ -2202,8 +2204,8 @@ costs too much: `data-sveltekit-preload-data="false"`.
   switch.
 - **An app without a server `load` renders its SSR pass with no request
   headers**, so the server and the browser can negotiate differently, and
-  `handle` still fills `%lang%` from `Accept-Language`, so `<html lang>` can
-  name another locale than the page renders. Put the locale in the URL, or add
+  `handle` still fills `%lang%` and `%dir%` from `Accept-Language`, so
+  `<html lang>` can name another locale than the page renders. Put the locale in the URL, or add
   the server `load`.
 - **A prerendered page has no visitor.** It renders the locale
   `preferredLocale` finds in the URL, or else `initLocale`/`fallbackLocale`; a
@@ -2631,6 +2633,9 @@ same on every engine.
 
 A tag `Intl.Locale` rejects, and `undefined` before a locale is active,
 are `'ltr'` rather than a throw.
+
+With [`/kit`](#sveltekit), `<html dir>` takes none of this: `handle` fills a
+`%dir%` placeholder and `use()` keeps the attribute in sync.
 
 ---
 
