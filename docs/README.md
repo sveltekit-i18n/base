@@ -165,9 +165,143 @@ the `route` the load was triggered for, and the `params` its
 [`routes`](#route-params) captured (`{}` when they capture none). Loaders that
 don't need the context can simply take no parameters.
 
-A loader that throws is reported and runs again on the next load trigger. One
-that returns nothing (`undefined` or `null`) has answered: it counts as loaded,
-with no keys, just as one returning `{}` does.
+A loader that throws is reported and runs again on the next load trigger; the
+rest of the load lands without its data. One that returns nothing (`undefined`
+or `null`) has answered: it counts as loaded, with no keys, just as one
+returning `{}` does.
+
+The exception is SvelteKit's control flow — `redirect()`, and `error()` below
+500. It is told by the shape of what SvelteKit throws — an integer `status`
+from 300 to 308 with a string `location`, or an integer `status` from 400 to
+499 with an object `body`, each an own property of a value that is neither an
+`Error` of this realm nor tagged `'Error'` — so nothing is imported from
+`@sveltejs/kit`. It **rejects the load**
+with the thrown value, unchanged, once the load's other loaders have settled:
+`loadTranslations()`, `setLocale()`, `setRoute()`, `loadNamespace()` and the
+`initLocale` load of [`loadConfig()`](#loadconfigconfig) reject with it, and so
+does every call that shares the load, a warm one included. Awaited in code
+SvelteKit runs — a `load`, the `handle` hook, an endpoint, a form action or a
+remote function — it reaches SvelteKit, which follows it; code of your own that
+awaits a call, an event handler say, follows it itself (SvelteKit's
+`isRedirect()` and `isHttpError()` tell it apart). Assigning
+[`locale`](#locale), the `initLocale` load the constructor starts and any call
+nobody awaits only log it. The load reports it once through the logger, at the
+`error` level, whether or not the call is awaited. When several loaders throw
+it, the first in `loaders` order wins — the requested locale's before the
+[`fallbackLocale`](#fallbacklocale)'s, whose loaders take part in the load of
+every locale.
+
+- **A call that fails is undone.** A call fails when a loader of its load
+  throws control flow, whether the call rejects with it or a later call
+  replaced it (below). The locale does not advance, and the requested locale,
+  the route and the [route params](#route-params) go back to what the call
+  replaced — unless a later call that has not failed came in the meantime: a
+  `setLocale()`, a `setRoute()`, an activating `loadTranslations()` or a
+  [`hydrate()`](#hydrateenvelope). Should that later call fail too, both are
+  undone. A later `setRoute()` therefore loads the locale asked for before, not
+  the rejected one; the request put back activates once a load of it settles —
+  its own, if it is still in flight, or else the next trigger's. A locale or a route nothing was asked for before stands,
+  each on its own: it is all there is for the next trigger to load.
+- **What the other loaders delivered is kept**, as a
+  [warm load](#loadtranslationslocale-route-options) keeps it: it lands in the
+  tables without activating anything, unless it was fetched for params the
+  route no longer asks for, and the next trigger does not fetch it again (a
+  [`cache: false`](#cache-optional) loader aside). The loaders that threw,
+  whether control flow or a failure, run again. Should applying it fail — a
+  custom [`preprocess`](#preprocess) that throws — that is logged, and the call
+  still rejects with the control flow.
+- **Control flow a later call replaced is discarded.** The load of a call a
+  later one replaced — with another locale, or with other route params for the
+  loader that threw — resolves without it; a later route of the same locale
+  that does not select that loader replaces nothing. A warm load asks for
+  nothing, so nothing replaces its control flow, unless it shares the load of
+  an activating call, whose outcome it then gets. What a loader throws is
+  discarded like its data when an invalidation severed it before its load
+  settled — [`invalidate()`](#invalidatelocale-namespace), an elapsed
+  [`cache`](#cache) window, [`loadConfig()`](#loadconfigconfig) or
+  [`destroy()`](#destroy) — and whatever runs that loader next decides instead.
+  Discarded control flow is logged at the `debug` level, with the thrown value.
+
+An `error()` of 500 or more is a throw like any other, and so is an `Error` of
+any kind, whatever `status` it carries, and a thrown `Response`, whose `status`
+and `body` are not its own properties. SvelteKit's remote `query` throws such
+an `HttpError` on the client whenever the server failed with an `Error`
+(during SSR, the query throws the server's own error), so a loader backed by
+one fails soft on both. Under SvelteKit 2, a failed validation is an
+`error(400)` on the server too, so it rejects the load on both passes.
+
+A value an HTTP client rejects with can have the same shape: `redaxios`, for
+one, rejects a 4xx with a plain object carrying the response's `status` and
+its `body`. To have such a failure fail soft, a loader built on that client
+catches the rejection and throws an `Error` instead.
+
+```javascript
+import { error } from '@sveltejs/kit';
+
+export const helpLoader = {
+  locale: 'en',
+  namespace: 'help',
+  routes: [/^\/help\/(?<topic>[\w-]+)$/],
+  loader: async ({ locale, params }) => {
+    const response = await fetch(`https://api.example.com/i18n/${locale}/help/${params.topic}`);
+
+    // No such topic: SvelteKit renders its error page.
+    if (response.status === 404) error(404, 'No such topic');
+    // Anything else failed: logged, and the page renders without it.
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+
+    return response.json();
+  },
+};
+```
+
+A loader that redirects must not run on the page it redirects to — give it
+`routes` that leave that page out — or SvelteKit follows the redirect until it
+gives up. A loader runs only until it has delivered (once per freshness window
+and route params), so its throw is no access check: a route guards itself in
+its own `load`.
+
+What SvelteKit then does depends on where and when the load runs (checked
+against SvelteKit 2.70 and the 3.0 prerelease):
+
+- **In the root layout**, an `error()` renders SvelteKit's static
+  `src/error.html`, not your `+error.svelte`, and a client navigation reloads
+  the page first. Your own error page needs the loaders that throw `error()`
+  triggered from a nested layout or page instead, which then hands their
+  namespaces off itself; the [SSR wiring](#server-side-rendering) below loads
+  every loader of the route in the root layout.
+  [lib#272](https://github.com/sveltekit-i18n/lib/issues/272) tracks a wiring
+  that splits them.
+- **During hydration**, the client runs again whatever the server did not hand
+  over — a loader that failed on the server among them. Control flow it throws
+  then makes SvelteKit leave the page it rendered: a redirect navigates away
+  and leaves the server-rendered URL in the history, where Back redirects
+  again, and an `error()` renders the root error page whichever layout threw —
+  the static `src/error.html` when the root layout's load throws again — while
+  the HTTP status stays what the server sent. Throw control flow only for what
+  holds on both passes.
+- **A remote function** behaves differently on the client. A `query` (or
+  `query.batch`, `prerender`) that calls `redirect()` to a page of the app
+  navigates there itself, and the call resolves `undefined`, which would count
+  as loaded — so a loader backed by one should throw an `Error` when it gets
+  `undefined`, to fail soft and run again. Redirect a remote function only
+  within the app: to another origin, SvelteKit 2 rejects the call with an
+  `Error` (a `prerender` resolves `undefined` and leaves an unhandled
+  rejection), and under SvelteKit 3 the call never settles, so neither does
+  the load. Any failed request rejects with an `HttpError` of the response's
+  status — a 404 after a deploy, a proxy's 429 — and, under SvelteKit 3, a
+  failed validation, a status the server's `handleError` assigns, a refresh
+  the server did not handle and a request that never reached it (offline, say)
+  whose status the client's `handleError` sets arrive as a 4xx too, while the
+  same call during SSR throws a plain `Error`. All of these reject the load like
+  `error()`; a loader that wants them to fail soft catches a 4xx and throws an
+  `Error` instead.
+- **Preloading a link** under SvelteKit 3 turns a loader's `error()` into an
+  unhandled rejection in production, whose reason is an `App.Error` object.
+  The `app.html` that `sv create` scaffolds turns hover preloading on for the
+  whole `<body>`, so give such links, or an element around them,
+  `data-sveltekit-preload-data="false"`; `"tap"` still preloads, on
+  `mousedown` and `touchstart`.
 
 **Loading from local files:**
 
@@ -1104,7 +1238,10 @@ const config = {
 
 **What gets logged:**
 
-- `'error'`: Critical failures (loader errors, parser errors)
+- `'error'`: Critical failures (loader errors, parser errors), and a
+  `redirect()` or an `error()` below 500 that
+  [rejects a load](#loader-required); control flow that is discarded is logged
+  at `'debug'`
 - `'warn'`: Missing translations, locale issues
 - `'debug'`: All operations (loading, caching, lookups)
 
@@ -1147,7 +1284,11 @@ first argument. When the report was caused by a thrown value (e.g. a failed
 loader), the raw `error` follows as a second argument — unformatted and
 unprefixed, so your logger can render its stack or serialize it as it sees fit.
 Reports with no such value are called with the message alone, so `console`
-methods never print a trailing `undefined`.
+methods never print a trailing `undefined`. SvelteKit's `redirect()` and an
+`error()` below 500 that reject a load arrive at the `error` level as they
+were thrown — a `Redirect` or an `HttpError`, not an `Error`, with no stack —
+under a message that contains `Rejecting the load`; control flow that is
+[discarded](#loader-required) arrives at the `debug` level.
 
 The shape matches the exported `Logger.T` type:
 
@@ -1182,12 +1323,16 @@ const config = {
 
 ```javascript
 import * as Sentry from '@sentry/browser';
+import { isRedirect } from '@sveltejs/kit';
 
 const config = {
   log: {
     logger: {
       error: (message, error) => {
         console.error(message, error);
+        // A loader's `redirect()` is navigation, not a fault. An `HttpError` is
+        // kept: a remote function's 404 or 429 rejects a load as one too.
+        if (isRedirect(error)) return;
         Sentry.captureException(error ?? new Error(message));
       },
       warn: console.warn,
@@ -1206,7 +1351,10 @@ wherever reads are tracked (component templates, `$derived`, `$effect`); the
 load-triggering methods return the promise of the **matching** load —
 concurrent duplicate triggers that select the same loaders for the same locale
 join the load already in flight (and receive its promise) instead of fetching
-twice, whichever route they were called from.
+twice, whichever route they were called from. Those methods,
+[`loadConfig()`](#loadconfigconfig) and assigning [`locale`](#locale) track
+none of the state they read, so an `$effect` that
+calls one runs again only for what the effect itself reads.
 
 ```javascript
 export const i18n = new I18n(config);
@@ -1281,7 +1429,9 @@ as it does on `t`, and the locales the config names complete `locale` (see
 
 The **active** locale — the one whose translations are loaded. Assigning it is
 a shorthand for a fire-and-forget `setLocale()`, so the value advances once the
-new locale's translations resolved, not synchronously on assignment.
+new locale's translations resolved, not synchronously on assignment. It does
+not advance when a loader throws SvelteKit's `redirect()` or an `error()` below
+500, which an assignment only logs ([see `loader`](#loader-required)).
 
 ```svelte
 <script>
@@ -1292,7 +1442,8 @@ new locale's translations resolved, not synchronously on assignment.
 <button onclick={() => { i18n.locale = 'en'; }}>English</button>
 ```
 
-Await the change explicitly when you need to know it finished:
+Await the change explicitly when you need to know it finished — or that it was
+rejected:
 
 ```javascript
 await i18n.setLocale('cs');
@@ -1389,12 +1540,14 @@ call, and `invalidate()` severs it the same way — but it does not fetch the
 severed part again, as an activating trigger does; the next trigger will. A loader whose
 [route params](#route-params) differ from the ones the current route asks for
 still runs, but its data is discarded rather than replacing what is displayed.
-It does not evaluate the
-[`cache`](#cache) window; the next activating trigger does. An activating trigger
-selecting the same loaders for the same locale joins it: `loading` turns `true`, and the locale
-activates when the shared load settles. Once it has settled, the activating call
-fetches nothing (a [`cache: false`](#cache-optional) loader aside) and activates
-at once, unless the locale's `cache` window has elapsed in the meantime.
+It does not evaluate the [`cache`](#cache) window; the next activating trigger
+does. An activating trigger selecting the same loaders for the same locale
+joins it: `loading` turns `true`, the locale activates when the shared load
+settles, and both calls share its outcome — when a loader throws SvelteKit's
+control flow, both reject with it. Once it has settled, the activating call
+fetches nothing (a [`cache: false`](#cache-optional) loader aside) and
+activates at once, unless the locale's `cache` window has elapsed in the
+meantime.
 
 ```javascript
 // Fetch what a link needs without switching to it.
@@ -1405,11 +1558,15 @@ The option exists only here. On `setLocale()` and `setRoute()` activation is the
 whole point of the call.
 
 **Errors:** a loader that throws is caught and logged individually, so one
-broken loader does not fail the batch. Anything that throws afterwards — a
-custom `preprocess`, a malformed payload — **rejects the returned promise**, so
-`await` surfaces it (in SvelteKit, straight to the error boundary). A result
-you discard is safe: the failure is logged through the configured logger and
-never becomes an unhandled rejection — but it is then only visible in the log.
+broken loader does not fail the batch; only SvelteKit's `redirect()` and an
+`error()` below 500 reject the load ([see `loader`](#loader-required)).
+Anything that throws afterwards — a custom `preprocess`, a malformed payload —
+**rejects the returned promise**, so `await` surfaces it (in SvelteKit, to the
+error page — the static `src/error.html` when it happens in the root layout);
+when a loader's control flow rejects the load too, that failure is only logged
+and the promise rejects with the control flow. A result you discard is safe:
+the failure is logged through the configured logger and never becomes an
+unhandled rejection — but it is then only visible in the log.
 
 ---
 
@@ -1419,11 +1576,31 @@ never becomes an unhandled rejection — but it is then only visible in the log.
 
 Loads one namespace on demand — for what an interaction needs rather than a
 route: a modal, a rarely opened panel, an editor. `locale` defaults to the
-active [`locale`](#locale); without one the call does nothing.
+active [`locale`](#locale); without one the call does nothing. Like the other
+loading calls, it [tracks none of the state it reads](#instance-properties-and-methods),
+so an `$effect` that should load the namespace again after a locale switch
+passes the locale itself:
+`$effect(() => { i18n.loadNamespace('panel', i18n.locale); })`.
 
 ```javascript
+import { goto } from '$app/navigation';
+import { isHttpError, isRedirect } from '@sveltejs/kit';
+
 async function openEditor() {
-  await i18n.loadNamespace('editor');
+  try {
+    await i18n.loadNamespace('editor');
+  } catch (thrown) {
+    // In an event handler, nothing follows a loader's `redirect()` but this code.
+    if (isRedirect(thrown)) {
+      // `goto()` only reaches a page of this app, so anything else loads in full.
+      const to = new URL(thrown.location, location.href);
+
+      return to.origin === location.origin ? goto(to).catch(() => location.assign(to)) : location.assign(to);
+    }
+    // An `error()`, or a remote function's 4xx: logged already, and the editor
+    // opens without these keys.
+    if (!isHttpError(thrown)) throw thrown;
+  }
 
   editorOpen = true;
 }
@@ -1447,8 +1624,10 @@ async function openEditor() {
   not change, [`loading`](#loading) stays `false` — track the returned promise
   for a spinner of the component's own — and the [`cache`](#cache) window is
   evaluated by the next activating trigger, after which the next call refetches.
-- [`invalidate()`](#invalidatelocale-namespace) severs it like any other load, and a
-  loader that throws is logged and records nothing, so the next call retries.
+- [`invalidate()`](#invalidatelocale-namespace) severs it like any other
+  load, and a loader that throws is logged and records nothing, so the next
+  call retries; SvelteKit's control flow rejects the call
+  ([see `loader`](#loader-required)).
 
 ---
 
@@ -1460,7 +1639,10 @@ Requests a locale. If a route is already set the load starts immediately;
 otherwise it fires when the route arrives. A locale nothing serves (no loader,
 no translations, no `fallbackLocale` match) resolves without changing anything;
 until the instance knows a locale — before a config is loaded — every request
-is kept, for the config to serve.
+is kept, for the config to serve. A loader's `redirect()` or `error()` below
+500 rejects the call and undoes it: the requested locale, the route and the
+route params go back to what it replaced, unless a later call that has not
+failed came in the meantime ([see `loader`](#loader-required)).
 
 ---
 
@@ -1469,7 +1651,9 @@ is kept, for the config to serve.
 **Type:** `(route: string) => Promise<void>`
 
 Updates the current route and loads route-scoped translations for the
-requested locale, if one is known.
+requested locale, if one is known. A loader's `redirect()` or `error()` below
+500 rejects the call and undoes it, as it does
+[`setLocale()`](#setlocalelocale)'s.
 
 ---
 
@@ -1478,9 +1662,12 @@ requested locale, if one is known.
 **Type:** `(config: Config.T) => Promise<void>`
 
 (Re)configures the instance — same as passing the config to the constructor.
-Safe to call fire-and-forget: a failure is reported through the logger and the
-returned promise is marked handled, while an awaiting caller still receives
-the rejection.
+With an [`initLocale`](#initlocale), the returned promise is that locale's
+load, and it settles as the load does: an `initLocale` nothing serves resolves
+without changing anything, and a load a later call or a reconfiguration
+replaced resolves without activating. Safe to call fire-and-forget: a failure
+is reported through the logger and the returned promise is marked handled,
+while an awaiting caller still receives the rejection.
 
 ---
 
@@ -1646,7 +1833,9 @@ sides spell differently, say — is dropped, and its loader runs again.
 
 Call it before any load starts. With [`initLocale`](#initlocale) set, the
 constructor starts one before `hydrate()` can be called, so the loaders run
-regardless; `hydrate()` warns when that happens.
+regardless; `hydrate()` warns when that happens. The hand-off stands: a call
+in flight when it came puts nothing back should a loader's control flow
+[fail it](#loader-required).
 
 ---
 
@@ -1675,15 +1864,20 @@ await i18n.loadTranslations('en', location.pathname);
 ```
 
 A loader already in flight for what was invalidated is severed: its load still
-settles, but that loader's data is discarded — it predates the invalidation —
-and the next load trigger starts a fresh fetch instead of joining it. The rest
-of the load lands. An activating trigger still in flight (`setLocale`,
-`setRoute`, `loadTranslations`) then fetches the severed part again and only
-activates once it arrives, so awaiting it still means its locale is loaded, with
-data from after the invalidation. It leaves that to the next trigger when
-another locale was asked for meanwhile, when later params replaced the ones it
-asked for, or when the config was replaced. `invalidate()` itself still starts
-nothing: only a trigger that was already running finishes its job.
+settles, but what that loader returns or throws is discarded — it predates the
+invalidation — and the next load trigger starts a fresh fetch instead of
+joining it. The rest of the load lands. An activating trigger still in flight
+(`setLocale`, `setRoute`, `loadTranslations`) then fetches the severed part
+again and only activates once it arrives, so awaiting it still means its locale
+is loaded, with data from after the invalidation. That refetch settles the
+trigger like any load: control flow it throws
+[rejects the trigger](#loader-required), while the part that already landed
+stays. It leaves the severed part to the next trigger when another
+loader of its load threw SvelteKit's control flow that still counts (the
+trigger then rejects with it), when another locale was asked for meanwhile,
+when later params replaced the ones it asked for, or when the config was
+replaced. `invalidate()` itself still starts nothing: only a trigger that was
+already running finishes its job.
 
 A loader with [`cache: false`](#cache-optional) is covered too: the call ends
 the hand-off that holds it back after [`hydrate()`](#hydrateenvelope), and a
@@ -1703,11 +1897,11 @@ refresh before the window elapses.
 
 **Type:** `() => void`
 
-Detaches the instance from its loading lifecycle. Loads still in flight settle
-with their data discarded, [`loading`](#loading) drops to `false`, and every
-further load or mutation call (`loadTranslations`, `loadNamespace`,
-`setLocale`, `setRoute`, `loadConfig`, `addTranslations`, `hydrate`,
-`invalidate`) is ignored with a warning.
+Detaches the instance from its loading lifecycle. Loads still in flight
+settle, and whatever their loaders return or throw is discarded;
+[`loading`](#loading) drops to `false`, and every further load or mutation call
+(`loadTranslations`, `loadNamespace`, `setLocale`, `setRoute`, `loadConfig`,
+`addTranslations`, `hydrate`, `invalidate`) is ignored with a warning.
 
 Reads keep working — `t`, `l`, `locale`, `translations` and `snapshot()` still
 return the instance's last state, so a component that is still tearing down
@@ -1736,8 +1930,9 @@ is idempotent — calling it twice is a no-op.
 A module that creates an instance is evaluated **once per process** on the
 server, not once per request. A module-level singleton is therefore shared by
 every visitor being rendered concurrently: two requests for different locales
-overwrite each other's `locale` and translation tables, and one visitor's
-language can end up in another visitor's HTML.
+overwrite each other's `locale` and translation tables, one visitor's language
+can end up in another visitor's HTML, and a `redirect()` or an `error()` a
+loader throws for one visitor rejects every request that shares its load.
 
 Create **one instance per request** instead, and hand its state to the client
 with [`snapshot()`](#snapshotoptions) and [`hydrate()`](#hydrateenvelope).
@@ -1808,9 +2003,11 @@ This `load` runs on the server for the SSR pass and again in the browser on
 hydration. Both start from the server's state: the loaders that delivered on
 the server do not run a second time, and the locale is active before the first
 render. Only what the server did not load — the route-scoped translations of
-pages the visitor has not opened yet, and the few namespaces the snapshot
-cannot hand over — is fetched. Every later client-side navigation reuses the
-same instance, so its cache survives.
+pages the visitor has not opened yet, the few namespaces the snapshot cannot
+hand over, and a loader that failed on the server — is fetched. A
+`redirect()` or an `error()` such a loader throws on that pass makes SvelteKit
+leave the page it rendered ([see `loader`](#loader-required)). Every later
+client-side navigation reuses the same instance, so its cache survives.
 
 The hand-off is applied once, inside the branch that builds the instance —
 replaying it on a later navigation would mark loaders loaded again after an
@@ -1857,7 +2054,10 @@ The shared-state problem exists only on the server. A module-level instance is
 safe when the server renders nothing visitor-specific:
 
 - the app is client-only (`export const ssr = false`), or
-- every request renders the same locale.
+- every request renders the same locale, and no loader throws a `redirect()`
+  or an `error()` that depends on the visitor (a remote `query` that reads the
+  session, say): concurrent requests share a load, so every one of them
+  rejects with what the loader threw for one visitor.
 
 Then the [Quick Start](../README.md#quick-start) wiring — one
 `export const i18n = new I18n(config)` imported wherever it is needed — is all

@@ -303,6 +303,20 @@ export namespace Loader {
   type LoaderModuleBody = {
     /**
      * Function returning a `Promise` with translation data. You can use it to load files locally, fetch it from your API etc...
+     *
+     * Whatever it throws is logged and the rest of the load lands without this loader's data – except SvelteKit's `redirect()` and `error()` below 500,
+     * told by their shape: an integer `status` from 300 to 308 with a string `location`, or from 400 to 499 with an object `body`, each an own property
+     * of a value that is neither an `Error` of this realm nor tagged `'Error'` (a thrown `Response` fails soft).
+     *
+     * Those are logged too, and reject the load with the thrown value once its other loaders have settled. The locale does not advance, and the
+     * rejected call is undone: its requested locale, route and route params go back to what it replaced – as do those of a call whose control flow it
+     * replaced – unless a later call that has not failed came in the meantime. A locale or a route nothing was asked for before stands. The request
+     * put back activates once a load of it settles: its own, if it is still in flight, or else the next trigger's. What the other loaders delivered is kept without activating anything, unless it was
+     * fetched for params the route no longer asks for.
+     *
+     * An activating load a later call replaced – with another locale, or with other params for this loader – resolves without the control flow.
+     * Nothing replaces a warm load's, unless it shares the load of an activating call, whose outcome it then gets. What a loader throws is discarded,
+     * like its data, when an invalidation, a reconfiguration or `destroy()` severed it before the load settled.
     */
     loader: T;
     /**

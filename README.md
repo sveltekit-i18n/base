@@ -217,6 +217,8 @@ See [route params](./docs/README.md#route-params) for the rules.
 
 A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](./docs/README.md#cache-optional).
 
+A loader that throws is logged, and the rest of the load lands without its data; it runs again on the next load trigger. SvelteKit's `redirect()` and an `error()` below 500 (told by their shape: an own `status` with a `location` or a `body`, on a value that is not an `Error`) are logged too, but they also reject the load, so a SvelteKit `load` awaiting the call hands them to SvelteKit; the rejected call is undone — what it replaced goes back — unless a later call that has not failed came in the meantime. See [the loader](./docs/README.md#loader-required).
+
 Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
 
 ### `translations`
@@ -362,7 +364,7 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `addTranslations(translations)` – seed synchronous translations; the loaders of their namespaces still run and merge into them
 - `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`, for a plain `hydrate({ translations })`
 - `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for), its locale and its route; an envelope without records keeps the loaders of the namespaces its data names from running
-- `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with its data discarded — an activating trigger fetches it again before it activates
+- `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with whatever it returns or throws discarded — an activating trigger fetches it again before it activates, unless another loader of its load threw SvelteKit's control flow
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 
 ### Utilities

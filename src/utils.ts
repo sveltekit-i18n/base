@@ -552,25 +552,73 @@ export type LoadRequest = { loader: Loader.Resolved; params: Loader.Params; sign
 /** What a loader delivered. A loader that threw has no entry; one that returned nothing delivered no keys. */
 export type Delivery = { loader: Loader.Resolved; signature: string; data: Translations.Input };
 
-// Every loader is called before the first one is awaited, and one that throws
-// costs only its own data. Only a throw is retried: an empty answer is an
-// answer, and it still replaces what the loader delivered for other params.
-export const fetchTranslations = async (requests: LoadRequest[], route: string): Promise<Delivery[]> => {
+/** SvelteKit's control flow a loader threw instead of delivering: `redirect()`, and `error()` below 500. */
+export type ControlFlow = { loader: Loader.Resolved; signature: string; value: unknown };
+
+/** What a fetch returns: the deliveries, and the control flow thrown instead of one. */
+export type Fetched = { deliveries: Delivery[]; controlFlow: ControlFlow[] };
+
+/** A loader as a message names it. `String`, since interpolating a Symbol namespace throws. */
+export const loaderName = ({ locale, namespace }: Loader.Resolved) => `'${locale}' > '${String(namespace)}'`;
+
+/**
+ * SvelteKit's control flow, told by the shape of its classes so nothing is
+ * imported from `@sveltejs/kit`: a `Redirect` (an integer `status` from 300 to
+ * 308 and a string `location`) and an `HttpError` below 500 (an integer
+ * `status` from 400 to 499 and an object `body`), each an own property of a
+ * value that is neither an `Error` of this realm nor tagged `'Error'`. An
+ * `HttpError` of 500 or more is a failure — a remote `query` throws one on the
+ * client whenever the server failed with an `Error` (during SSR, the query
+ * throws the server's own error) — and so is such an `Error`, whatever it
+ * carries, and a value that cannot be inspected.
+ */
+const isControlFlow = (value: unknown): boolean => {
+  try {
+    // The tag covers another realm's `Error`; `instanceof` covers one whose
+    // tag its own class replaced, a `DOMException` included.
+    if (value instanceof Error || Object.prototype.toString.call(value) === '[object Error]') return false;
+
+    const status = read<unknown>(value, 'status');
+
+    if (typeof status !== 'number' || !Number.isInteger(status)) return false;
+    if (status >= 300 && status <= 308) return typeof read<unknown>(value, 'location') === 'string';
+    if (!(status >= 400 && status <= 499)) return false;
+
+    const body = read<unknown>(value, 'body');
+
+    return typeof body === 'object' && body !== null;
+  } catch {
+    return false;
+  }
+};
+
+// Every loader is called before the first one is awaited, and all of them
+// settle before the fetch does. One that throws is logged and costs only its
+// own data; SvelteKit's control flow is returned for the load to report and
+// reject with once every loader has settled. Only a throw is retried: an
+// empty answer is an answer, and it still replaces what the loader delivered
+// for other params.
+export const fetchTranslations = async (requests: LoadRequest[], route: string): Promise<Fetched> => {
   const responses = await Promise.all(requests.map(async ({ loader: resolved, params, signature }) => {
     const { loader, locale, namespace } = resolved;
 
     try {
       const data = await loader({ locale, namespace, route, params });
 
-      return [{ loader: resolved, signature, data: data || {} }];
+      return { deliveries: [{ loader: resolved, signature, data: data || {} }], controlFlow: [] };
     } catch (error) {
+      if (isControlFlow(error)) return { deliveries: [], controlFlow: [{ loader: resolved, signature, value: error }] };
+
       logError(`Failed to load translation. Verify your '${locale}' > '${namespace}' Loader.`, error);
 
-      return [];
+      return { deliveries: [], controlFlow: [] };
     }
   }));
 
-  return responses.flat();
+  return {
+    deliveries: responses.flatMap(({ deliveries }) => deliveries),
+    controlFlow: responses.flatMap(({ controlFlow }) => controlFlow),
+  };
 };
 
 // `exec` advances `lastIndex` on a `g`/`y` pattern, so a route object reused
