@@ -299,10 +299,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- loading ----------------------------------------------------------------
 
-  // The loading calls — these, `loadNamespace()` and `loadConfig()` — read
-  // the state they write, untracked: called from an effect, they must not make
-  // it depend on that state, or the effect runs them again whenever a later
-  // call, a load or an undo changes it.
+  // The loading calls — these, `loadNamespace()` and `loadConfig()` — and
+  // `addTranslations()` and `hydrate()` read the state they write, untracked:
+  // called from an effect, they must not make it depend on that state, or the
+  // effect runs them again whenever a later call, a load or an undo changes it.
 
   setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => untrack(() => {
     if (!locale || this.#inert('setLocale') || this.#unserved(locale)) return Promise.resolve();
@@ -403,11 +403,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#invalidate(sanitized, namespace);
   };
 
-  addTranslations = (translations?: Translations.SerializedTranslations): void => {
+  addTranslations = (translations?: Translations.SerializedTranslations): void => untrack(() => {
     if (this.#inert('addTranslations')) return;
 
     this.#addTranslations(translations);
-  };
+  });
 
   /**
    * Drops the bookkeeping `invalidate()` names and severs its loaders in
@@ -456,7 +456,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * happens for `undefined`, so a load whose server half sent nothing can call
    * it unconditionally.
    */
-  hydrate = (envelope?: Snapshot.Envelope): void => {
+  hydrate = (envelope?: Snapshot.Envelope): void => untrack(() => {
     if (!envelope || this.#inert('hydrate')) return;
 
     // Typically `initLocale`: the constructor started its load before the
@@ -481,7 +481,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     }
 
     if (locale !== undefined && route !== undefined) this.#want(this.#matchLoaders(locale, route));
-  };
+  });
 
   /**
    * Serializes what this instance holds for the active locale and the fallback
