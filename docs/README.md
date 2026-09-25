@@ -6,6 +6,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 
 - [Configuration](#configuration)
 - [Instance Properties and Methods](#instance-properties-and-methods)
+- [SvelteKit](#sveltekit)
 - [Server-Side Rendering](#server-side-rendering)
 - [Utilities](#utilities)
 - [The parser contract](#the-parser-contract)
@@ -1511,7 +1512,9 @@ await i18n.setLocale('cs');
 
 **Type:** `string[]` (reactive)
 
-All known locales (from loaders and added translations).
+All known locales (from loaders and added translations). The
+[SvelteKit](#sveltekit) wiring negotiates against the locales the config
+serves — its loaders and `translations` — not against this list.
 
 ```svelte
 {#each i18n.locales as loc}
@@ -1986,6 +1989,235 @@ is idempotent — calling it twice is a no-op.
 
 ---
 
+## SvelteKit
+
+`@sveltekit-i18n/base/kit` wires an app to its config in four exports: the
+server builds an instance per request, hands it to the browser, and the browser
+keeps one instance per tab, following every navigation. What the server
+loaded is not fetched again in the browser, and no visitor sees another
+visitor's locale.
+
+### Setup
+
+```javascript
+// src/lib/i18n.js
+import { defineI18n } from '@sveltekit-i18n/base/kit';
+import parser from '@sveltekit-i18n/parser-curly';
+
+export const config = {
+  parser: parser({ onReport: null }),
+  loaders: [/* ... */],
+};
+
+export const { handle, load, use, get } = defineI18n(config, {
+  preferredLocale: (event) => event.cookies?.get('lang'),
+});
+```
+
+```javascript
+// src/hooks.server.js
+export { handle } from '$lib/i18n';
+```
+
+```javascript
+// src/routes/+layout.server.js and src/routes/+layout.js — the same line in both
+export { load } from '$lib/i18n';
+```
+
+```svelte
+<!-- src/routes/+layout.svelte -->
+<script>
+  import { use } from '$lib/i18n';
+
+  let { data, children } = $props();
+
+  use(() => data);
+</script>
+
+{@render children()}
+```
+
+```svelte
+<!-- any component -->
+<script>
+  import { get } from '$lib/i18n';
+
+  const i18n = get();
+</script>
+
+<p>{i18n.t('common.greeting')}</p>
+```
+
+```html
+<!-- src/app.html -->
+<html lang="%lang%">
+```
+
+- **`handle`** replaces `%lang%` with the negotiated locale, or with an empty
+  string when nothing matches. Without the hook, `%lang%` ships literally.
+- **`load`** is one function for both layout files: it tells the server's
+  event from the universal one. The server branch negotiates, loads the locale
+  for the route into a fresh instance and returns its
+  [snapshot](#snapshotoptions); on a client navigation, it returns only the
+  negotiated locale and the route. The universal branch builds the instance,
+  [hydrates](#hydrateenvelope) the snapshot and returns the instance as
+  `data.i18n`, next to the other fields of the server's data. With
+  [`extensions`](#extensions), `data.i18n` is what they make of the instance,
+  while the wiring keeps driving the instance itself.
+- **`use(() => data)`** belongs in the root layout's script, called once with a
+  getter of `data`. It provides the instance to every component below, switches
+  and follows the route as each navigation commits, keeps
+  `document.documentElement.lang` in sync, and returns the instance (what the
+  extensions make of it, with extensions). Without the data of `load`, it
+  throws.
+- **`get()`** returns the instance `use()` provided, in any component below the
+  root layout; anywhere else, it throws.
+
+A re-export (`export { load } from '$lib/i18n'`) makes SvelteKit's static
+analysis of page options give up on that file and, in the root layout, on every
+route below it. Nothing changes at runtime; the build loses what it derives
+from `ssr`/`csr` set to `false` on a page — a page with `ssr = false` still has
+its server code bundled, and an app whose every page sets `csr = false` still
+gets a client build. An app that relies on either keeps the analysis with
+`import { load as i18nLoad } from '$lib/i18n'; export const load = i18nLoad;`.
+
+### Which locale
+
+Each pass negotiates against the locales the config serves — the loaders'
+locales and the keys of [`translations`](#translations) — and takes the first
+candidate that matches, [`en-GB` falling back to `en`](#matchlocalerequested-available):
+
+1. `preferredLocale(event)`, the visitor's choice: a cookie, a route param, a
+   profile in `locals`;
+2. the `Accept-Language` header; in an app without a server `load`, the
+   browser's `navigator.languages`;
+3. [`initLocale`](#initlocale);
+4. [`fallbackLocale`](#fallbacklocale).
+
+When nothing matches, the page renders with no active locale. `initLocale` is
+a candidate here, not a load: the instances `/kit` builds leave it out, since
+the negotiated locale is loaded instead.
+
+`preferredLocale` runs in `handle`, in the server `load` and, in an app without
+a server `load`, in the universal one, whose event has no `cookies` (hence
+`cookies?.`). It runs on every navigation and every preload, so it must only
+read the event. A value it returns that no configured locale matches is
+skipped, and one that throws is logged once and skipped.
+
+The server's answer rules. `i18n.setLocale('cs')` in the browser switches the
+tab, and the switch stands across navigations until the server answers
+differently; an answer given before the switch (a preload, say) is not a
+different one. To make a switch outlive the session, persist it where
+`preferredLocale` reads it:
+
+```javascript
+document.cookie = `lang=${locale}; path=/; max-age=31536000; samesite=lax`;
+await i18n.setLocale(locale);
+```
+
+A locale in the URL is a route param:
+
+```javascript
+export const { handle, load, use, get } = defineI18n(config, {
+  preferredLocale: (event) => event.params.lang,
+});
+```
+
+Loader [`routes`](#routes-optional) then see the locale segment
+(`/cs/about`), since they match `url.pathname`.
+
+### What `data.i18n` is
+
+In `+layout.svelte`, `+page.svelte`, `page.data` and a universal `parent()`,
+`data.i18n` is the instance. In a server `parent()` it is what the server
+branch returned: plain data, of which only `.locale` is meant to be read.
+SvelteKit's generated types call it the instance in both places.
+
+`use()` finds its data under a registry-wide symbol, not under `i18n`, so a
+layout that renames or overwrites `data.i18n` does not break it.
+
+### Combining with your own code
+
+```javascript
+// src/hooks.server.js
+import { sequence } from '@sveltejs/kit/hooks';
+import { handle as i18nHandle } from '$lib/i18n';
+
+export const handle = sequence(i18nHandle, auth);
+```
+
+```javascript
+// src/routes/+layout.server.js
+import { load as i18nLoad } from '$lib/i18n';
+
+export const load = async (event) => ({ ...(await i18nLoad(event)), user: event.locals.user });
+```
+
+```javascript
+// src/routes/+layout.js
+import { load as i18nLoad } from '$lib/i18n';
+
+export const load = async (event) => ({ ...(await i18nLoad(event)), theme: 'dark' });
+```
+
+Keep the spread: the universal branch returns the server's data along with the
+instance, and a wrapper that picks fields drops the rest. A server wrapper must
+call the i18n `load` before it returns — it reads `url`, which is what makes
+SvelteKit run the layout again on the next navigation.
+
+### Where it runs
+
+| Pass | Server `load` | Universal `load` | Effect |
+|---|---|---|---|
+| Page render (SSR) | negotiates, loads, returns the snapshot | a fresh instance from the snapshot | — |
+| Hydration | — | the tab's instance, from the same snapshot, active before the first render | `use()` provides it |
+| Navigation | negotiates, returns the locale and the route | warms the target locale for the new route | `use()` switches and sets the route at commit |
+| Preload | the same | the same | none: a preload shows nothing |
+
+Each preload runs `load`, which warms the target locale's translations for the
+link's route. To keep hovering from fetching, turn preloading off where it
+costs too much: `data-sveltekit-preload-data="false"`.
+
+### Pitfalls
+
+- **Translate in markup, not in `load`.** A string built in `load` is built
+  once, in the locale of that pass; `i18n.t()` in the template follows a
+  switch.
+- **An app without a server `load` renders its SSR pass with no request
+  headers**, so the server and the browser can negotiate differently, and
+  `handle` still fills `%lang%` from `Accept-Language`, so `<html lang>` can
+  name another locale than the page renders. Put the locale in the URL, or add
+  the server `load`.
+- **A prerendered page has no visitor.** It renders the locale
+  `preferredLocale` finds in the URL, or else `initLocale`/`fallbackLocale`; a
+  query string (`?lang=`) does not reach it. A client navigation to one keeps
+  the tab's locale.
+- **With a `reroute` hook,** loaders match the path the visitor requested, not
+  the one SvelteKit rerouted to.
+- **The `browser` condition picks the half.** The server branch is resolved
+  through the package's `imports` map under the `browser` condition to a stub
+  that throws. An SSR target that resolves `browser` — a worker build, an
+  adapter bundling for the browser platform, a test runner with
+  `resolve.conditions: ['browser']` — therefore gets the stub.
+- **Under a base path**, set [`basePath`](#basepath): the routes handed to the
+  instance lose it on the way in.
+- **The hash router is not supported.** Under `router.type: 'hash'`, the route
+  lives in `url.hash`, while loaders are matched against `url.pathname`, so a
+  route-scoped loader never matches.
+- **A [`cache: false`](#cache-optional) loader runs twice per navigation:** once
+  when `load` warms the target, and again when the navigation commits, since it
+  runs on every trigger that selects it. Its source is expected to cache. A
+  `redirect()` or an `error()` it throws on the commit run is not followed:
+  SvelteKit follows control flow thrown in `load` only. The tab stays on its
+  locale, and the next navigation with the same answer switches again.
+- **With a finite [`cache`](#cache), an expired loader runs again at commit**,
+  since `load` only warms the target and a warm load leaves expiry to the next
+  activating trigger. The page shows its previous data until the refetch
+  lands, and a `redirect()` or an `error()` the refetch throws is not followed
+  either.
+
+---
+
 ## Server-Side Rendering
 
 A module that creates an instance is evaluated **once per process** on the
@@ -2120,9 +2352,17 @@ safe when the server renders nothing visitor-specific:
   session, say): concurrent requests share a load, so every one of them
   rejects with what the loader threw for one visitor.
 
-Then the [Quick Start](../README.md#quick-start) wiring — one
-`export const i18n = new I18n(config)` imported wherever it is needed — is all
-you need. An instance with a shorter life than the app (a per-request one, or a
+Then one module-level instance, imported wherever it is needed, is all you
+need:
+
+```javascript
+// src/lib/i18n.js
+import { I18n } from '@sveltekit-i18n/base';
+
+export const i18n = new I18n(config);
+```
+
+An instance with a shorter life than the app (a per-request one, or a
 component-scoped one) should be released with [`destroy()`](#destroy) when its
 owner goes away.
 

@@ -34,7 +34,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
 | Build | `svelte-package` → `dist/` (per-file ESM + `.d.ts`; rune modules ship UNCOMPILED) |
-| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node`; every suite runs twice, the rune modules compiled for the server and for the client (which also resolves `svelte` with the `browser` condition, so effects run) |
+| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts` and the test components), environment `node` (`happy-dom` for `kit.spec.ts`); every suite runs twice, the rune modules compiled for the server and for the client (which also resolves with the `browser` condition, so `svelte` runs effects and `#kit-*` picks the browser half); each project aliases the `#kit-*` imports to the source it runs, and `tsconfig.json` maps them with `paths` |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
 | CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg |
@@ -60,9 +60,17 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
 | `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
+| `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n` and the `Kit` types |
+| `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
+| `src/kit/server.ts` / `server.browser.ts` | the server half (`handle`, the server `load`) and the stub `#kit-server` resolves to under `browser` |
+| `src/kit/env.ts` / `env.browser.ts` | `BROWSER`, resolved through `#kit-env` |
+| `src/kit/types.ts` | the `Kit` namespace — the event shapes it reads and the exports' types |
+| `src/kit/internal.ts` | the unpublished types between the factory and the server half |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite |
+| `tests/specs/kit.spec.ts` | the `/kit` suite, in `happy-dom` |
+| `tests/components/` | the Svelte components `kit.spec.ts` mounts |
 | `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
@@ -256,6 +264,32 @@ translation state, loading, caching, route matching, and preprocessing — but
   instance assignable to and from a plain `I18n`. One dynamic source degrades
   the whole union to `string`: a half-known set would complete some locales
   while silently hiding the rest.
+- **`/kit` is wiring over the public surface.** `defineI18n(config, options)`
+  returns `handle`, `load`, `use` and `get`, and reaches the core only through
+  the instance's public members. One `load` serves both layout files, split by
+  `'cookies' in event`; the server branch reads `url` before any return (a
+  load re-runs on a navigation only for what it read) and sends the tables on
+  a page render only, the locale and the route on a data request. The server
+  builds an instance per pass; the browser keeps one per tab, and only the
+  pass that builds it activates — every later pass is a warm load of one
+  target, since it may be a preload. `use()` activates at commit, comparing the
+  server's answer with the last commit's (the per-result `tab` memory), so a
+  client `setLocale()` stands until the answer changes; an answer given before
+  the active locale changed, or read from a prerendered file (a later pass
+  carrying the tables), changes nothing. The locale a commit is still
+  switching to (`tab.switching`) counts as the active one while the active
+  locale is still the one it switched from — for the comparison and for the
+  warm target — so the wiring's own switch is no client change, while a client
+  `setLocale()` that lands meanwhile is. A switch that fails, unless a later
+  call landed its locale, puts the previous answer back, so the next commit
+  with the same answer switches again. The context key and the
+  key of the pass in `data` are one `Symbol.for`. `initLocale` and
+  `extensions` are stripped from the instances it builds: `initLocale` is a
+  negotiation candidate instead, and the wiring drives the core while
+  `data.i18n`, `use()` and `get()` hand out what the extensions make of it. The server
+  half and `BROWSER` resolve through the `imports` map (`#kit-server`,
+  `#kit-env`) by the `browser` condition, so the exports are annotated from
+  `kit/types.ts`, never inferred through a `#kit-*` module.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep
@@ -273,6 +307,11 @@ translation state, loading, caching, route matching, and preprocessing — but
    package targets Node 22+, Bun 1.2+ and Deno 2+: the source imports no
    `node:` module and touches no platform API beyond `Intl` (the network is
    the consumer's loader), and the CI runtime legs exist to keep that true.
+   `/kit` imports nothing from `$app/*` or `@sveltejs/kit` either: it reads
+   SvelteKit's events by shape, and the consumer's toolchain resolves its
+   `imports` conditions. Its only other platform APIs are the browser's:
+   `navigator.languages` behind `BROWSER`, and `document` inside `use()`'s
+   `$effect`, which never runs on a server.
    Reaching for a runtime-specific API is a blocking change — stop and ask.
 5. **`dist/` is generated** — never hand-edit; never commit unrelated `dist`
    churn.
@@ -467,7 +506,8 @@ not RCE/XSS.
 ## 13. Tests
 
 - Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`. The
-  exception is `tests/specs/dist.spec.ts`, which exercises the SHIPPED artifact
+  exceptions are `tests/specs/kit.spec.ts`, which needs a DOM for `use()` and
+  `get()`, and `tests/specs/dist.spec.ts`, which exercises the SHIPPED artifact
   and runs separately via `npm run test:dist` (which builds first).
 - Drive behavior through the **public API** (`new i18n(CONFIG)`, reactive
   properties, awaited method returns). Pure helpers may be imported directly

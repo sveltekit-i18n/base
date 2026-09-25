@@ -15,7 +15,22 @@
       "svelte": "./dist/exports/utils.js",
       "default": "./dist/exports/utils.js"
     },
+    "./kit": {
+      "types": "./dist/exports/kit.d.ts",
+      "svelte": "./dist/exports/kit.js",
+      "default": "./dist/exports/kit.js"
+    },
     "./package.json": "./package.json"
+  },
+  "imports": {
+    "#kit-env": {
+      "browser": "./dist/kit/env.browser.js",
+      "default": "./dist/kit/env.js"
+    },
+    "#kit-server": {
+      "browser": "./dist/kit/server.browser.js",
+      "default": "./dist/kit/server.js"
+    }
   },
   "scripts": {
     "dev": "svelte-package -i src -o dist -w",
@@ -71,6 +86,7 @@
     "eslint": "^10.8.1",
     "eslint-plugin-import-x": "^4.17.1",
     "globals": "^17.11.0",
+    "happy-dom": "^20.14.5",
     "simple-git-hooks": "^2.13.1",
     "svelte": "^5.56.9",
     "typescript": "^5.1.6",

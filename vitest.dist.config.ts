@@ -4,6 +4,6 @@ import { compiled } from './vitest.config.js';
 
 export default defineConfig({
   test: {
-    projects: compiled({ include: ['tests/specs/dist.spec.ts'] }),
+    projects: compiled({ include: ['tests/specs/dist.spec.ts'] }, { source: false }),
   },
 });
