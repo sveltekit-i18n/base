@@ -51,7 +51,7 @@ export namespace Kit {
 
   /** What `defineI18n()` returns. Each member is a plain function, so it can be exported on its own. */
   export type T<Instance = I18n> = {
-    /** A `handle` hook: fills `%lang%` in `app.html` with the negotiated locale. */
+    /** A `handle` hook: fills `%lang%` in `app.html` with the negotiated locale, and `%dir%` with its direction. */
     handle: (input: { event: RequestEvent; resolve: Resolve }) => Promise<Response>;
     /** The root layout's `load`, exported from `+layout.server.js` and `+layout.js` alike. */
     load: {

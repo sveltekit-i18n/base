@@ -66,13 +66,13 @@ const universalEvent = (path: string, data: Record<string, any> | null, params: 
 // What SvelteKit does to server data between the server and the browser.
 const wire = <T>(value: T): T => devalue.parse(devalue.stringify(value)) as T;
 
-const html = async ({ handle }: Pick<Kit.T, 'handle'>, event: ReturnType<typeof serverEvent>) => {
+const html = async ({ handle }: Pick<Kit.T, 'handle'>, event: ReturnType<typeof serverEvent>, template = '<html lang="%lang%">') => {
   let out = '';
 
   await handle({
     event,
     resolve: (_event, options) => {
-      out = options?.transformPageChunk?.({ html: '<html lang="%lang%">', done: true }) ?? '';
+      out = options?.transformPageChunk?.({ html: template, done: true }) ?? '';
 
       return new Response(out);
     },
@@ -107,6 +107,23 @@ describe('/kit', () => {
       expect(await html(setup(), serverEvent('/', { lang: 'cs,en;q=0.5' }))).toBe('<html lang="cs">');
       expect(await html(setup({}, { preferredLocale: (event) => event.cookies?.get('lang') }), serverEvent('/', { cookie: 'en' }))).toBe('<html lang="en">');
       expect(await html(setup(), serverEvent('/', { lang: 'fr' }))).toBe('<html lang="">');
+    });
+
+    it('fills %dir% from the same negotiation', async () => {
+      const template = '<html lang="%lang%" dir="%dir%">';
+      const arabic = setup({ translations: { ar: { 'common.greeting': 'Marhaban' } } });
+
+      expect(await html(arabic, serverEvent('/', { lang: 'ar-EG,en;q=0.5' }), template)).toBe('<html lang="ar" dir="rtl">');
+      expect(await html(setup(), serverEvent('/', { lang: 'cs' }), template)).toBe('<html lang="cs" dir="ltr">');
+      expect(await html(setup(), serverEvent('/', { lang: 'fr' }), template)).toBe('<html lang="" dir="ltr">');
+      expect(await html(arabic, serverEvent('/', { lang: 'ar' }), '<html dir="%dir%">')).toBe('<html dir="rtl">');
+    });
+
+    it('negotiates once for both placeholders', async () => {
+      const preferredLocale = vi.fn(() => 'en');
+
+      expect(await html(setup({}, { preferredLocale }), serverEvent('/'), '<html lang="%lang%" dir="%dir%">')).toBe('<html lang="en" dir="ltr">');
+      expect(preferredLocale).toHaveBeenCalledTimes(1);
     });
 
     it('negotiates in handle only for a chunk that asks for %lang%', async () => {
@@ -282,6 +299,7 @@ describe('/kit', () => {
 
     beforeEach(() => {
       document.documentElement.lang = '';
+      document.documentElement.dir = '';
     });
 
     const mountLayout = ({ use, get }: Pick<Kit.T, 'use' | 'get'>, data: { current: object }) => {
@@ -312,6 +330,21 @@ describe('/kit', () => {
       expect(second.i18n).toBe(first.i18n);
       void unmount(component);
       expect(wiring.calls.filter((call) => call.startsWith('cs:common'))).toEqual([]);
+    });
+
+    it('keeps <html dir> in sync with the active locale', async () => {
+      const wiring = setup({ translations: { ar: { 'common.greeting': 'Marhaban' } } });
+      const data = cell<object>(await wiring.load(universalEvent('/', page('/', 'ar', { ar: { 'common.greeting': 'Marhaban' } }))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      expect(document.documentElement.dir).toBe('rtl');
+
+      await i18n.setLocale('cs');
+      flushSync();
+      expect(document.documentElement.lang).toBe('cs');
+      expect(document.documentElement.dir).toBe('ltr');
+      void unmount(component);
     });
 
     it('provides what the extensions make of the tab\'s instance, and still drives the instance', async () => {
