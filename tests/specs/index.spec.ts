@@ -460,6 +460,51 @@ describe('i18n instance', () => {
     // The failed load must not stay pending forever.
     expect(instance.loading).toBe(false);
   });
+  it('records no loader whose data a custom `preprocess` failed on, so the next trigger fetches it again', async () => {
+    let fail = true;
+    const loader = vi.fn(async () => ({ greeting: 'Hi' }));
+    const instance = new i18n({
+      parser,
+      log,
+      preprocess: (input) => { if (fail) throw new Error('preprocess boom'); return input; },
+      loaders: [{ namespace: 'common', locale: 'en', loader }],
+    });
+
+    await expect(instance.loadTranslations('en', '/')).rejects.toThrow('preprocess boom');
+    expect(instance.rawTranslations).toEqual({});
+
+    fail = false;
+    await instance.loadTranslations('en', '/');
+
+    expect(loader).toHaveBeenCalledTimes(2);
+    expect(instance.translations.en).toEqual({ common: { greeting: 'Hi' } });
+  });
+  it('starts no `cache` window with data a custom `preprocess` failed on', async () => {
+    vi.useFakeTimers();
+    try {
+      let fail = true;
+      const loader = vi.fn(async () => ({ greeting: 'Hi' }));
+      const instance = new i18n({
+        parser,
+        log,
+        cache: 1000,
+        preprocess: (input) => { if (fail) throw new Error('preprocess boom'); return input; },
+        loaders: [{ namespace: 'common', locale: 'en', loader }],
+      });
+
+      await expect(instance.loadTranslations('en', '/')).rejects.toThrow('preprocess boom');
+
+      fail = false;
+      vi.advanceTimersByTime(900);
+      await instance.loadTranslations('en', '/');
+      vi.advanceTimersByTime(600);
+      await instance.loadTranslations('en', '/');
+
+      expect(loader).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('reports a config that fails to apply, and rejects `loadConfig()` with it', async () => {
     const { captured, restore } = captureLogs();
     const thrown = new Error('preprocess boom');
@@ -936,6 +981,56 @@ describe('i18n instance', () => {
 
     expect(instance.rawTranslations.en).toEqual({ article: { title: 'Two' } });
     expect(instance.translations.en).toEqual({ 'A/title': 'Two' });
+  });
+  it('keeps the data of the previous params when a custom `preprocess` fails on their replacement, and fetches it again', async () => {
+    let fail = false;
+    const loader = vi.fn(async ({ params }: Loader.Props) => ({ title: `Article ${params.id}`, [`only${params.id}`]: 'x' }));
+    const instance = new i18n({
+      parser,
+      log,
+      preprocess: (table: any) => { if (fail) throw new Error('preprocess boom'); return toDotNotation(table); },
+      loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/a\/(?<id>\d+)/], loader }],
+    });
+
+    await instance.loadTranslations('en', '/a/1');
+    fail = true;
+
+    await expect(instance.loadTranslations('en', '/a/2')).rejects.toThrow('preprocess boom');
+    expect(instance.rawTranslations.en).toEqual({ article: { title: 'Article 1', only1: 'x' } });
+    expect(instance.translations.en).toEqual({ 'article.title': 'Article 1', 'article.only1': 'x' });
+
+    fail = false;
+    await instance.loadTranslations('en', '/a/2');
+
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(instance.translations.en).toEqual({ 'article.title': 'Article 2', 'article.only2': 'x' });
+  });
+  it('keeps both tables and fetches again when a custom `preprocess` fails on the namespace a loader\'s new params rebuild', async () => {
+    let fail = false;
+    const loader = vi.fn(async ({ params }: Loader.Props) => ({ title: `Article ${params.id}` }));
+    const instance = new i18n({
+      parser,
+      log,
+      // Only the rebuilt table of the locale holds both namespaces.
+      preprocess: (table: any) => { if (fail && Object.keys(table).length > 1) throw new Error('preprocess boom'); return toDotNotation(table); },
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'article', locale: 'en', routes: [/^\/a\/(?<id>\d+)/], loader },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/a/1');
+    const tables = { raw: instance.rawTranslations, translations: instance.translations };
+    fail = true;
+
+    await expect(instance.setRoute('/a/2')).rejects.toThrow('preprocess boom');
+    expect({ raw: instance.rawTranslations, translations: instance.translations }).toEqual(tables);
+
+    fail = false;
+    await instance.setRoute('/a/2');
+
+    expect(loader).toHaveBeenCalledTimes(3);
+    expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'article.title': 'Article 2' });
   });
   describe('params wanted by the current route', () => {
     const itemLoader = (resolvers: Record<string, () => void>, locale = 'en') => ({
@@ -3014,6 +3109,27 @@ describe('i18n loaders that throw', () => {
     expect(instance.locale).toBe('en');
   });
 
+  it('records no loader whose data a custom `preprocess` failed on while another loader threw control flow', async () => {
+    const thrown = new Redirect(303, '/login');
+    const a = vi.fn(async () => ({ x: 'X' }));
+    let fail = true;
+    const instance = new i18n({
+      parser,
+      preprocess: (input) => { if (fail) throw new Error('preprocess boom'); return input; },
+      loaders: [{ namespace: 'a', locale: 'en', loader: a }, { ...throwing(thrown), routes: ['/admin'] }],
+    });
+
+    await expect(instance.loadTranslations('en', '/admin')).rejects.toBe(thrown);
+    expect(instance.rawTranslations).toEqual({});
+
+    fail = false;
+    await instance.setRoute('/');
+
+    expect(a).toHaveBeenCalledTimes(2);
+    expect(instance.translations.en).toEqual({ a: { x: 'X' } });
+    expect(instance.locale).toBe('en');
+  });
+
   it('names no route when a load without one fails', async () => {
     const failure = new Error('preprocess boom');
     const instance = new i18n();
@@ -4983,6 +5099,27 @@ describe('i18n seeded translations', () => {
     expect(instance.translations.en).toEqual({ 'extra.a': 'static-a', 'extra.b': 'loaded-b' });
   });
 
+  it('keeps nothing of a seed a custom `preprocess` fails on', async () => {
+    let fail = true;
+    const loader = vi.fn(async ({ params }: Loader.Props) => ({ title: `Article ${params.id}` }));
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      preprocess: (input) => { if (fail) throw new Error('preprocess boom'); return input; },
+      loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/a\/(?<id>\d+)/], loader }],
+    });
+
+    expect(() => instance.addTranslations({ en: { article: { seeded: 'x' } } })).toThrow('preprocess boom');
+    expect(instance.rawTranslations).toEqual({});
+
+    fail = false;
+    await instance.loadTranslations('en', '/a/1');
+    await instance.loadTranslations('en', '/a/2');
+
+    // Rebuilt from the seeds and the loader's delivery.
+    expect(instance.rawTranslations.en).toEqual({ article: { title: 'Article 2' } });
+  });
+
   it('lets the loader of a namespace seeded through `addTranslations()` run, and merges the two', async () => {
     const loader = vi.fn(async () => ({ b: 'loaded-b' }));
     const instance = new i18n({ parser: valueParser, log, loaders: [extra(loader)] });
@@ -5353,6 +5490,47 @@ describe('i18n hydrate', () => {
     expect(calls).toEqual({ about: 1 });
     expect(client.t('nav.home')).toBe('Home');
     expect(client.t('nav.about')).toBe('About');
+  });
+
+  it.each([
+    ['with records', true],
+    ['without records', false],
+  ])('records nothing of a hand-off (%s) a custom `preprocess` fails on, so its loaders run, and starts no `cache` window', async (_, records) => {
+    const withLive = (calls: Calls) => [
+      ...sharedLoaders(calls),
+      { id: 'live', namespace: 'live', locale: 'en', cache: false as const, loader: counted(calls, 'live', { now: 'Now' }) },
+    ];
+    const server = new i18n({ parser: valueParser, log, loaders: withLive({}) });
+
+    await server.loadTranslations('en', '/');
+
+    const envelope = records ? server.snapshot({ records: true }) : { translations: server.snapshot() };
+
+    vi.useFakeTimers();
+    try {
+      let fail = true;
+      const calls: Calls = {};
+      const client = new i18n({
+        parser: valueParser,
+        log,
+        cache: 1000,
+        preprocess: (input) => { if (fail) throw new Error('preprocess boom'); return input; },
+        loaders: withLive(calls),
+      });
+
+      expect(() => client.hydrate(envelope)).toThrow('preprocess boom');
+      expect(client.rawTranslations).toEqual({});
+
+      fail = false;
+      vi.advanceTimersByTime(900);
+      await client.loadTranslations('en', '/');
+      vi.advanceTimersByTime(600);
+      await client.loadTranslations('en', '/');
+
+      expect(calls).toEqual({ common: 1, home: 1, live: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps a parameterized loader from refetching its params, and replaces its data for others', async () => {

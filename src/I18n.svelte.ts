@@ -10,6 +10,9 @@ const defaultCache = Number.POSITIVE_INFINITY;
 
 type NamespaceRecords = Translations.LocaleIndexed<Loader.Key[]>;
 
+/** `rawTranslations` and `translations`, which change together. */
+type Tables = { raw: Translations.SerializedTranslations; translations: Translations.SerializedTranslations };
+
 /**
  * An activating call: what it replaced — the requested locale, the route and
  * the params its matching loaders were wanted for — to put back should it
@@ -635,7 +638,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * what each of its loaders last delivered, so no key of the previous params
    * survives and a sibling's part stays in place. The preprocessed table of a
    * locale that lost data is derived again from the raw one, since a custom
-   * `preprocess` may have renamed the keys that would have to go.
+   * `preprocess` may have renamed the keys that would have to go. Both tables
+   * are computed before anything is written, so a `preprocess` that throws
+   * records no loader and the next trigger fetches it again.
    */
   #applyDeliveries(deliveries: Delivery[]): void {
     const replaced = deliveries
@@ -646,10 +651,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       })
       .map(({ loader }) => loader);
 
-    deliveries.forEach((delivery) => {
-      this.#deliveries.set(delivery.loader, delivery);
-      this.#loaderRecords.set(delivery.loader, delivery.signature);
-    });
+    const delivered = new Map(deliveries.map((delivery) => [delivery.loader, delivery]));
 
     const isReplaced = ({ locale, namespace }: Loader.Resolved) => replaced.some(
       (loader) => loader.locale === locale && loader.namespace === namespace,
@@ -659,17 +661,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const rebuilt = loaders
       .filter(isReplaced)
-      .map((loader) => this.#deliveries.get(loader))
+      .map((loader) => delivered.get(loader) ?? this.#deliveries.get(loader))
       .filter((delivery): delivery is Delivery => delivery !== undefined);
 
-    replaced.forEach(({ locale, namespace }) => {
-      const data = read(this.#rawTranslations, locale) ?? {};
-
-      this.#rawTranslations = {
-        ...this.#rawTranslations,
-        [locale]: Object.fromEntries(Object.entries(data).filter(([key]) => !isNamespaceKey(key, namespace))),
-      };
-    });
+    const raw = replaced.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => ({
+      ...acc,
+      [locale]: Object.fromEntries(Object.entries(read(acc, locale) ?? {}).filter(([key]) => !isNamespaceKey(key, namespace))),
+    }), this.#rawTranslations);
 
     const external = replaced.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => {
       const data = read(this.#externalTranslations, locale) ?? {};
@@ -681,17 +679,24 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return { ...acc, [locale]: { ...read(acc, locale), ...own } };
     }, {});
 
-    this.#mergeTranslations(external);
-    this.#mergeTranslations(serialize([
+    const seeded = this.#merged({ raw, translations: this.#translations }, external);
+    const merged = this.#merged(seeded, serialize([
       ...deliveries.filter(({ loader }) => !isReplaced(loader)),
       ...rebuilt,
     ].map(({ loader, data }) => ({ ...loader, data }))));
 
-    this.#translations = unique(replaced.map(({ locale }) => locale)).reduce(
-      (acc, locale) => ({ ...acc, [locale]: this.#preprocess(read(this.#rawTranslations, locale)) }),
-      this.#translations,
+    const translations = unique(replaced.map(({ locale }) => locale)).reduce(
+      (acc, locale) => ({ ...acc, [locale]: this.#preprocess(read(merged.raw, locale)) }),
+      merged.translations,
     );
 
+    deliveries.forEach((delivery) => {
+      this.#deliveries.set(delivery.loader, delivery);
+      this.#loaderRecords.set(delivery.loader, delivery.signature);
+    });
+
+    this.#rawTranslations = merged.raw;
+    this.#translations = translations;
     this.#stamp(deliveries.filter(({ loader }) => loader.cache !== false).map(({ loader }) => loader.locale));
   }
 
@@ -709,8 +714,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   #addSanitized(sanitized: Translations.SerializedTranslations): void {
-    this.#keepExternal(sanitized);
     this.#mergeTranslations(sanitized);
+    this.#keepExternal(sanitized);
   }
 
   /**
@@ -725,6 +730,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const served = loaders.filter((loader) => loader.cache === false
       && Object.keys(read(translations, loader.locale) ?? {}).some((key) => isNamespaceKey(key, loader.namespace)));
 
+    this.#addSanitized(translations);
+
     Object.keys(translations).forEach((locale) => {
       // A `null` payload for a locale must not take the whole call down —
       // every step of the merge tolerates it, so this bookkeeping does too.
@@ -736,7 +743,6 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       ]));
     });
 
-    this.#addSanitized(translations);
     served.forEach((loader) => this.#handedOff.set(loader, ''));
     this.#stampHandOff(translations);
   }
@@ -766,6 +772,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return [{ loader, signature, data: read(read(translations, loader.locale), loader.namespace) ?? {} }];
     });
 
+    this.#mergeTranslations(translations);
+
     deliveries.forEach((delivery) => {
       this.#deliveries.set(delivery.loader, delivery);
       this.#loaderRecords.set(delivery.loader, delivery.signature);
@@ -782,7 +790,6 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     }, {});
 
     this.#keepExternal(external);
-    this.#mergeTranslations(translations);
     this.#stampHandOff(translations);
   }
 
@@ -807,25 +814,38 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /** Merges data keyed by sanitized locales into both tables. */
   #mergeTranslations(sanitized: Translations.SerializedTranslations): void {
+    const { raw, translations } = this.#merged({ raw: this.#rawTranslations, translations: this.#translations }, sanitized);
+
+    this.#rawTranslations = raw;
+    this.#translations = translations;
+  }
+
+  /**
+   * Both tables with data keyed by sanitized locales merged in. Pure, so a
+   * caller that writes only once both are computed keeps them consistent when
+   * a `preprocess` throws.
+   */
+  #merged(tables: Tables, sanitized: Translations.SerializedTranslations): Tables {
     logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(sanitized);
 
-    this.#rawTranslations = translationLocales.reduce(
-      (acc, locale) => ({
-        ...acc,
-        [locale]: mergeTranslations(read(acc, locale) || {}, read(sanitized, locale) ?? {}, locale),
-      }),
-      this.#rawTranslations,
-    );
-
-    this.#translations = translationLocales.reduce(
-      (acc, locale) => ({
-        ...acc,
-        [locale]: mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
-      }),
-      this.#translations,
-    );
+    return {
+      raw: translationLocales.reduce(
+        (acc, locale) => ({
+          ...acc,
+          [locale]: mergeTranslations(read(acc, locale) || {}, read(sanitized, locale) ?? {}, locale),
+        }),
+        tables.raw,
+      ),
+      translations: translationLocales.reduce(
+        (acc, locale) => ({
+          ...acc,
+          [locale]: mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
+        }),
+        tables.translations,
+      ),
+    };
   }
 
   /**
