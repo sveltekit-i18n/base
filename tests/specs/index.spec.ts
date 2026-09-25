@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -6932,7 +6932,8 @@ describe('utils', () => {
     expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);
     expect(publicUtils.matchLocale).toBe(matchLocale);
     expect(publicUtils.resolveLoaders).toBe(resolveLoaders);
-    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'resolveLoaders', 'sanitizeLocales', 'toDotNotation']);
+    expect(publicUtils.textDirection).toBe(textDirection);
+    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'resolveLoaders', 'sanitizeLocales', 'textDirection', 'toDotNotation']);
     expectTypeOf(publicUtils.toDotNotation).toEqualTypeOf<DotNotation.T>();
   });
 
@@ -7414,5 +7415,61 @@ describe('matchLocale', () => {
     const locales: string[] = ['en', 'cs'];
 
     expectTypeOf(matchLocale('en-GB', locales)).toEqualTypeOf<string | undefined>();
+  });
+});
+
+describe('textDirection', () => {
+  it.each([
+    'ar', 'ar-EG', 'ar-EG-u-nu-latn', 'he', 'fa', 'ur', 'ps', 'ckb', 'sd', 'ug', 'ks', 'dv', 'yi', 'syr', 'nqo', 'rhg',
+    'az-Arab', 'pa-Arab', 'ms-Arab', 'ff-Adlm', 'ur-Aran', 'prs-Arab', 'ku-Arab', 'pa-PK', 'az-IR', 'uz-AF',
+  ])('reads %s as right to left', (tag) => {
+    expect(textDirection(tag)).toBe('rtl');
+  });
+
+  it.each(['en', 'en-GB', 'cs', 'uz', 'az', 'pa', 'ku', 'ja', 'zh-Hant', 'sr-Latn', 'az-Latn', 'pa-Guru', 'ff'])('reads %s as left to right', (tag) => {
+    expect(textDirection(tag)).toBe('ltr');
+  });
+
+  it('lets a script the tag spells win over the language', () => {
+    expect(textDirection('he-Latn')).toBe('ltr');
+    expect(textDirection('en-Arab')).toBe('rtl');
+  });
+
+  it('knows the scripts Unicode writes right to left', () => {
+    ['Adlm', 'Arab', 'Aran', 'Hebr', 'Mend', 'Nkoo', 'Rohg', 'Syrc', 'Syrj', 'Thaa', 'Yezi'].forEach((script) => {
+      expect(textDirection(`und-${script}`), script).toBe('rtl');
+    });
+  });
+
+  it('reads no direction the engine reports', () => {
+    const saved = (['getTextInfo', 'textInfo'] as const).map((key) => [key, Object.getOwnPropertyDescriptor(Intl.Locale.prototype, key)] as const);
+    const wrong = { direction: 'ltr' };
+
+    // What JavaScriptCore answers for `dv` and `az-Arab`.
+    Object.defineProperties(Intl.Locale.prototype, {
+      getTextInfo: { configurable: true, value: () => wrong },
+      textInfo: { configurable: true, get: () => wrong },
+    });
+
+    try {
+      expect(textDirection('dv')).toBe('rtl');
+      expect(textDirection('az-Arab')).toBe('rtl');
+    } finally {
+      saved.forEach(([key, descriptor]) => {
+        Reflect.deleteProperty(Intl.Locale.prototype, key);
+        if (descriptor) Object.defineProperty(Intl.Locale.prototype, key, descriptor);
+      });
+    }
+  });
+
+  it('is left to right for a tag `Intl.Locale` rejects, and for no locale', () => {
+    ['', 'not a tag', 'en_US', 'x'].forEach((tag) => { expect(textDirection(tag), tag).toBe('ltr'); });
+    expect(textDirection(undefined)).toBe('ltr');
+    expect(textDirection(42 as any)).toBe('ltr');
+  });
+
+  it('types its result for a `dir` attribute', () => {
+    expectTypeOf(textDirection).parameter(0).toEqualTypeOf<string | undefined>();
+    expectTypeOf(textDirection('ar')).toEqualTypeOf<'ltr' | 'rtl'>();
   });
 });
