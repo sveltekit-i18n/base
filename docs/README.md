@@ -271,10 +271,9 @@ against SvelteKit 2.70 and the 3.0 prerelease):
   `src/error.html`, not your `+error.svelte`, and a client navigation reloads
   the page first. Your own error page needs the loaders that throw `error()`
   triggered from a nested layout or page instead, which then hands their
-  namespaces off itself; the [SSR wiring](#server-side-rendering) below loads
-  every loader of the route in the root layout.
-  [lib#272](https://github.com/sveltekit-i18n/lib/issues/272) tracks a wiring
-  that splits them.
+  namespaces off itself; the [SvelteKit wiring](#sveltekit) and the
+  [SSR recipe](#server-side-rendering) below load every loader of the route in
+  the root layout.
 - **During hydration**, the client runs again whatever the server did not hand
   over — a loader that failed on the server among them. Control flow it throws
   then makes SvelteKit leave the page it rendered: a redirect navigates away
@@ -1594,8 +1593,9 @@ export const load = async ({ url }) => {
 ```
 
 The instance above is a module-level singleton, which on the server is shared
-by every request in the process — see
-[Server-Side Rendering](#server-side-rendering) for the per-request wiring.
+by every request in the process — see [SvelteKit](#sveltekit) for the
+per-request wiring, or [Server-Side Rendering](#server-side-rendering) to wire
+it by hand.
 
 **`{ activate: false }`** only fills the tables. The requested locale, the
 current route and [`locale`](#locale) stay as they were, and the load does not
@@ -2235,6 +2235,10 @@ loader throws for one visitor rejects every request that shares its load.
 
 Create **one instance per request** instead, and hand its state to the client
 with [`snapshot()`](#snapshotoptions) and [`hydrate()`](#hydrateenvelope).
+
+In a SvelteKit app, [`@sveltekit-i18n/base/kit`](#sveltekit) does all of this
+for you. The recipe below is the same wiring by hand, for an app that needs
+something the wiring does not do.
 
 ### 1. Export the config, not the instance
 
