@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
+import { configLocales, matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -1557,6 +1557,18 @@ describe('i18n sanitizeLocales config', () => {
 
     expect(instance.locale).toBe('en');
     expect(instance.t('greeting')).toBe('Hello');
+  });
+
+  it.each([
+    ['the default sanitizer', { loaders, translations: { 'zh-hans': { greeting: 'Nǐ hǎo' } } }],
+    ['`false`', { sanitizeLocales: false, loaders: [{ namespace: 'common', locale: 'EN', loader: async () => ({}) }], translations: { CS: {} } }],
+    ['a custom transform', { sanitizeLocales: (locale: string) => locale.toUpperCase(), loaders: [{ namespace: 'common', locale: ['en', 'cs'], loader: async () => ({}) }] }],
+    ['a deprecated `key`', { loaders: [{ key: 'common', locale: 'de', loader: async () => ({}) }] }],
+    ['a locale in loaders and translations both', { loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({}) }], translations: { EN: {}, cs: {} } }],
+    ['translations only', { translations: { en: { greeting: 'Hello' } } }],
+    ['no locale at all', { initLocale: 'en', fallbackLocale: 'cs' }],
+  ] as [string, Config.T][])('derives the locales of a config as the instance does, with %s', (_, config) => {
+    expect(configLocales(config)).toEqual(new i18n({ ...config, parser, log }).locales);
   });
 });
 
