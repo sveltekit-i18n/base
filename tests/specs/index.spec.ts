@@ -1306,6 +1306,34 @@ describe('i18n instance', () => {
 
     expect(errorSpy).not.toHaveBeenCalled();
   });
+  it('reports a loader with a non-string key that throws, without throwing itself', async () => {
+    const errorSpy = vi.fn();
+    const boom = new Error('Not reachable');
+    const instance = new i18n({
+      parser,
+      log: { level: 'error', logger: { error: errorSpy, warn: () => {}, debug: () => {} } },
+      loaders: [{ namespace: Symbol('common') as unknown as string, locale: 'en', loader: async () => { throw boom; } }],
+    });
+
+    await expect(instance.loadTranslations('en', '/')).resolves.toBeUndefined();
+
+    expect(errorSpy).toHaveBeenCalledWith('[i18n]: Failed to load translation. Verify your \'en\' > \'Symbol(common)\' Loader.', boom);
+  });
+  it('loads two loaders of one non-string key without throwing', async () => {
+    const namespace = Symbol('common') as unknown as string;
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace, locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace, locale: 'en', loader: async () => ({ farewell: 'Bye' }) },
+      ],
+    });
+
+    await expect(instance.loadTranslations('en', '/')).resolves.toBeUndefined();
+
+    expect(instance.locale).toBe('en');
+  });
   it('drops a loader whose accessor throws and keeps the resolvable ones', async () => {
     const errorSpy = vi.fn();
     const boom = new Error('locale accessor');
