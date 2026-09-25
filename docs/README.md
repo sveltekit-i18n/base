@@ -2391,16 +2391,16 @@ owner goes away.
 
 ## Utilities
 
-Four pure helpers are published separately: three the instance uses
+Five pure helpers are published separately: three the instance uses
 internally, for the cases where consumer code has to match the library's own
-behavior, and one the instance never calls, for deciding which locale to ask it
-for:
+behavior, and two the instance never calls, for deciding which locale to ask it
+for and which direction that locale is written in:
 
 ```javascript
-import { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
-The rest of the internals stays private – the subpath exports these four, plus
+The rest of the internals stays private – the subpath exports these five, plus
 the `DotNotation` type they are described with.
 
 ### `toDotNotation(input, preserveArrays?)`
@@ -2585,6 +2585,52 @@ if (preferred && preferred !== i18n.locale) await i18n.setLocale(preferred);
 
 Nothing here reads a request or a browser by itself: the helper computes a
 locale from values you pass it, and assigning it stays your call.
+
+---
+
+### `textDirection(locale)`
+
+**Type:** `(locale: string | undefined) => 'ltr' | 'rtl'`
+
+The direction a locale is written in, ready for a `dir` attribute:
+
+```svelte
+<div dir={textDirection(i18n.locale)}>
+  <p>{i18n.t('content')}</p>
+</div>
+```
+
+```javascript
+import { textDirection } from '@sveltekit-i18n/base/utils';
+
+textDirection('ar-EG');   // 'rtl'
+textDirection('ckb');     // 'rtl'
+textDirection('az-Arab'); // 'rtl'
+textDirection('az-Latn'); // 'ltr'
+textDirection('en');      // 'ltr'
+```
+
+It keeps no list of languages. The script decides: the one the tag spells
+(`az-Arab` and `pa-Arab` are right-to-left, `az-Latn` and `pa-Guru` are not),
+or else the likely one `Intl.Locale#maximize()` adds (`dv` is written in
+Thaana, `ckb` in Arabic), checked against the scripts Unicode writes right to
+left. The engines' own `getTextInfo()` is deliberately not read: JavaScriptCore
+(measured on Bun; the engine behind Safari) reports `dv`, `rhg` and `az-Arab`
+as left-to-right.
+
+An extension changes nothing (`ar-EG-u-nu-latn` is `'rtl'` like `ar`), but a
+region can pick the likely script: `pa` is written in Gurmukhi, `pa-PK` in
+Arabic, so `pa-PK` is `'rtl'` (likewise `az-IR` and `uz-AF`).
+
+**⚠️ The likely script is the engine's data.** Engines ship different CLDR
+versions: Dari (`prs`) gets no script in JavaScriptCore and reads as
+left-to-right there, and `ku-IQ` is Arabic on Node but Latin on Deno and Bun.
+The server's `%dir%` and the browser's could then disagree. A locale whose
+direction matters spells its script – `prs-Arab`, `ku-Arab` – which reads the
+same on every engine.
+
+A tag `Intl.Locale` rejects, and `undefined` before a locale is active,
+are `'ltr'` rather than a throw.
 
 ---
 

@@ -387,13 +387,14 @@ Load-triggering methods return the promise of the matching load — concurrent d
 Pure helpers ship from a separate subpath, for the code around the instance that has to match the library's own behavior or decide which locale to ask for:
 
 ```javascript
-import { matchLocale, resolveLoaders, sanitizeLocales, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
 - `toDotNotation(input, preserveArrays?)` – the flattening behind [`preprocess`](#preprocess), for a custom `preprocess` that still wants dot notation
 - `resolveLoaders(loaders, sanitizeLocales?)` – normalizes `config.loaders` the way the instance does, into one loader per locale and namespace pair, for code that reads a config from outside the instance
 - `sanitizeLocales(...locales)` – normalizes a locale from a URL, cookie or `Accept-Language` header the way the instance does, so it can be compared against `locale`
 - `matchLocale(requested, available)` – picks the configured locale a visitor asked for, from an `Accept-Language` header or `navigator.languages`, falling back from `en-GB` to `en` and answering `undefined` when nothing matches
+- `textDirection(locale)` – `'ltr'` or `'rtl'` for a `dir` attribute, from the script the tag spells or the one `Intl.Locale#maximize()` adds, with no list of languages to keep
 
 ### SvelteKit
 

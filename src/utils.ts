@@ -346,6 +346,38 @@ export const matchLocale = <const L extends string>(
     .reduce<L | undefined>((match, { range }) => match ?? select(range), undefined);
 };
 
+// The scripts Unicode writes right to left, the historic ones and the ISO 15924
+// variants of the living ones (`Aran`, `Syre`) included.
+const RTL_SCRIPTS = new Set([
+  'Adlm', 'Arab', 'Aran', 'Armi', 'Avst', 'Chrs', 'Cprt', 'Elym', 'Gara', 'Hatr', 'Hebr', 'Hung', 'Khar', 'Lydi',
+  'Mand', 'Mani', 'Mend', 'Merc', 'Mero', 'Narb', 'Nbat', 'Nkoo', 'Orkh', 'Ougr', 'Palm', 'Phli', 'Phlp',
+  'Phnx', 'Prti', 'Rohg', 'Samr', 'Sarb', 'Sidt', 'Sogd', 'Sogo', 'Syrc', 'Syre', 'Syrj', 'Syrn', 'Thaa', 'Yezi',
+]);
+
+/**
+ * The direction `locale` is written in, for `dir` and `<html dir>`.
+ *
+ * Decided by the script alone: the one the tag spells (`az-Arab`, `pa-Guru`),
+ * or else the one `Intl.Locale#maximize()` adds (`dv` is `Thaa`, `pa-PK` is
+ * `Arab`). That likely script is the engine's CLDR data and can differ between
+ * engines (`prs` has none in JavaScriptCore), so a locale whose direction
+ * matters spells its script. The engines' own text info is not read –
+ * JavaScriptCore reports `dv` and `az-Arab` as left to right. A tag
+ * `Intl.Locale` rejects, and a missing locale, is `'ltr'`.
+ */
+export const textDirection = (locale: string | undefined): 'ltr' | 'rtl' => {
+  if (typeof locale !== 'string') return 'ltr';
+
+  try {
+    const tag = new Intl.Locale(locale);
+    const script = tag.script ?? tag.maximize().script;
+
+    return script && RTL_SCRIPTS.has(script) ? 'rtl' : 'ltr';
+  } catch {
+    return 'ltr';
+  }
+};
+
 /**
  * `route` without `basePath` in front of it, cut on a segment boundary only:
  * under `/repo`, `/repo/about` is `/about`, `/repo` is `/` and `/repo?tab=1`
