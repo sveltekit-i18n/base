@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 
-import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, toDotNotation, translate, unique } from './utils.js';
+import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique } from './utils.js';
 import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -175,15 +175,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   locales: Config.LocaleInput<LocaleUnion>[] = $derived.by(() => {
     if (!this.#config) return [];
 
-    const { loaders = [] } = this.#config;
-
     // Loader locales are sanitized once, when the config resolves them, and
     // table locales once, when their data arrives; a custom `sanitizeLocales`
     // need not be idempotent.
-    return Array.from(new Set([
-      ...loaders.map(({ locale }) => locale),
-      ...Object.keys(this.#translations),
-    ]));
+    return servedLocales(this.#config.loaders ?? [], this.#translations);
   });
 
   initialized: boolean = $derived(

@@ -546,6 +546,22 @@ export const serialize = (input: Array<Loader.Resolved & { data: any }>) => {
   }, {} as Translations.SerializedTranslations);
 };
 
+/** The locales the loaders serve, then the ones the tables hold. */
+export const servedLocales = (loaders: readonly Loader.Resolved[], tables: Translations.SerializedTranslations): Config.Locale[] => unique([
+  ...loaders.map(({ locale }) => locale),
+  ...Object.keys(tables),
+]);
+
+/**
+ * The locales a config serves, sanitized as an instance built from it
+ * sanitizes them. Resolving the loaders logs what is wrong with them, so a
+ * caller runs this once per config.
+ */
+export const configLocales = ({ loaders, translations, sanitizeLocales: strategy }: Pick<Config.T, 'loaders' | 'translations' | 'sanitizeLocales'>): Config.Locale[] => servedLocales(
+  resolveLoaders(loaders, strategy),
+  translations ? sanitizeTranslationLocales(translations, sanitizerFactory(strategy)) : {},
+);
+
 /** A loader selected for a load, with the params its route yielded. */
 export type LoadRequest = { loader: Loader.Resolved; params: Loader.Params; signature: string };
 
