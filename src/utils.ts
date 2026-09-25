@@ -346,6 +346,32 @@ export const matchLocale = <const L extends string>(
     .reduce<L | undefined>((match, { range }) => match ?? select(range), undefined);
 };
 
+/**
+ * `route` without `basePath` in front of it, cut on a segment boundary only:
+ * under `/repo`, `/repo/about` is `/about`, `/repo` is `/` and `/repo?tab=1`
+ * is `/?tab=1`, while `/repository` and a route without the prefix pass
+ * through unchanged.
+ */
+export const withoutBasePath = (route: string, basePath: string | undefined): string => {
+  if (typeof route !== 'string' || typeof basePath !== 'string') return route;
+
+  let end = basePath.length;
+
+  while (end > 0 && basePath[end - 1] === '/') end -= 1;
+
+  const base = basePath.slice(0, end);
+
+  if (!base || !route.startsWith(base)) return route;
+
+  const rest = route.slice(base.length);
+
+  if (!rest) return '/';
+
+  if (rest[0] === '?' || rest[0] === '#') return `/${rest}`;
+
+  return rest.startsWith('/') ? rest : route;
+};
+
 export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
   if (preserveArrays && Array.isArray(input)) {
     return input.map((v) => toDotNotation(v, preserveArrays));

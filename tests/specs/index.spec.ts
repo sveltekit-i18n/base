@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate } from '../../src/utils.js';
+import { configLocales, matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -1569,6 +1569,134 @@ describe('i18n sanitizeLocales config', () => {
     ['no locale at all', { initLocale: 'en', fallbackLocale: 'cs' }],
   ] as [string, Config.T][])('derives the locales of a config as the instance does, with %s', (_, config) => {
     expect(configLocales(config)).toEqual(new i18n({ ...config, parser, log }).locales);
+  });
+});
+
+describe('i18n basePath config', () => {
+  const basePathConfig = (props: Loader.Props[]): Config.T => ({
+    parser: valueParser,
+    log,
+    basePath: '/repo',
+    loaders: [
+      { namespace: 'common', locale: 'en', loader: async (input) => { props.push(input); return { a: 'A' }; } },
+      { namespace: 'about', locale: 'en', routes: ['/about'], loader: async (input) => { props.push(input); return { b: 'B' }; } },
+      { namespace: 'article', locale: 'en', routes: [/^\/article\/(?<id>\d+)$/], loader: async (input) => { props.push(input); return { title: `T${input.params.id}` }; } },
+    ],
+  });
+
+  it('matches and hands a loader the route of `setRoute()` without it', async () => {
+    const props: Loader.Props[] = [];
+    const instance = new i18n(basePathConfig(props));
+
+    await instance.setLocale('en');
+    await instance.setRoute('/repo/about');
+
+    expect(props.map(({ route }) => route)).toEqual(['/about', '/about']);
+    expect(instance.t('about.b')).toBe('B');
+    expect(instance.snapshot({ records: true }).route).toBe('/about');
+  });
+
+  it('captures params off the route of `loadTranslations()` without it', async () => {
+    const props: Loader.Props[] = [];
+    const instance = new i18n(basePathConfig(props));
+
+    await instance.loadTranslations('en', '/repo/article/5');
+    await instance.loadTranslations('en', '/repo/article/6');
+
+    expect(props.filter(({ namespace }) => namespace === 'article').map(({ params }) => params)).toEqual([{ id: '5' }, { id: '6' }]);
+    expect(instance.t('article.title')).toBe('T6');
+  });
+
+  it('strips the route of a warm load', async () => {
+    const props: Loader.Props[] = [];
+    const instance = new i18n(basePathConfig(props));
+
+    await instance.loadTranslations('en', '/repo/about', { activate: false });
+
+    expect(props.map(({ route }) => route)).toEqual(['/about', '/about']);
+  });
+
+  it('loads a namespace for the stored route, which is stripped already', async () => {
+    const props: Loader.Props[] = [];
+    const instance = new i18n(basePathConfig(props));
+
+    await instance.loadTranslations('en', '/repo/article/7');
+    props.length = 0;
+    instance.invalidate('en', 'article');
+    await instance.loadNamespace('article');
+
+    expect(props.map(({ route, params }) => [route, params])).toEqual([['/article/7', { id: '7' }]]);
+  });
+
+  it('strips a route only once, so a hand-off keeps the route it carries', async () => {
+    const seen: string[] = [];
+    const config = (): Config.T => ({
+      parser: valueParser,
+      log,
+      basePath: '/repo',
+      loaders: [{ namespace: 'x', locale: 'en', routes: ['/repo/x'], loader: async ({ route }) => { seen.push(route); return { k: 'v' }; } }],
+    });
+    const server = new i18n(config());
+
+    await server.loadTranslations('en', '/repo/repo/x');
+
+    const envelope = server.snapshot({ records: true });
+    const client = new i18n(config());
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/repo/repo/x');
+
+    expect(envelope.route).toBe('/repo/x');
+    expect(client.snapshot({ records: true }).route).toBe('/repo/x');
+    expect(seen).toEqual(['/repo/x']);
+  });
+
+  it('keeps the stored route across a reconfiguration', async () => {
+    const instance = new i18n(basePathConfig([]));
+
+    await instance.loadTranslations('en', '/repo/about');
+    await instance.loadConfig({ ...basePathConfig([]), basePath: '/other' });
+
+    expect(instance.snapshot({ records: true }).route).toBe('/about');
+  });
+
+  it('puts back the stripped route when a route change is rejected', async () => {
+    const redirect: unknown = { status: 307, location: '/login' };
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      basePath: '/repo',
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ a: 'A' }) },
+        { namespace: 'private', locale: 'en', routes: ['/private'], loader: async () => { throw redirect; } },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/repo/about');
+    await expect(instance.setRoute('/repo/private')).rejects.toBe(redirect);
+
+    expect(instance.snapshot({ records: true }).route).toBe('/about');
+  });
+
+  it('holds a `cache: false` loader back for the prefixed route of the page a hand-off named', async () => {
+    let calls = 0;
+    const config = (): Config.T => ({
+      parser: valueParser,
+      log,
+      basePath: '/repo',
+      loaders: [{ namespace: 'q', locale: 'en', cache: false, routes: ['/about'], loader: async () => { calls += 1; return { a: 'A' }; } }],
+    });
+    const server = new i18n(config());
+
+    await server.loadTranslations('en', '/repo/about');
+
+    const client = new i18n(config());
+
+    client.hydrate(server.snapshot({ records: true }));
+    calls = 0;
+    await client.loadTranslations('en', '/repo/about');
+
+    expect(calls).toBe(0);
   });
 });
 
@@ -6750,6 +6878,33 @@ describe('utils', () => {
 
     expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
     expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
+  });
+});
+
+describe('withoutBasePath', () => {
+  it.each([
+    ['/repo/about', '/repo', '/about'],
+    ['/repo', '/repo', '/'],
+    ['/repo/', '/repo', '/'],
+    ['/repo/about/', '/repo', '/about/'],
+    ['/a/b/c', '/a/b', '/c'],
+    ['/repo/repo/x', '/repo', '/repo/x'],
+    ['/repo/about', '/repo/', '/about'],
+    ['/repo/about', '/repo//', '/about'],
+    ['/repository', '/repo', '/repository'],
+    ['/repo#x', '/repo', '/#x'],
+    ['/repo?tab=1', '/repo', '/?tab=1'],
+    ['/repo/x?tab=1', '/repo', '/x?tab=1'],
+    ['/repo?tab=1', '/repo/', '/?tab=1'],
+    ['/repository?tab=1', '/repo', '/repository?tab=1'],
+    ['/about', '/repo', '/about'],
+    ['', '/repo', ''],
+    ['/repo/about', '', '/repo/about'],
+    ['/repo/about', '/', '/repo/about'],
+    ['/repo/about', undefined, '/repo/about'],
+    ['/repo/about', 'repo', '/repo/about'],
+  ])('cuts %s under %s to %s', (route, basePath, expected) => {
+    expect(withoutBasePath(route, basePath)).toBe(expected);
   });
 });
 
