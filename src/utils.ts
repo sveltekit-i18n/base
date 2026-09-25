@@ -372,6 +372,87 @@ export const withoutBasePath = (route: string, basePath: string | undefined): st
   return rest.startsWith('/') ? rest : route;
 };
 
+// A pathname is visitor input and the matcher backtracks over it, so a longer
+// one is not examined at all.
+const MAX_ROUTE_SEGMENTS = 64;
+
+const decodeSegment = (segment: string): string => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+/** Whether one pathname segment fits one route id segment, where `[x]` stands for one or more characters. */
+const fitsSegment = (segment: string, pattern: string): boolean => {
+  const parts = pattern.split(/(\[[^\]]+\])/);
+
+  if (parts.length === 1) return segment === pattern;
+
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+
+  if (!segment.startsWith(first) || !segment.endsWith(last)) return false;
+
+  // The leftmost placement of each literal leaves the most room to the rest.
+  const position = parts.slice(2, -1).filter((_, index) => index % 2 === 0).reduce<number>((at, literal) => {
+    if (at < 0) return at;
+
+    const found = segment.indexOf(literal, at + 1);
+
+    return found < 0 ? -1 : found + literal.length;
+  }, first.length);
+
+  return position >= 0 && segment.length - last.length - position >= 1;
+};
+
+/**
+ * What stands in front of the part of `pathname` that SvelteKit's `routeId`
+ * matched: `''` when nothing does, `undefined` when the id fits no suffix of
+ * it, when it is `null` (a 404), or when the pathname is too long to examine.
+ * Param matchers cannot run here, so an optional param on the first segment
+ * absorbs a prefix. No regex runs on the pathname.
+ */
+export const routePrefix = (pathname: string, routeId: string | null): string | undefined => {
+  if (typeof pathname !== 'string' || typeof routeId !== 'string') return undefined;
+
+  const raw = pathname.split('/').filter(Boolean);
+
+  if (raw.length > MAX_ROUTE_SEGMENTS) return undefined;
+
+  const segments = raw.map(decodeSegment);
+  const patterns = routeId.split('/').filter((pattern) => pattern && !(pattern.startsWith('(') && pattern.endsWith(')')));
+  const fitted = new Map<number, boolean>();
+
+  // Whether the segments from `at` on fit the patterns from `index` on. Each
+  // pair is decided once, which keeps rest and optional params polynomial.
+  const fits = (at: number, index: number): boolean => {
+    const key = at * (patterns.length + 1) + index;
+    const known = fitted.get(key);
+
+    if (known !== undefined) return known;
+
+    const pattern = patterns[index];
+
+    const result = pattern === undefined
+      ? at === segments.length
+      : pattern.startsWith('[[') && pattern.endsWith(']]')
+        ? fits(at, index + 1) || (at < segments.length && fits(at + 1, index + 1))
+        : pattern.startsWith('[...') && pattern.endsWith(']')
+          ? segments.slice(at).some((_, skip) => fits(at + skip, index + 1)) || fits(segments.length, index + 1)
+          : at < segments.length && fitsSegment(segments[at], pattern) && fits(at + 1, index + 1);
+
+    fitted.set(key, result);
+
+    return result;
+  };
+
+  const at = [...segments.keys(), segments.length].find((skip) => fits(skip, 0));
+
+  return at === undefined ? undefined : raw.slice(0, at).map((segment) => `/${segment}`).join('');
+};
+
 export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
   if (preserveArrays && Array.isArray(input)) {
     return input.map((v) => toDotNotation(v, preserveArrays));

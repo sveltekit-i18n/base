@@ -670,6 +670,12 @@ export const config = {
 };
 ```
 
+The [SvelteKit](#sveltekit) wiring warns once, on the server, when a prefix
+it cannot account for stands in front of the route SvelteKit matched, and
+names it. The check is a heuristic: it sees no param matchers, so an optional
+param in the first segment hides a prefix, and it does not run in an app
+without a server.
+
 ---
 
 ### `translations`

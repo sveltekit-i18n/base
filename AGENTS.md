@@ -490,6 +490,9 @@ not RCE/XSS.
 - **`route` reaches `RegExp.test()` and is visitor-controlled** (`url.pathname`)
   — dev-supplied route regexes are a ReDoS surface. Don't add regex handling
   that worsens it; flag it if touched.
+  `routePrefix`, behind the `/kit` prefix warning, runs no regex on the
+  pathname, decides each segment and pattern pair once and leaves a pathname
+  of more than 64 segments alone.
 
 ## 12. Comments & language
 

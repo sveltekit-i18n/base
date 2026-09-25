@@ -83,7 +83,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     );
   };
 
-  const server = serverHalf({ create, negotiate, basePath: config.basePath });
+  const server = serverHalf({ create, negotiate, locales, basePath: config.basePath });
 
   // Browser only: the tab's instance, the server's answer at the last commit,
   // and the locale that commit is switching to with the one it switches from,
