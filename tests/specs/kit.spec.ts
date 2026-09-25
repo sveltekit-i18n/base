@@ -20,6 +20,7 @@ const valueParser = { parse: (text: any, _params: any, _locale: any, key: string
 const setup = (extra: Record<string, any> = {}, options: Kit.Options = {}) => {
   const calls: string[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
 
   const loader = (locale: string, namespace: string, routes?: string[]) => ({
     locale,
@@ -34,20 +35,25 @@ const setup = (extra: Record<string, any> = {}, options: Kit.Options = {}) => {
 
   const config = {
     parser: valueParser,
-    log: { level: 'error' as const, logger: { error: (message: string) => { errors.push(message); }, warn: () => {}, debug: () => {} } },
+    log: {
+      level: 'warn' as const,
+      logger: { error: (message: string) => { errors.push(message); }, warn: (message: string) => { warnings.push(message); }, debug: () => {} },
+    },
     loaders: [loader('en', 'common'), loader('cs', 'common'), loader('en', 'about', ['/about']), loader('cs', 'about', ['/about'])],
     ...extra,
   };
 
-  return { ...(defineI18n(config, options) as unknown as Kit.T<any>), calls, errors };
+  return { ...(defineI18n(config, options) as unknown as Kit.T<any>), calls, errors, warnings };
 };
 
 const url = (path: string) => new URL(`https://x.test${path}`);
 
-const serverEvent = (path: string, { lang = 'cs', isDataRequest = false, cookie = undefined as string | undefined } = {}) => ({
+type EventOptions = { lang?: string; isDataRequest?: boolean; cookie?: string; id?: string | null };
+
+const serverEvent = (path: string, { lang = 'cs', isDataRequest = false, cookie, id = path }: EventOptions = {}) => ({
   url: url(path),
   params: {},
-  route: { id: path },
+  route: { id },
   isDataRequest,
   cookies: { get: (name: string) => (name === 'lang' ? cookie : undefined) },
   request: new Request(`https://x.test${path}`, { headers: { 'accept-language': lang } }),
@@ -184,6 +190,48 @@ describe('/kit', () => {
 
       expect((await load(serverEvent('/repo/about', { isDataRequest: true }))).i18n.route).toBe('/about');
       expect((await load(serverEvent('/repo/about'))).i18n.translations?.cs).toMatchObject({ about: { greeting: 'about cs' } });
+    });
+
+    it('warns once about a prefix in front of the matched route, naming it', async () => {
+      const { load, handle, warnings } = setup();
+
+      await load(serverEvent('/repo/about', { isDataRequest: true, id: '/about' }));
+      await load(serverEvent('/repo/', { isDataRequest: true, id: '/' }));
+      await html({ handle }, serverEvent('/repo/about', { id: '/about' }));
+      expect(warnings).toEqual(['[i18n]: \'/repo\' precedes the route SvelteKit matched. If it is kit.paths.base, set basePath: \'/repo\'.']);
+    });
+
+    it('warns from handle too, for an app without a server load', async () => {
+      const { handle, warnings } = setup();
+
+      await html({ handle }, serverEvent('/repo/about', { id: '/about' }));
+      expect(warnings).toHaveLength(1);
+    });
+
+    it('takes a language segment for a locale of that language', async () => {
+      const { load, warnings } = setup({ loaders: [{ locale: 'en-US', namespace: 'common', loader: () => Promise.resolve({}) }] });
+
+      await load(serverEvent('/en/about', { isDataRequest: true, id: '/about' }));
+      expect(warnings).toEqual([]);
+    });
+
+    it('does not warn about a locale segment, a basePath it strips, or a 404', async () => {
+      const plain = setup();
+
+      await plain.load(serverEvent('/cs/about', { isDataRequest: true, id: '/about' }));
+      await plain.load(serverEvent('/CS/about', { isDataRequest: true, id: '/about' }));
+      await plain.load(serverEvent('/en-GB/about', { isDataRequest: true, id: '/about' }));
+      await plain.load(serverEvent('/nowhere', { isDataRequest: true, id: null }));
+      await plain.load(serverEvent('/about', { isDataRequest: true, id: '/about' }));
+      expect(plain.warnings).toEqual([]);
+
+      const configured = setup({ basePath: '/repo' });
+
+      await configured.load(serverEvent('/repo/cs/about', { isDataRequest: true, id: '/about' }));
+      expect(configured.warnings).toEqual([]);
+
+      await configured.load(serverEvent('/repo/x/about', { isDataRequest: true, id: '/about' }));
+      expect(configured.warnings).toEqual(['[i18n]: \'/repo/x\' precedes the route SvelteKit matched. If it is kit.paths.base, set basePath: \'/repo/x\'.']);
     });
 
     it('builds a fresh instance on every SSR pass of the universal branch', async () => {

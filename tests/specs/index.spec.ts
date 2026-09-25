@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, matchLocale, read, resolveLoaders, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, matchLocale, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -6878,6 +6878,46 @@ describe('utils', () => {
 
     expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
     expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
+  });
+});
+
+describe('routePrefix', () => {
+  it.each([
+    ['/repo/about', '/about', '/repo'],
+    ['/about', '/about', ''],
+    ['/about/', '/about', ''],
+    ['/repo', '/', '/repo'],
+    ['/', '/', ''],
+    ['/a/b/about', '/about', '/a/b'],
+    ['/repo/blog/x', '/blog/[slug]', '/repo'],
+    ['/repo/a-1/f.json', '/(group)/a-[x]/[name].json', '/repo'],
+    ['/repo/a-/f.json', '/a-[x]/[name].json', undefined],
+    ['/repo/docs/a/b', '/docs/[...rest]', '/repo'],
+    ['/repo/docs', '/docs/[...rest]', '/repo'],
+    ['/repo/x/docs', '/[...rest]/docs', ''],
+    ['/repo/opt', '/[[lang]]/opt', ''],
+    ['/repo/caf%C3%A9', '/café', '/repo'],
+    ['/repo/%E0%A4%A', '/%E0%A4%A', '/repo'],
+    ['/x', null, undefined],
+    ['/other', '/about', undefined],
+  ])('finds the prefix of %j before %j', (pathname, routeId, expected) => {
+    expect(routePrefix(pathname, routeId)).toBe(expected);
+  });
+
+  it('decides a long pathname against many rest params in bounded time, and leaves a longer one alone', () => {
+    const pathname = '/x'.repeat(64);
+    const routeId = '/[...a]/[...b]/[...c]/[...d]/y';
+    const start = performance.now();
+
+    expect(routePrefix(pathname, routeId)).toBe(undefined);
+    // Milliseconds when each pair is decided once; seconds when it is not.
+    expect(performance.now() - start).toBeLessThan(500);
+    expect(routePrefix(`${pathname}/y`, routeId)).toBe(undefined);
+    expect(routePrefix('/x'.repeat(63) + '/y', routeId)).toBe('');
+  });
+
+  it('answers undefined for input that is not a string', () => {
+    expect(routePrefix(undefined as any, '/')).toBe(undefined);
   });
 });
 

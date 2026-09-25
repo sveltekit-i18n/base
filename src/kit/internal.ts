@@ -5,6 +5,8 @@ import type { Kit } from './types.js';
 export type Shared = {
   create: () => I18n;
   negotiate: (event: Kit.Event, ranges: string | readonly string[] | null | undefined) => string | undefined;
+  /** The locales the config serves. */
+  locales: () => string[];
   basePath: string | undefined;
 };
 
