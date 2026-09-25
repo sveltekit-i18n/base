@@ -540,7 +540,7 @@ export const serialize = (input: Array<Loader.Resolved & { data: any }>) => {
       ...acc,
       [locale]: {
         ...namespaces,
-        [namespace]: hasOwn(namespaces, namespace) ? mergeTranslations(read(namespaces, namespace), data, `${namespace}`, reportLoaderConflict) : data,
+        [namespace]: hasOwn(namespaces, namespace) ? mergeTranslations(read(namespaces, namespace), data, String(namespace), reportLoaderConflict) : data,
       },
     });
   }, {} as Translations.SerializedTranslations);
@@ -609,7 +609,7 @@ export const fetchTranslations = async (requests: LoadRequest[], route: string):
     } catch (error) {
       if (isControlFlow(error)) return { deliveries: [], controlFlow: [{ loader: resolved, signature, value: error }] };
 
-      logError(`Failed to load translation. Verify your '${locale}' > '${namespace}' Loader.`, error);
+      logError(`Failed to load translation. Verify your ${loaderName(resolved)} Loader.`, error);
 
       return { deliveries: [], controlFlow: [] };
     }
