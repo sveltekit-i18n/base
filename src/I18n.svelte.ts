@@ -47,7 +47,13 @@ type HeldConfig<P extends Parser.Params, O> = Omit<Config.T<P, O>, 'loaders'> & 
 class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, TranslationSchema = never, LocaleUnion extends string = string> {
   // -- reactive state ---------------------------------------------------------
 
-  #config = $state<HeldConfig<ParserParams, ParserOutput> | undefined>(undefined);
+  /**
+   * Raw, as are the tables: each is replaced whole, never changed in place,
+   * and deep state would hand back proxies of what it holds in the browser —
+   * loaders no key of `#deliveries` or the records matches, and tables a
+   * structured clone rejects.
+   */
+  #config = $state.raw<HeldConfig<ParserParams, ParserOutput> | undefined>(undefined);
 
   /** The ACTIVE locale — advances only after its translations resolved. */
   #locale = $state<Config.Locale | undefined>(undefined);
@@ -61,9 +67,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   #route = $state<string | undefined>(undefined);
 
-  #rawTranslations = $state<Translations.SerializedTranslations>({});
+  #rawTranslations = $state.raw<Translations.SerializedTranslations>({});
 
-  #translations = $state<Translations.SerializedTranslations>({});
+  #translations = $state.raw<Translations.SerializedTranslations>({});
 
   /** Replaced immutably on every change so `loading` recomputes. */
   #pending = $state<ReadonlySet<Promise<void>>>(new Set());

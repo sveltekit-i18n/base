@@ -1040,6 +1040,23 @@ describe('i18n instance', () => {
       loader: ({ params }: Loader.Props) => new Promise<Record<string, string>>((resolve) => { resolvers[params.id] = () => resolve({ id: params.id }); }),
     });
 
+    it('hands a custom `preprocess` plain data when new params replace what a loader delivered', async () => {
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        preprocess: (input) => toDotNotation(structuredClone(input)) ?? {},
+        loaders: [
+          { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+          { namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: async ({ params }: Loader.Props) => ({ id: params.id }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.setRoute('/item/2');
+
+      expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
+    });
+
     it('drops an older load for other params once the route returned to the params it holds', async () => {
       const resolvers: Record<string, () => void> = {};
       const instance = new i18n({ parser, log, loaders: [itemLoader(resolvers)] });
@@ -5226,6 +5243,21 @@ describe('i18n snapshot', () => {
     { namespace: 'about', locale: 'en', routes: ['/about'], loader: async () => { calls.about = (calls.about ?? 0) + 1; return { title: 'About' }; } },
     { namespace: 'common', locale: 'cs', loader: async () => { calls.cs = (calls.cs ?? 0) + 1; return { greeting: 'Ahoj' }; } },
   ];
+
+  it('hands back plain data, which a structured clone takes', async () => {
+    const instance = new i18n({
+      parser,
+      preprocess: 'preserveArrays',
+      loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ list: ['a', 'b'], nested: { key: 'value' } }) }],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(() => structuredClone(instance.snapshot())).not.toThrow();
+    expect(() => structuredClone(instance.snapshot({ records: true }))).not.toThrow();
+    expect(() => structuredClone(instance.translations)).not.toThrow();
+    expect(() => structuredClone(instance.rawTranslations)).not.toThrow();
+  });
 
   it('returns nothing before anything loaded', () => {
     const instance = new i18n({ parser: valueParser, log, loaders: countingLoaders({}) });
