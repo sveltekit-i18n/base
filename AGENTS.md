@@ -104,7 +104,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   gives the ACTIVE locale; assigning it is a fire-and-forget `setLocale()`.
   Never surface a locale whose translations have not resolved, and never let a
   superseded load overwrite the most recently requested locale when loads
-  resolve out of order.
+  resolve out of order. A request for a locale nothing serves is no request:
+  once a locale is known, it writes neither the requested locale nor the route
+  (`#unserved`).
 - **Loaders are lazy and run once per freshness window and route params.** A
   loader fires only when its `locale` matches and its `routes` match the
   current route (or it has no `routes`). A load record names the loader that

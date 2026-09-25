@@ -1364,7 +1364,8 @@ to write.
 **Type:** `(locale: string, route?: string, options?: { activate?: boolean }) => Promise<void>`
 
 Loads translations for a locale and route, and activates the locale once they
-resolved.
+resolved. A locale nothing serves resolves without changing anything, the
+route included, as it does for [`setLocale()`](#setlocalelocale).
 
 ```javascript
 // +layout.js
@@ -1456,8 +1457,10 @@ async function openEditor() {
 **Type:** `(locale?: string) => Promise<void>`
 
 Requests a locale. If a route is already set the load starts immediately;
-otherwise it fires when the route arrives. An unknown locale (no loader, no
-`fallbackLocale` match) resolves without changing anything.
+otherwise it fires when the route arrives. A locale nothing serves (no loader,
+no translations, no `fallbackLocale` match) resolves without changing anything;
+until the instance knows a locale — before a config is loaded — every request
+is kept, for the config to serve.
 
 ---
 

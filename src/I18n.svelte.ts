@@ -249,7 +249,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // -- loading ----------------------------------------------------------------
 
   setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
-    if (!locale || this.#inert('setLocale')) return Promise.resolve();
+    if (!locale || this.#inert('setLocale') || this.#unserved(locale)) return Promise.resolve();
 
     if (locale !== this.#requestedLocale) {
       logger.debug(`Setting '${locale}' locale.`);
@@ -290,7 +290,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     route = this.#route ?? '',
     { activate = true }: { activate?: boolean } = {},
   ): Promise<void> => {
-    if (!locale || this.#inert('loadTranslations')) return Promise.resolve();
+    if (!locale || this.#inert('loadTranslations') || this.#unserved(locale)) return Promise.resolve();
 
     if (activate) {
       this.#requestedLocale = locale;
@@ -828,6 +828,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     // The fallback is held sanitized.
     return fallbackLocale && all.includes(fallbackLocale) ? fallbackLocale : undefined;
+  }
+
+  /**
+   * Whether nothing serves `locale` — no loader, no translations and no
+   * `fallbackLocale` — so a request for it changes nothing. Until a locale is
+   * known, any request is kept: a config loaded later may serve it.
+   */
+  #unserved(locale: Config.Locale): boolean {
+    if (!this.locales.length || this.#resolveLocale(locale) !== undefined) return false;
+
+    logger.debug(`Ignoring '${locale}' locale — nothing serves it.`);
+
+    return true;
   }
 
   #cacheValue(): number {

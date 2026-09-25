@@ -101,6 +101,59 @@ describe('i18n instance', () => {
     expect(instance.loading).toBe(false);
     expect(instance.locale).toBe(undefined);
   });
+  it.each([
+    ['calls `setLocale()`', (instance: I18n) => instance.setLocale('xx')],
+    ['assigns `locale`', (instance: I18n) => { instance.locale = 'xx'; return Promise.resolve(); }],
+    ['calls `loadTranslations()`', (instance: I18n) => instance.loadTranslations('xx', '/about')],
+  ])('keeps the request as it was when it %s for a locale nothing serves', async (_, call) => {
+    const about = vi.fn(async () => ({ title: 'About' }));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'about', locale: 'en', routes: ['/about'], loader: about },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    await call(instance);
+
+    expect(instance.snapshot({ records: true }).route).toBe('/');
+
+    await instance.setRoute('/about');
+
+    expect(about).toHaveBeenCalledTimes(1);
+    expect(instance.locale).toBe('en');
+  });
+  it('keeps the request as it was when a reconfiguration names an `initLocale` nothing serves', async () => {
+    const about = vi.fn(async () => ({ title: 'About' }));
+    const config = {
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'about', locale: 'en', routes: ['/about'], loader: about },
+      ],
+    };
+    const instance = new i18n(config);
+
+    await instance.loadTranslations('en', '/');
+    await instance.loadConfig({ ...config, initLocale: 'xx' });
+    await instance.setRoute('/about');
+
+    expect(about).toHaveBeenCalledTimes(1);
+    expect(instance.locale).toBe('en');
+  });
+  it('keeps a locale requested before a config is loaded', async () => {
+    const instance = new i18n();
+
+    void instance.setLocale('en');
+    await instance.loadConfig({ parser, log, loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }] });
+    await instance.setRoute('/');
+
+    expect(instance.locale).toBe('en');
+  });
   it('assigning `locale` does not load until a route is set', async () => {
     const instance = new i18n({ loaders, parser, log });
 
@@ -1544,6 +1597,31 @@ describe('i18n loading concurrency', () => {
     await Promise.all([first, second]);
 
     expect(instance.locale).toBe('en');
+  });
+
+  it('does not let a request for a locale nothing serves supersede the one before it', async () => {
+    const gates: Record<string, () => void> = {};
+    const blockUntilOpened = (locale: string) => new Promise<void>((resolve) => { gates[locale] = resolve; });
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'de', loader: async () => { await blockUntilOpened('de'); return { greeting: 'Hallo' }; } },
+        { namespace: 'common', locale: 'fr', loader: async () => { await blockUntilOpened('fr'); return { greeting: 'Salut' }; } },
+      ],
+    });
+
+    await instance.setRoute('/');
+    const earlier = instance.setLocale('de');
+    const later = instance.setLocale('fr');
+    await instance.setLocale('xx');
+
+    gates.fr();
+    await later;
+    gates.de();
+    await earlier;
+
+    expect(instance.locale).toBe('fr');
   });
 
   it('does not mark a loader as loaded because of a similarly named sibling key', async () => {
