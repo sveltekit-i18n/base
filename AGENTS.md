@@ -34,7 +34,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
 | Build | `svelte-package` → `dist/` (per-file ESM + `.d.ts`; rune modules ship UNCOMPILED) |
-| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node` |
+| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts`), environment `node`; every suite runs twice, the rune modules compiled for the server and for the client (which also resolves `svelte` with the `browser` condition, so effects run) |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
 | CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg |
@@ -67,12 +67,14 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
-| `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs (see the rolldown filter workaround note inside) |
+| `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile (see the rolldown filter workaround note inside) |
 
 ## Architecture you must respect
 
 - **Runes-based core.** All state lives as `$state`/`$derived` class fields in
-  `src/I18n.svelte.ts` — a `.svelte.ts` module compiled by the CONSUMER's
+  `src/I18n.svelte.ts` (the config and both tables as `$state.raw`: each is
+  replaced whole, and deep state would hand proxies to loaders, `preprocess`
+  and `snapshot()` in the browser) — a `.svelte.ts` module compiled by the CONSUMER's
   bundler, not at publish time. The public surface is one reactive instance:
   properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
   `rawTranslations`), reactive functions (`t`, `l`), promise-returning

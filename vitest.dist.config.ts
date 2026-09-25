@@ -1,14 +1,9 @@
-import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 
+import { compiled } from './vitest.config.js';
+
 export default defineConfig({
-  plugins: [
-    svelte(),
-    // See vitest.config.ts — same rolldown-vite filter workaround.
-    { name: 'force-js-plugin-pipeline', transform() {} },
-  ],
   test: {
-    environment: 'node',
-    include: ['tests/specs/dist.spec.ts'],
+    projects: compiled({ include: ['tests/specs/dist.spec.ts'] }),
   },
 });
