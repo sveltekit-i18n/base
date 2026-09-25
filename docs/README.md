@@ -161,7 +161,7 @@ loaders: [
 
 Async function that returns translation data. It receives the load context —
 the sanitized `locale` and the `namespace` this run fetches translations for,
-the `route` the load was triggered for, and the `params` its
+the `route` the load was triggered for (without [`basePath`](#basepath)), and the `params` its
 [`routes`](#route-params) captured (`{}` when they capture none). Loaders that
 don't need the context can simply take no parameters. A loader must not
 await a load of the same instance — `setLocale()`, `loadNamespace()` and the
@@ -382,7 +382,7 @@ use the `route` argument for diagnostics:
 
 **Type:** `readonly (string | RegExp | { test: (route: string) => boolean })[]`
 
-Array of route patterns. Loader will only execute if current route matches one of these patterns.
+Array of route patterns. Loader will only execute if current route matches one of these patterns. The route is matched without [`basePath`](#basepath).
 
 **Exact string match:**
 
@@ -623,6 +623,49 @@ const config = {
       },
     },
   ],
+};
+```
+
+---
+
+### `basePath`
+
+**Type:** `string` (optional)
+
+The path the app is served under — SvelteKit's `kit.paths.base`, spelled as it
+appears in `url.pathname`. The URL of every page carries it (`/repo/about` on
+GitHub Pages), while loader [`routes`](#routes-optional) name the app's own
+paths (`/about`), so without it a route-scoped loader never matches.
+
+Every route handed in — to [`setRoute()`](#setrouteroute) and
+[`loadTranslations()`](#loadtranslationslocale-route-options) — loses the base
+path on the way in, on a segment boundary only: under `/repo`, `/repo/about` is
+`/about` and `/repo` is `/`, while `/repository` and a route that does not start
+with it pass through unchanged. The stored route, the `route` a loader receives
+and the [snapshot](#snapshotoptions)'s route never carry it, and
+[`hydrate()`](#hydrateenvelope) takes the snapshot's route as it is. A route
+stored before the config that sets `basePath` keeps it, so after a
+[`loadConfig()`](#loadconfigconfig) that adds one, hand the route in again.
+
+Set both from one environment variable. Define it in `.env` even when it is
+empty (`PUBLIC_BASE_PATH=`), since `$env/static/public` exports only the
+variables it finds, and set a non-empty value in the environment of the build
+(the shell or the CI job), which is what `svelte.config.js` reads:
+
+```javascript
+// svelte.config.js
+export default {
+  kit: { paths: { base: process.env.PUBLIC_BASE_PATH ?? '' } },
+};
+```
+
+```javascript
+// src/lib/i18n.js
+import { PUBLIC_BASE_PATH } from '$env/static/public';
+
+export const config = {
+  basePath: PUBLIC_BASE_PATH,
+  loaders: [/* ... */],
 };
 ```
 
@@ -1527,8 +1570,8 @@ to write.
 
 **Type:** `(locale: string, route?: string, options?: { activate?: boolean }) => Promise<void>`
 
-Loads translations for a locale and route, and activates the locale once they
-resolved. A locale nothing serves resolves without changing anything, the
+Loads translations for a locale and route (without [`basePath`](#basepath)),
+and activates the locale once they resolved. A locale nothing serves resolves without changing anything, the
 route included, as it does for [`setLocale()`](#setlocalelocale).
 
 ```javascript
@@ -1666,8 +1709,8 @@ failed came in the meantime ([see `loader`](#loader-required)).
 
 **Type:** `(route: string) => Promise<void>`
 
-Updates the current route and loads route-scoped translations for the
-requested locale, if one is known. A loader's `redirect()` or `error()` below
+Updates the current route, without [`basePath`](#basepath), and loads
+route-scoped translations for the requested locale, if one is known. A loader's `redirect()` or `error()` below
 500 rejects the call and undoes it, as it does
 [`setLocale()`](#setlocalelocale)'s.
 

@@ -166,6 +166,22 @@ export namespace Config {
      */
     schema?: S;
     /**
+     * The path the app is served under – SvelteKit's `kit.paths.base`, spelled
+     * as it appears in `url.pathname`. Every route handed in (`setRoute()`,
+     * `loadTranslations()`) loses it on the way in, on a segment boundary only:
+     * under `/repo`, `/repo/about` is `/about` and `/repo` is `/`, while
+     * `/repository` and a route without it pass through. So loader `routes`,
+     * the `route` a loader receives and the snapshot's route never carry it.
+     *
+     * @example
+     * // .env: PUBLIC_BASE_PATH= (defined even when empty; the build's environment sets it)
+     * // svelte.config.js: kit: { paths: { base: process.env.PUBLIC_BASE_PATH ?? '' } }
+     * import { PUBLIC_BASE_PATH } from '$env/static/public';
+     *
+     * const config = { basePath: PUBLIC_BASE_PATH, loaders };
+     */
+    basePath?: string;
+    /**
      * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next load trigger runs its loaders again. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS.
      *
      * @default Number.POSITIVE_INFINITY
@@ -265,7 +281,7 @@ export namespace Loader {
 
   /**
    * Anything with a `test` method can act as a route matcher. It receives the
-   * bare route path (e.g. `/products/123`), so a matcher built around a full
+   * bare route path (e.g. `/products/123`) without `config.basePath`, so a matcher built around a full
    * URL has to be wrapped in a predicate that supplies the origin itself.
    */
   export type RouteMatcher = {
@@ -289,7 +305,7 @@ export namespace Loader {
      */
     namespace: Key;
     /**
-     * Route the load was triggered for.
+     * Route the load was triggered for, without `config.basePath`.
      */
     route: string;
     /**
@@ -321,7 +337,7 @@ export namespace Loader {
     */
     loader: T;
     /**
-    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once per set of params, unless the loader sets `cache: false`). Leave this `undefined` in case you want to load this module with any route (useful for common translations).
+    * Define routes this loader should be triggered for. You can use Regular expressions or any object with a `test` method too. For example `[/\/.ome/]` will be triggered for `/home` and `/rome` route as well (but still only once per set of params, unless the loader sets `cache: false`). The routes are matched without `config.basePath`. Leave this `undefined` in case you want to load this module with any route (useful for common translations).
     *
     * Named capture groups in a route `RegExp` are load parameters: their matches reach the loader as `Props.params`, and the loader runs again when they change, its data replacing what it delivered for the previous ones. Use a non-capturing group (`(?:...)`) where you only need grouping.
     */
@@ -654,7 +670,7 @@ export namespace Snapshot {
     records?: LoadRecord[];
     /** The active locale. */
     locale?: string;
-    /** The current route. */
+    /** The current route, without `config.basePath`. */
     route?: string;
   };
 }

@@ -141,7 +141,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   nor the route (`#unserved`).
 - **Loaders are lazy and run once per freshness window and route params.** A
   loader fires only when its `locale` matches and its `routes` match the
-  current route (or it has no `routes`). A load record names the loader that
+  current route (or it has no `routes`). A route arrives without
+  `config.basePath`: `setRoute` and `loadTranslations` strip it once, on the way
+  in (`withoutBasePath`, on a segment boundary), and nothing downstream strips
+  again — not `hydrate`, the undo, `#resume`, `loadNamespace` or `loadConfig` —
+  since stripping twice is not a no-op (`/repo/repo/x`). A load record names the loader that
   DELIVERED, never the namespace its data landed in: `#loaderRecords` maps the
   resolved descriptor to the signature of the params its routes captured, and
   a loader that threw records nothing. A plain hand-off (`hydrate()` without

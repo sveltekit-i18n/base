@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 
-import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique } from './utils.js';
+import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
 import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -315,9 +315,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return this.#stand(call, this.#route !== undefined ? this.#load(locale, this.#route, call) : Promise.resolve());
   });
 
-  setRoute = (route: string): Promise<void> => untrack(() => {
+  setRoute = (input: string): Promise<void> => untrack(() => {
     if (this.#inert('setRoute')) return Promise.resolve();
 
+    const route = withoutBasePath(input, this.#config?.basePath);
     const call = this.#ask();
 
     if (route !== this.#route) {
@@ -344,7 +345,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   ): Promise<void> => untrack(() => {
     if (!locale || this.#inert('loadTranslations') || this.#unserved(locale)) return Promise.resolve();
 
-    const target = route ?? this.#route ?? '';
+    const target = route === undefined ? this.#route ?? '' : withoutBasePath(route, this.#config?.basePath);
 
     if (!activate) return this.#load(locale, target);
 
