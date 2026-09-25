@@ -3354,6 +3354,35 @@ describe('i18n loaders that throw', () => {
       expect(runs).toBe(1);
       expect(instance.rawTranslations.en).toEqual({ seed: 'Seed' });
     });
+
+    it('runs once when it calls `addTranslations()`', () => {
+      const instance = new i18n({ parser });
+      let runs = 0;
+
+      const stop = effect(() => {
+        runs += 1;
+        instance.addTranslations({ en: { seed: 'Seed' } });
+      });
+      stop();
+
+      expect(runs).toBe(1);
+      expect(instance.rawTranslations.en).toEqual({ seed: 'Seed' });
+    });
+
+    it('runs once when it calls `hydrate()`', () => {
+      const instance = new i18n({ parser, loaders: [common] });
+      let runs = 0;
+
+      const stop = effect(() => {
+        runs += 1;
+        instance.hydrate({ translations: { en: { common: { greeting: 'Hello' } } }, locale: 'en', route: '/' });
+      });
+      stop();
+
+      expect(runs).toBe(1);
+      expect(instance.locale).toBe('en');
+      expect(instance.rawTranslations.en).toEqual({ common: { greeting: 'Hello' } });
+    });
   });
 
   it('rejects a load resumed after an invalidation as any other, reported once', async () => {

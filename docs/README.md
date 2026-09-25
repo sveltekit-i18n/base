@@ -1363,9 +1363,11 @@ load-triggering methods return the promise of the **matching** load —
 concurrent duplicate triggers that select the same loaders for the same locale
 join the load already in flight (and receive its promise) instead of fetching
 twice, whichever route they were called from. Those methods,
-[`loadConfig()`](#loadconfigconfig) and assigning [`locale`](#locale) track
-none of the state they read, so an `$effect` that
-calls one runs again only for what the effect itself reads.
+[`loadConfig()`](#loadconfigconfig),
+[`addTranslations()`](#addtranslationstranslations),
+[`hydrate()`](#hydrateenvelope) and assigning [`locale`](#locale) track none
+of the state they read, so an `$effect` that calls one runs again only for what
+the effect itself reads.
 
 ```javascript
 export const i18n = new I18n(config);
