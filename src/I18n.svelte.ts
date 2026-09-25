@@ -1,5 +1,7 @@
-import { capturesParams, fetchTranslations, hasOwn, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, toDotNotation, translate, unique } from './utils.js';
-import type { Delivery, LoadRequest } from './utils.js';
+import { untrack } from 'svelte';
+
+import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, toDotNotation, translate, unique } from './utils.js';
+import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
 import type { Config, Extension, Loader, Parser, Schema, Snapshot, Translations } from './types.js';
@@ -8,12 +10,26 @@ const defaultCache = Number.POSITIVE_INFINITY;
 
 type NamespaceRecords = Translations.LocaleIndexed<Loader.Key[]>;
 
+/**
+ * An activating call: what it replaced — the requested locale, the route and
+ * the params its matching loaders were wanted for — to put back should it
+ * fail, and whether it did.
+ */
+type Call = {
+  replaced: {
+    requestedLocale: Config.Locale | undefined;
+    route: string | undefined;
+    wanted: Map<Loader.Resolved, string | undefined>;
+  };
+  failed: boolean;
+};
+
 type InflightLoad = {
   key: string;
   promise: Promise<void>;
-  activate: boolean;
   loaders: Loader.Resolved[];
   severed: Set<Loader.Resolved>;
+  calls: Call[];
 };
 
 /** A top-level key holding part of `namespace` — the namespace itself or a key flattened out of it. */
@@ -33,7 +49,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /** The ACTIVE locale — advances only after its translations resolved. */
   #locale = $state<Config.Locale | undefined>(undefined);
 
-  /** The locale most recently asked for; loads fire once a route exists too. */
+  /**
+   * The locale the next trigger loads: the one most recently asked for, unless
+   * control flow failed that call and put back what it replaced. Loads fire
+   * once a route exists too.
+   */
   #requestedLocale = $state<Config.Locale | undefined>(undefined);
 
   #route = $state<string | undefined>(undefined);
@@ -69,7 +89,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   #externalTranslations: Translations.SerializedTranslations = {};
 
-  // The params signature the latest activating trigger asked each loader for.
+  // The params signature the next trigger asks each loader for: the one the
+  // most recent call asked for, unless a failed call put an earlier one's back.
   // Loads settle out of order, and a delivery for params the route no longer
   // asks for must not replace what it displays; a warm load asks for nothing.
   #wanted = new Map<Loader.Resolved, string>();
@@ -89,11 +110,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * Loads in flight, each under the key of what its trigger selected; a
    * trigger with the same key shares the promise of one that delivers all it
-   * has to fetch. `activate` is set by the first activating trigger, so a warm
-   * load joined by one activates when it settles. `severed` holds the loaders
-   * an invalidation cut off while the load was in flight.
+   * has to fetch. `calls` holds the activating calls that share it, so a
+   * warm load joined by one activates when it settles, or fails them as an
+   * activating load does. `severed` holds the loaders an invalidation cut off
+   * while the load was in flight.
    */
   #inflight = new Set<InflightLoad>();
+
+  /**
+   * The activating calls since the last one whose load resolved without
+   * failing, oldest first. A failed call is undone while it is the last, so a
+   * call that came later and has not failed keeps what it asked for.
+   */
+  #calls: Call[] = [];
 
   #destroyed = false;
 
@@ -112,7 +141,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * The active locale. Reading it is reactive; assigning it is a shorthand for
    * a fire-and-forget `setLocale()` — the value therefore updates once the
-   * locale's translations resolved, not synchronously on assignment.
+   * locale's translations resolved, not synchronously on assignment. It does
+   * not advance when a loader throws SvelteKit's `redirect()` or an `error()`
+   * below 500, which an assignment only logs.
    */
   get locale(): Config.LocaleInput<LocaleUnion> | undefined {
     return this.#locale;
@@ -179,11 +210,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   // -- configuration ----------------------------------------------------------
 
-  /** Applies a config. The public entry is `loadConfig`. */
-  async #configLoader(config: Config.T<ParserParams, ParserOutput>) {
+  /** Applies a config and returns the `initLocale` load. The public entry is `loadConfig`. */
+  #configLoader(config: Config.T<ParserParams, ParserOutput>): Promise<void> {
     if (!config) {
       logger.error('No config provided!');
-      return;
+      return Promise.resolve();
     }
 
     // `extensions` is a construction-time directive, not configuration state —
@@ -228,28 +259,46 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#handOnDeliveries(loaders);
 
     if (translations) this.addTranslations(translations);
-    if (sanitizedInitLocale) await this.loadTranslations(initLocale!);
+
+    return sanitizedInitLocale ? this.loadTranslations(initLocale!) : Promise.resolve();
   }
 
   /**
-   * Public entry for (re)configuration. The failure is reported here and the
-   * promise marked handled, so a fire-and-forget call cannot become an
-   * unhandled rejection; an awaiting caller still receives it.
+   * Public entry for (re)configuration. It returns the promise of the
+   * `initLocale` load, which reports its own failure; a config that fails to
+   * apply is reported here. Either way the promise is marked handled, so a
+   * fire-and-forget call cannot become an unhandled rejection; an awaiting
+   * caller still receives it.
    */
-  loadConfig = (config: Config.T<ParserParams, ParserOutput>) => {
+  loadConfig = (config: Config.T<ParserParams, ParserOutput>): Promise<void> => untrack(() => {
     if (this.#inert('loadConfig')) return Promise.resolve();
 
-    const promise = this.#configLoader(config);
+    // Not async: the `initLocale` load's own promise is returned as it is, and
+    // a config that throws is caught here instead of escaping the constructor.
+    try {
+      return this.#configLoader(config);
+    } catch (error) {
+      logError('Failed to load the i18n config.', error);
 
-    promise.catch((error) => logError('Failed to load the i18n config.', error));
+      // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- passed on as thrown
+      const promise = Promise.reject(error);
+      promise.catch(() => undefined);
 
-    return promise;
-  };
+      return promise;
+    }
+  });
 
   // -- loading ----------------------------------------------------------------
 
-  setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
+  // The loading calls — these, `loadNamespace()` and `loadConfig()` — read
+  // the state they write, untracked: called from an effect, they must not make
+  // it depend on that state, or the effect runs them again whenever a later
+  // call, a load or an undo changes it.
+
+  setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => untrack(() => {
     if (!locale || this.#inert('setLocale') || this.#unserved(locale)) return Promise.resolve();
+
+    const call = this.#ask();
 
     if (locale !== this.#requestedLocale) {
       logger.debug(`Setting '${locale}' locale.`);
@@ -259,13 +308,13 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     // Delegated even for a repeated value — the caller awaits "this locale is
     // loaded", which may mean joining a load already in flight.
-    if (this.#route !== undefined) return this.#load(locale, this.#route);
+    return this.#stand(call, this.#route !== undefined ? this.#load(locale, this.#route, call) : Promise.resolve());
+  });
 
-    return Promise.resolve();
-  };
-
-  setRoute = (route: string): Promise<void> => {
+  setRoute = (route: string): Promise<void> => untrack(() => {
     if (this.#inert('setRoute')) return Promise.resolve();
+
+    const call = this.#ask();
 
     if (route !== this.#route) {
       logger.debug(`Setting '${route}' route.`);
@@ -273,32 +322,35 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       this.#route = route;
     }
 
-    if (this.#requestedLocale !== undefined) return this.#load(this.#requestedLocale, route);
-
-    return Promise.resolve();
-  };
+    return this.#stand(call, this.#requestedLocale !== undefined ? this.#load(this.#requestedLocale, route, call) : Promise.resolve());
+  });
 
   /**
    * `{ activate: false }` only fills the tables: it leaves the requested
    * locale, the route and `locale` untouched and does not count towards
    * `loading` — what is rendered does not change: data of a loader whose route
    * params differ from the ones the current route asks for is discarded. It
-   * leaves `cache` expiry to the next activating trigger.
+   * leaves `cache` expiry to the next activating trigger. A loader's
+   * `redirect()` or `error()` below 500 rejects it all the same.
    */
   loadTranslations = (
     locale: Config.LocaleInput<LocaleUnion>,
-    route = this.#route ?? '',
+    route?: string,
     { activate = true }: { activate?: boolean } = {},
-  ): Promise<void> => {
+  ): Promise<void> => untrack(() => {
     if (!locale || this.#inert('loadTranslations') || this.#unserved(locale)) return Promise.resolve();
 
-    if (activate) {
-      this.#requestedLocale = locale;
-      this.#route = route;
-    }
+    const target = route ?? this.#route ?? '';
 
-    return this.#load(locale, route, activate);
-  };
+    if (!activate) return this.#load(locale, target);
+
+    const call = this.#ask();
+
+    this.#requestedLocale = locale;
+    this.#route = target;
+
+    return this.#stand(call, this.#load(locale, target, call));
+  });
 
   /**
    * Loads one namespace for the active locale (or `locale`), whatever the
@@ -307,27 +359,29 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * changes neither the locale nor `loading`, and it leaves `cache` expiry to
    * the next activating trigger. It honours the load records, so calling it
    * on every interaction fetches once — a loader with `cache: false` runs each
-   * time on its routes — and what it loads stays loaded across routes.
+   * time on its routes — and what it loads stays loaded across routes. A
+   * loader's `redirect()` or `error()` below 500 rejects it.
    */
-  loadNamespace = (namespace: Loader.Key, locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => {
+  loadNamespace = (namespace: Loader.Key, locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => untrack(() => {
     if (this.#inert('loadNamespace')) return Promise.resolve();
 
     const target = locale ?? this.#locale;
 
     if (!target) return Promise.resolve();
 
-    return this.#load(target, this.#route ?? '', false, namespace);
-  };
+    return this.#load(target, this.#route ?? '', undefined, namespace);
+  });
 
   /**
    * Marks loaded translations stale — for one locale or all of them, and for
    * one namespace or all of them. Loaders run again on the NEXT load trigger;
    * the call itself starts no load and keeps the currently displayed
    * translations in place. A loader still in flight for what was invalidated
-   * is severed: its load settles, but its data is discarded — it predates the
-   * invalidation — and an activating trigger fetches it again before its locale
-   * activates. A namespace invalidation leaves the locale's `cache` window
-   * where it was.
+   * is severed: its load settles, but what it returns or throws is discarded —
+   * it predates the invalidation — and an activating trigger fetches it again
+   * before its locale activates, unless another loader of its load threw
+   * SvelteKit's control flow that still counts, which rejects the trigger. A
+   * namespace invalidation leaves the locale's `cache` window where it was.
    */
   invalidate = (locale?: Config.LocaleInput<LocaleUnion>, namespace?: Loader.Key): void => {
     if (this.#inert('invalidate')) return;
@@ -405,6 +459,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     else this.#hydratePlain(translations);
 
     this.#handOffPass = { locale, route };
+
+    // A hand-off stands: no call before it is put back.
+    this.#calls = [];
 
     if (route !== undefined) this.#route = route;
 
@@ -504,10 +561,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Detaches the instance from its loading lifecycle: in-flight loads settle
-   * with their data discarded, `loading` drops to `false`, and every further
-   * load or mutation call is ignored with a warning. Reads (`t`, `l`, `locale`,
-   * `translations`, `snapshot`) keep working, so a component still tearing down
-   * renders its last state instead of breaking. Idempotent.
+   * with whatever their loaders return or throw discarded, `loading` drops to
+   * `false`, and every further load or mutation call is ignored with a warning.
+   * Reads (`t`, `l`, `locale`, `translations`, `snapshot`) keep working, so a
+   * component still tearing down renders its last state instead of breaking.
+   * Idempotent.
    */
   destroy = (): void => {
     if (this.#destroyed) return;
@@ -541,7 +599,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Runs the loaders a locale and route select, WITHOUT applying their data.
    * The `cache` expiry is evaluated by load triggers, not here.
    */
-  async #fetch(requests: LoadRequest[], route: string): Promise<Delivery[]> {
+  async #fetch(requests: LoadRequest[], route: string): Promise<Fetched> {
     logger.debug('Fetching translations...');
 
     return fetchTranslations(requests, route);
@@ -865,7 +923,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
   }
 
-  /** Whether a later request asked for another locale than `locale`. */
+  /**
+   * Whether the locale the next trigger loads is other than `locale`: a later
+   * request asked for another, or a failed one put an earlier back.
+   */
   #superseded(locale: Config.Locale): boolean {
     const requested = this.#resolveLocale(this.#requestedLocale);
 
@@ -973,6 +1034,98 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
+   * Starts an activating call: keeps the requested locale and the route it is
+   * about to replace — with the params `#load` adds, what is put back should
+   * it fail.
+   */
+  #ask(): Call {
+    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false };
+
+    this.#calls = [...this.#calls, call];
+
+    return call;
+  }
+
+  /**
+   * Lets a call whose load resolved without failing stand, with every call
+   * before it. Dropping them only bounds the chain: a later call that has not
+   * failed keeps them from being undone either way.
+   */
+  #stand(call: Call, promise: Promise<void>): Promise<void> {
+    promise.then(() => {
+      if (!call.failed) this.#calls = this.#calls.slice(this.#calls.indexOf(call) + 1);
+    }, () => undefined);
+
+    return promise;
+  }
+
+  /**
+   * Marks the calls a load failed for, then undoes and drops failed calls from
+   * the end of the chain: a failed call behind one that has not failed stays,
+   * and stays applied, until that one fails too.
+   */
+  #fail(calls: Call[]): void {
+    calls.forEach((call) => {
+      call.failed = true;
+    });
+
+    const before = { locale: this.#requestedLocale, route: this.#route };
+
+    let undone = false;
+
+    for (let last = this.#calls.at(-1); last?.failed; last = this.#calls.at(-1)) {
+      this.#undo(last);
+      this.#calls = this.#calls.slice(0, -1);
+      undone = true;
+    }
+
+    if (!undone) return;
+
+    this.#restore();
+
+    if (before.locale !== this.#requestedLocale || before.route !== this.#route) {
+      const onRoute = this.#route ? ` on '${this.#route}' route` : '';
+
+      logger.debug(`Undoing the failed calls: the request is back to '${this.#requestedLocale}' locale${onRoute}.`);
+    }
+  }
+
+  /**
+   * Puts back what a failed call replaced. Whichever of the locale and the
+   * route was not asked for before it stands: it is all there is for the next
+   * trigger to load.
+   */
+  #undo({ replaced: { requestedLocale, route, wanted } }: Call): void {
+    if (requestedLocale !== undefined) this.#requestedLocale = requestedLocale;
+    if (route !== undefined) this.#route = route;
+
+    wanted.forEach((signature, loader) => {
+      if (signature === undefined) this.#wanted.delete(loader);
+      else this.#wanted.set(loader, signature);
+    });
+  }
+
+  /**
+   * The loaders the request an undo left in place selects: wanted for the
+   * params its route yields, and no longer recorded as loaded for others —
+   * whatever another load delivered for them meanwhile stays displayed until
+   * the next trigger fetches the params asked for.
+   */
+  #restore(): void {
+    const locale = this.#resolveLocale(this.#requestedLocale);
+
+    if (!locale || this.#route === undefined) return;
+
+    const matching = this.#matchLoaders(locale, this.#route);
+
+    this.#want(matching);
+
+    matching.forEach(({ loader, signature }) => {
+      if (this.#loaderRecords.has(loader) && this.#loaderRecords.get(loader) !== signature) this.#loaderRecords.delete(loader);
+    });
+  }
+
+  /**
    * The matching loaders a load has to run: all but those whose own record
    * holds the params the route yields now. A namespace a plain hand-off
    * delivered stands in for the record of a loader without params that has
@@ -998,10 +1151,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * they selected by route or by `namespace`. The pending entry is registered
    * synchronously, so `loading` is observable right after the triggering call;
    * a load with nothing to fetch never registers at all, so cache-served
-   * navigations do not flicker the flag. A load that does not `activate` never
-   * registers either — until an activating trigger joins it.
+   * navigations do not flicker the flag. A warm load — one without an
+   * activating `call` — never registers either, until an activating trigger
+   * joins it.
    */
-  #load(requestedLocale: Config.Locale, route: string, activate = true, namespace?: Loader.Key): Promise<void> {
+  #load(requestedLocale: Config.Locale, route: string, call?: Call, namespace?: Loader.Key): Promise<void> {
     const locale = this.#resolveLocale(requestedLocale);
 
     if (!locale) return Promise.resolve();
@@ -1011,13 +1165,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // shared in-flight load cannot be invalidated by its own duplicates. A
     // warm trigger fills the tables and leaves their freshness to the next
     // activating one.
-    if (activate) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
+    if (call) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
 
     const matching = namespace === undefined ? this.#matchLoaders(locale, route) : this.#matchNamespace(locale, namespace, route);
 
     // Recorded before the in-flight check, so a trigger joining a load, or one
     // served from the records, still decides which params the route shows.
-    if (activate) {
+    if (call) {
+      matching.forEach(({ loader }) => call.replaced.wanted.set(loader, this.#wanted.get(loader)));
       this.#want(matching);
       this.#passHandOff(locale, route);
     }
@@ -1028,26 +1183,26 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // never appears in a sanitized locale, so no two selections share a key.
     const inflightKey = [locale, ...matching.map(({ loader, signature }) => `${loaders.indexOf(loader)}:${signature}`)].join('\u0000');
 
-    return this.#loadSelection(locale, route, inflightKey, matching, activate);
+    return this.#loadSelection(locale, route, inflightKey, matching, call ? [call] : []);
   }
 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
-  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], activate: boolean): Promise<void> {
+  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[]): Promise<void> {
     const requests = this.#unloaded(selected);
 
     if (!requests.length) {
       // Nothing to fetch — the locale still becomes active (its data is
       // already present or it has no loaders).
-      if (activate) this.#activate(locale);
+      if (calls.length) this.#activate(locale);
 
       return Promise.resolve();
     }
 
     const inflight = this.#joinable(key, requests);
 
-    if (inflight) return this.#join(inflight, activate);
+    if (inflight) return this.#join(inflight, calls);
 
-    return this.#start(locale, route, key, requests, activate);
+    return this.#start(locale, route, key, requests, calls);
   }
 
   /** The load in flight under `key` that delivers every one of `requests`. */
@@ -1056,24 +1211,80 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       && requests.every(({ loader }) => loaders.includes(loader) && !severed.has(loader)));
   }
 
-  /** Joins a load in flight; an activating trigger makes it activate. */
-  #join(entry: InflightLoad, activate: boolean): Promise<void> {
-    if (activate && !entry.activate) {
-      entry.activate = true;
-      this.#pending = new Set(this.#pending).add(entry.promise);
-    }
+  /**
+   * Joins a load in flight. The activating calls that join make it activate,
+   * and fail with it when a loader of it throws control flow that was not
+   * severed.
+   */
+  #join(entry: InflightLoad, calls: Call[]): Promise<void> {
+    if (!calls.length) return entry.promise;
+
+    if (!entry.calls.length) this.#pending = new Set(this.#pending).add(entry.promise);
+
+    entry.calls = [...entry.calls, ...calls];
 
     return entry.promise;
   }
 
-  /** Whether the latest activating trigger still asks `loader` for `signature`. */
+  /** Whether the next trigger asks `loader` for `signature`, or for no params in particular. */
   #isWanted({ loader, signature }: { loader: Loader.Resolved; signature: string }): boolean {
     return (this.#wanted.get(loader) ?? signature) === signature;
   }
 
+  /** Applies the deliveries of the params the next trigger asks for. */
+  #applyWanted(deliveries: Delivery[]): void {
+    const wanted = deliveries.filter((delivery) => this.#isWanted(delivery));
+
+    if (wanted.length) this.#applyDeliveries(wanted);
+  }
+
+  /**
+   * The control flow a settled load rejects with: the first its locale's
+   * loaders threw, in `loaders` order, then the fallback locale's. What a
+   * severed loader threw predates the invalidation, and an activating load
+   * counts control flow only while it serves the request the next trigger
+   * loads — not once another locale or other params of that loader were asked
+   * for.
+   */
+  #rejection({ severed, calls }: InflightLoad, locale: Config.Locale, controlFlow: ControlFlow[]): ControlFlow | undefined {
+    const discarded = (flow: ControlFlow) => {
+      if (severed.has(flow.loader)) return 'an invalidation or destroy() severed it';
+      if (!calls.length) return undefined;
+      if (this.#superseded(locale)) return 'another locale was asked for';
+
+      return this.#isWanted(flow) ? undefined : 'other params were asked for';
+    };
+
+    const counted = controlFlow.filter((flow) => {
+      const reason = discarded(flow);
+
+      if (reason) logger.debug(`Discarding what the ${loaderName(flow.loader)} loader threw: ${reason}.`, flow.value);
+
+      return !reason;
+    });
+
+    const [first, ...rest] = [
+      ...counted.filter(({ loader }) => loader.locale === locale),
+      ...counted.filter(({ loader }) => loader.locale !== locale),
+    ];
+
+    if (!first) return undefined;
+
+    rest.forEach(({ loader, value }) => logger.debug(
+      `Discarding what the ${loaderName(loader)} loader threw: the load rejects with what the ${loaderName(first.loader)} loader threw.`,
+      value,
+    ));
+
+    return first;
+  }
+
   /** Fetches `requests` as a load in flight under `key`, and settles it. */
-  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], activate: boolean): Promise<void> {
-    const promise: Promise<void> = this.#fetch(requests, route).then((deliveries) => {
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[]): Promise<void> {
+    const onRoute = route ? ` and '${route}' route` : '';
+
+    let rejection: ControlFlow | undefined;
+
+    const settled = this.#fetch(requests, route).then(({ deliveries, controlFlow }) => {
       // Released before the load settles: a trigger arriving in between must
       // not join a load whose activation step has already run — it finds the
       // data recorded and activates at once.
@@ -1085,30 +1296,53 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // dropped bookkeeping and permanently suppress the promised refetch.
       const current = deliveries.filter(({ loader }) => !entry.severed.has(loader));
 
-      const wanted = current.filter((delivery) => this.#isWanted(delivery));
+      rejection = this.#rejection(entry, locale, controlFlow);
 
-      if (wanted.length) this.#applyDeliveries(wanted);
+      // The calls that share the load failed, whether its control flow rejects
+      // them or a later call superseded it: the locale does not advance, and
+      // what they replaced is put back unless a later call that has not failed
+      // came since.
+      if (controlFlow.some(({ loader }) => !entry.severed.has(loader))) this.#fail(entry.calls);
 
-      // A load that delivered params the route no longer asks for leaves the
-      // activation to the load of the params it asks for.
-      if (!entry.activate || wanted.length !== current.length) return undefined;
+      // With control flow, what the other loaders delivered lands as a warm
+      // load's does. Should applying it fail, that is only logged: the caller
+      // gets the control flow.
+      try {
+        this.#applyWanted(current);
+      } catch (error) {
+        if (!rejection) throw error;
 
-      if (!entry.severed.size) {
-        this.#activate(locale);
-
-        return undefined;
+        logError(`Failed to load translations for '${locale}' locale${onRoute}.`, error);
       }
 
-      return this.#resume(locale, route, key, requests.filter(({ loader }) => entry.severed.has(loader)));
+      if (rejection) throw rejection.value;
+
+      // A load of params the route no longer asks for, whatever it returned,
+      // leaves the activation to the load of the params it asks for.
+      const replaced = requests.some((request) => !this.#isWanted(request));
+
+      if (!entry.calls.length || replaced) return [];
+
+      if (!entry.severed.size) this.#activate(locale);
+
+      return requests.filter(({ loader }) => entry.severed.has(loader));
     });
 
-    const entry: InflightLoad = { key, promise, activate, loaders: requests.map(({ loader }) => loader), severed: new Set() };
+    // Reported here so a load nobody awaits is still visible. What a resume
+    // adopts is a load of its own, which reports itself.
+    settled.catch((error) => logError(rejection
+      ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
+      : `Failed to load translations for '${locale}' locale${onRoute}.`, error));
+
+    const promise = settled.then((severed) => (severed.length ? this.#resume(locale, route, key, severed, entry.calls) : undefined));
+
+    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls };
 
     this.#inflight.add(entry);
-    if (activate) this.#pending = new Set(this.#pending).add(promise);
+    if (calls.length) this.#pending = new Set(this.#pending).add(promise);
 
     const settle = () => {
-      // A rejected fetch never reached the release above.
+      // Only a `#fetch` that rejected skipped the release above.
       this.#inflight.delete(entry);
 
       if (!this.#pending.has(promise)) return;
@@ -1117,31 +1351,30 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       next.delete(promise);
       this.#pending = next;
     };
-    promise.then(settle, settle);
 
-    // Reported here so a discarded load is still visible, and marked handled so
-    // it cannot terminate the process; an awaiting caller still receives the
-    // rejection from the same promise.
-    promise.catch((error) => logError(`Failed to load translations for '${locale}' locale and '${route}' route.`, error));
+    // Also marks the load handled, so one nobody awaits cannot terminate the
+    // process; an awaiting caller still receives the rejection.
+    promise.then(settle, settle);
 
     return promise;
   }
 
   /**
    * Finishes an activating load an invalidation cut `severed` off: it fetches
-   * them again and activates once they arrive, so a trigger's promise still
-   * means its locale is loaded. It leaves the locale to the next trigger when
-   * the instance was destroyed, another locale was asked for, the config no
-   * longer has one of those loaders or a later trigger wants other params.
+   * them again, so a trigger's promise that resolves still means its locale
+   * is loaded, and control flow the refetch throws rejects it as any load's
+   * does. It leaves the locale to the next trigger when the instance was
+   * destroyed, another locale was asked for, the config no longer has one of
+   * those loaders or a later trigger wants other params.
    */
-  #resume(locale: Config.Locale, route: string, key: string, severed: LoadRequest[]): Promise<void> | undefined {
+  #resume(locale: Config.Locale, route: string, key: string, severed: LoadRequest[], calls: Call[]): Promise<void> | undefined {
     const { loaders = [] } = this.#config ?? {};
 
     if (this.#destroyed || this.#superseded(locale)) return undefined;
 
     if (severed.some((request) => !loaders.includes(request.loader) || !this.#isWanted(request))) return undefined;
 
-    return this.#loadSelection(locale, route, key, severed, true);
+    return this.#loadSelection(locale, route, key, severed, calls);
   }
 }
 

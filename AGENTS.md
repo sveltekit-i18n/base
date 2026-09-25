@@ -97,16 +97,46 @@ translation state, loading, caching, route matching, and preprocessing — but
   never evaluates `cache` expiry: it fills the tables and leaves their
   freshness to the activating triggers, which the `cache` docs promise.
   There is no loader-trigger store,
-  no promise purge, no `toPromise()`. A failed load rejects the caller's
-  promise; a discarded one is reported through the logger and never becomes an
-  unhandled rejection.
+  no promise purge, no `toPromise()`. A loader that throws fails soft: it is
+  logged and the rest of the load lands. The one exception is SvelteKit's
+  control flow — `redirect()` and `error()` below 500, told by shape
+  (`isControlFlow`: an integer `status` from 300 to 308 with a string
+  `location`, or from 400 to 499 with an object `body`, each an own property
+  of a value that is neither an `Error` of this realm nor tagged `'Error'`), so
+  nothing is imported from `@sveltejs/kit`; an
+  `HttpError` of 500 or more (what a remote `query` throws on the client
+  whenever the server failed with an `Error`) fails soft. Once every loader of the load has
+  settled, control flow rejects the load with the thrown value — the requested
+  locale's before the fallback locale's, each in `loaders` order. The locale
+  does not advance, and the ACTIVATING calls that share the load fail — as do
+  those of a load whose control flow a later call replaced. Every activating
+  call records what it replaced (the requested locale, the route and their
+  `#wanted` params) and joins `#calls`, the calls since the last one whose load
+  resolved without failing; a failed call is undone, and dropped, while it is
+  the last, so a later call that has not failed keeps what it asked for, and
+  once that one fails too, both are undone. The undo is per field: a locale or
+  a route nothing was asked for before stands, and `hydrate()` empties
+  `#calls`, so a hand-off stands. `#restore()` then wants the params the
+  restored route asks for and drops the records of other params; the restored
+  request activates once a load of it settles — its own, if still in flight,
+  or else the next trigger's. The other
+  loaders' deliveries are then applied and recorded as a warm load's are,
+  filtered by `#wanted` after the undo. Control flow is
+  discarded — like a delivery, and logged at `debug` — when an invalidation
+  severed that loader, and, for an activating load, when a later request
+  superseded its locale or wants other params from that loader; a resumed
+  refetch that throws rejects the call after the rest has landed. A failed
+  load rejects every caller that shares it and is reported through the logger
+  once, by the load itself; a load nobody awaits never becomes an unhandled
+  rejection.
 - **`locale` advances after its load — last request wins.** Reading `locale`
   gives the ACTIVE locale; assigning it is a fire-and-forget `setLocale()`.
   Never surface a locale whose translations have not resolved, and never let a
   superseded load overwrite the most recently requested locale when loads
-  resolve out of order. A request for a locale nothing serves is no request:
-  once a locale is known, it writes neither the requested locale nor the route
-  (`#unserved`).
+  resolve out of order — nor let a failed call's undo overwrite what a later
+  call that has not failed asked for. A request for a locale nothing serves is
+  no request: once a locale is known, it writes neither the requested locale
+  nor the route (`#unserved`).
 - **Loaders are lazy and run once per freshness window and route params.** A
   loader fires only when its `locale` matches and its `routes` match the
   current route (or it has no `routes`). A load record names the loader that
@@ -134,10 +164,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   A load stays in `#inflight` until it settles, so a later invalidation,
   reconfiguration or `destroy()` still reaches the rest of it. An ACTIVATING
   load then fetches its severed part again (`#resume`) and activates once it
-  arrives, so a trigger's promise keeps meaning "loaded"; it stands down when
+  arrives, so a trigger's promise keeps meaning "loaded" when it resolves (a
+  refetch that throws control flow rejects it, and control flow another of its
+  loaders threw rejects it without the refetch); it stands down when
   the instance was destroyed, another locale was requested, the config was
   replaced or a later trigger wants other params, and a warm load never
-  resumes. Neither expiry nor `invalidate` ever removes displayed translations
+  resumes. The loading calls — `setLocale`, `setRoute`, `loadTranslations`,
+  `loadNamespace` and `loadConfig` — read the state they write untracked, so
+  an `$effect` may call them. Neither expiry nor `invalidate` ever removes displayed translations
   or starts a load by itself. Don't break load-once semantics. The one opt-out
   is a loader with `cache: false`, whose source caches: it runs on every
   trigger that selects it, writes no `#loadedAt` stamp and is outside expiry.
@@ -254,8 +288,9 @@ translation state, loading, caching, route matching, and preprocessing — but
 Minimum code that solves the problem. No speculative features or abstractions.
 Validate only at boundaries (consumer config, loader output) — internal
 contracts are contracts. That said, this library deliberately **fails soft** at
-its public edges (see §11): missing config/parser, a throwing loader, or a
-prototype-named key must degrade gracefully, not crash.
+its public edges (see §11): missing config/parser, a throwing loader
+(SvelteKit's control flow aside), or a prototype-named key must degrade
+gracefully, not crash.
 
 ## 3. Surgical changes
 
@@ -401,7 +436,9 @@ not RCE/XSS.
   `serialize` and `#applyDeliveries` are plain objects and stay correct only
   while they follow this rule.
 - **Fail soft at the edges.** A single throwing loader must not wipe a whole
-  batch; a missing config/parser must not throw on `t()`/`l()`.
+  batch — SvelteKit's control flow rejects the load but keeps what the other
+  loaders delivered (see "Loads are imperative" above); a missing
+  config/parser must not throw on `t()`/`l()`.
 - **`route` reaches `RegExp.test()` and is visitor-controlled** (`url.pathname`)
   — dev-supplied route regexes are a ReDoS surface. Don't add regex handling
   that worsens it; flag it if touched.
