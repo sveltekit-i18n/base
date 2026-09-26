@@ -2258,6 +2258,12 @@ costs too much: `data-sveltekit-preload-data="false"`.
   the tab's locale.
 - **With a `reroute` hook,** loaders match the path the visitor requested, not
   the one SvelteKit rerouted to.
+- **A negotiated response varies by visitor.** The page and its `__data.json`
+  depend on `Accept-Language` and on whatever `preferredLocale` reads, and
+  `/kit` sets no `Vary` header, since it cannot know what that is. Before
+  caching such a response in a shared cache — `cache-control: public`, a CDN —
+  add `Vary` for what it depends on (`Accept-Language`, `Cookie`), or cache
+  only pages whose locale is in the URL.
 - **The `browser` condition picks the half.** The server branch is resolved
   through the package's `imports` map under the `browser` condition to a stub
   that throws. An SSR target that resolves `browser` — a worker build, an
