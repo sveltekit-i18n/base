@@ -549,8 +549,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * not replace it; and one none of whose loaders delivered here and no
    * hand-off named, whose seeded data would keep the client's loaders from
    * ever running.
-   * A literal `__proto__` key is left out too: the serializer SvelteKit hands
-   * load data to refuses an object that carries one.
+   * A literal `__proto__` key is left out too, and with records its
+   * namespace's loaders are, without them a namespace a loader serves, so the
+   * client loads it whole: the serializer SvelteKit hands load data to refuses an
+   * object that carries one. A locale
+   * named `__proto__` is left out altogether.
    *
    * `{ records: true }` returns an envelope for `hydrate()` instead: the same
    * data, the loaders that delivered it, the active locale and the route. The
@@ -573,10 +576,20 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       (namespace) => isNamespaceKey(key, namespace),
     );
 
+    // The top-level keys each locale lost a literal `__proto__` key under: a
+    // record of their namespace would suppress the part the payload lacks.
+    const stripped = new Map<Config.Locale, string[]>();
+
     const translations = locales.reduce<Translations.SerializedTranslations>((acc, locale) => {
       const data = read(this.#rawTranslations, locale);
 
       if (!data) return acc;
+
+      if (locale === '__proto__') {
+        logger.warn('Leaving the \'__proto__\' locale out of the snapshot: load data cannot carry it.');
+
+        return acc;
+      }
 
       const handable = Object.fromEntries(
         Object.entries(data).filter(([key]) => !isOmitted(locale, key)),
@@ -584,15 +597,32 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       const relevant = omitProtoKeys(handable);
 
+      let kept = relevant;
+
       if (relevant !== handable) {
         logger.warn(`Leaving a '__proto__' key of locale '${locale}' out of the snapshot: load data cannot carry it.`);
+
+        const lost = Object.keys(handable).filter((key) => !hasOwn(relevant, key) || relevant[key] !== handable[key]);
+
+        stripped.set(locale, lost);
+
+        // Plain data names the namespaces it holds, and a plain hand-off keeps
+        // their loaders from running: a namespace a loader serves goes whole
+        // instead, for the client to load. One no loader serves keeps the rest.
+        if (!withRecords) {
+          const served = loaders
+            .filter((loader) => loader.locale === locale && lost.some((key) => isNamespaceKey(key, loader.namespace)))
+            .map(({ namespace }) => namespace);
+
+          kept = Object.fromEntries(Object.entries(relevant).filter(([key]) => !served.some((namespace) => isNamespaceKey(key, namespace))));
+        }
       }
 
       // An empty entry would still stamp the locale's freshness on the client,
       // starting its `cache` window on data it never received.
-      if (!Object.keys(relevant).length) return acc;
+      if (!Object.keys(kept).length) return acc;
 
-      return { ...acc, [locale]: relevant };
+      return { ...acc, [locale]: kept };
     }, {});
 
     if (!withRecords) return translations;
@@ -603,7 +633,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       const { id, locale, namespace } = loader;
       const signature = this.#loaderRecords.get(loader);
 
-      if (id === null || signature === undefined || !omitted.has(locale) || isOmitted(locale, namespace)) return [];
+      if (id === null || signature === undefined || !omitted.has(locale) || locale === '__proto__' || isOmitted(locale, namespace)) return [];
+
+      if ((stripped.get(locale) ?? []).some((key) => isNamespaceKey(key, namespace))) return [];
 
       return [signature ? { id, signature } : { id }];
     });
