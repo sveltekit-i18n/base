@@ -117,7 +117,8 @@ with the one it is loading in its `namespace` prop.
 
 > **`key` is the deprecated spelling of this property.** A loader may still name
 > its namespace `key` — it is honored exactly as `namespace` is, and reported
-> once through the [logger](#loglevel) at `warn`. Naming both is a type error,
+> through the [logger](#loglevel) at `warn` once per loader descriptor, however
+> many instances read it. Naming both is a type error,
 > and `key` takes a single namespace only. The alias is scheduled for removal in
 > the next major.
 

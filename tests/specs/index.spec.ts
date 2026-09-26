@@ -8240,6 +8240,20 @@ describe('utils', () => {
     expect(deprecations).toHaveLength(1);
     expect(deprecations[0]?.message).toContain('nav');
   });
+  it('`resolveLoaders` warns for the deprecated name once per descriptor, however many instances read it', () => {
+    const { captured, restore } = captureLogs();
+    const loaders = [{ key: 'nav', locale: 'en', loader: async () => ({}) }];
+
+    try {
+      resolveLoaders(loaders);
+      new i18n({ parser, loaders });
+      new i18n({ parser, loaders });
+    } finally {
+      restore();
+    }
+
+    expect(captured.warn.filter(({ message }) => message.includes("uses 'key'"))).toHaveLength(1);
+  });
   it('`resolveLoaders` keeps `cache: false`, and reports and drops any other `cache`', () => {
     const { captured, restore } = captureLogs();
     const loader = async () => ({});
