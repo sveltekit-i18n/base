@@ -244,10 +244,13 @@ translation state, loading, caching, route matching, and preprocessing — but
   `hydrate()` resolves each id to a loader of its own config and stores the
   record under that reference, so the records keep one kind of key; the
   record of a `cache: false` loader also hands it off. A hydrated loader's
-  namespace becomes its delivery, so new params replace it; data no record
-  names is displayed but records no namespace, so whatever the envelope does
-  not cover loads again instead of going missing. An envelope without
-  `records` is a plain hand-off, the only writer of `#namespaceRecords`: it
+  namespace becomes its delivery, so new params replace it, while `seeds`
+  carries what was seeded into the namespace of any loader that captures
+  params, which the client displays and keeps as a seed, so it outlives the
+  delivery and survives the namespace being left out; data no record names is
+  displayed but records no namespace, so whatever the envelope does not cover
+  loads again instead of going missing. An envelope without `records` is a
+  plain hand-off, the only writer of `#namespaceRecords`: it
   records every namespace its data names and hands off the `cache: false`
   loaders of those namespaces. The plain `snapshot()` therefore leaves out a
   namespace none of whose loaders delivered and no hand-off named — its

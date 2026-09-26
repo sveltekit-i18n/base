@@ -7243,6 +7243,78 @@ describe('i18n hydrate', () => {
     expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x' });
   });
 
+  it('keeps what the server seeded into a parameterized loader\'s namespace once the params change', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    await server.loadTranslations('en', '/article/6');
+    server.addTranslations({ en: { article: { seeded: 'kept' } } });
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.seeds).toEqual({ en: { article: { seeded: 'kept' } } });
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article({})] });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/article/6');
+
+    expect(client.t('article.seeded')).toBe('kept');
+
+    await client.setRoute('/article/7');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x', 'article.seeded': 'kept' });
+  });
+
+  it('keeps what the server seeded into a parameterized namespace it leaves out', async () => {
+    const back = { id: 'back', locale: 'en', namespace: 'article', loader: async () => ({ back: 'Back' }) };
+    const server = new i18n({ parser: valueParser, log, loaders: [article({}), back] });
+
+    await server.loadTranslations('en', '/article/6');
+    server.addTranslations({ en: { article: { seeded: 'kept' } } });
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.translations).toEqual({});
+
+    const client = new i18n({ parser: valueParser, log, loaders: [article({}), back] });
+
+    client.hydrate(envelope);
+    await client.loadTranslations('en', '/article/6');
+
+    expect(client.translations.en).toEqual(server.translations.en);
+
+    await client.setRoute('/article/7');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x', 'article.back': 'Back', 'article.seeded': 'kept' });
+  });
+
+  it('carries the seeds of parameterized namespaces only', async () => {
+    const server = new i18n({
+      parser: valueParser,
+      log,
+      translations: { en: { article: { fromConfig: 'x' } } },
+      loaders: [article({}), { locale: 'en', namespace: 'common', loader: async () => ({ a: 'b' }) }],
+    });
+
+    await server.loadTranslations('en', '/article/6');
+    server.addTranslations({ en: { common: { seeded: 'c' }, other: { seeded: 'd' } } });
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.seeds).toEqual({ en: { article: { fromConfig: 'x' } } });
+
+    server.invalidate('en');
+
+    expect(server.snapshot({ records: true }).seeds).toEqual({ en: { article: { fromConfig: 'x' } } });
+
+    const flat = new i18n({ parser: valueParser, log, loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'b' }) }] });
+
+    await flat.loadTranslations('en', '/');
+    flat.addTranslations({ en: { common: { seeded: 'c' } } });
+
+    expect(flat.snapshot({ records: true })).not.toHaveProperty('seeds');
+  });
+
   it('leaves out the data of a parameterized loader it holds no record of', async () => {
     const server = new i18n({ parser: valueParser, log, loaders: [article({})] });
 

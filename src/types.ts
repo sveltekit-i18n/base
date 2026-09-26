@@ -671,6 +671,13 @@ export namespace Snapshot {
      * running, and holds one with `cache: false` back for that pass.
      */
     records?: LoadRecord[];
+    /**
+     * What was seeded into the namespace of a loader whose routes capture
+     * params – repeated where `translations` carries the namespace, and
+     * carried where the payload leaves it out, so that it outlives the
+     * delivery new params replace. Read with `records` only.
+     */
+    seeds?: Translations.SerializedTranslations;
     /** The active locale. */
     locale?: string;
     /** The current route, without `config.basePath`. */

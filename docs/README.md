@@ -1900,6 +1900,12 @@ hand-off](#server-side-rendering):
   their route matches; new params replace its data as they would after a load.
   One with [`cache: false`](#cache-optional) is held back only for the pass the
   envelope arrived with;
+- what the server seeded — with
+  [`addTranslations()`](#addtranslationstranslations), say — into the
+  namespace of a loader whose routes capture params travels apart as `seeds`:
+  it is displayed even where the payload leaves the namespace out, and it
+  outlives the data new params replace. Like any seed, it lies under what a
+  loader delivers into that namespace on the client;
 - data no record names is displayed, but keeps no loader from running — a
   loader the records do not cover loads again rather than going missing;
 - the **active locale** and the **route** are restored, so the instance is

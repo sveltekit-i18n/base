@@ -512,9 +512,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // records could keep the loaders from running.
     if (this.#inflight.size) logger.warn('Hydrating after a load started: its loaders ran regardless of the hand-off.');
 
-    const { translations = {}, records, locale, route } = envelope;
+    const { translations = {}, records, seeds = {}, locale, route } = envelope;
 
-    if (records) this.#hydrateRecords(translations, records);
+    if (records) this.#hydrateRecords(translations, records, seeds);
     else this.#hydratePlain(translations);
 
     this.#handOffPass = { locale, route };
@@ -560,7 +560,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * records name each loader, so a namespace fed by several loaders is handed
    * over too, and so is one a loader delivered for route params while its
    * record says so — not a namespace with both, whose data the client could
-   * not split between them.
+   * not split between them. What was seeded into the namespace of a loader
+   * whose routes capture params travels apart as `seeds`, so it outlives new
+   * params there, and reaches the client where the namespace is left out.
    */
   snapshot = ((options?: { records?: boolean }) => {
     const withRecords = options?.records === true;
@@ -640,9 +642,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return [signature ? { id, signature } : { id }];
     });
 
+    // Where params can change, the client takes a recorded namespace whole as
+    // its loader's delivery and loads one left out itself, so what was seeded
+    // into it travels apart: the seed has to outlive the delivery new params
+    // replace there as it does here.
+    const seeds = omitProtoKeys(this.#externalOf(loaders.filter(
+      ({ locale, routes }) => omitted.has(locale) && locale !== '__proto__' && capturesParams(routes),
+    ))) as Translations.SerializedTranslations;
+
     return {
       translations,
       records,
+      ...(Object.keys(seeds).length ? { seeds } : {}),
       ...(this.#locale === undefined ? {} : { locale: this.#locale }),
       ...(this.#route === undefined ? {} : { route: this.#route }),
     };
@@ -800,17 +811,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       [locale]: Object.fromEntries(Object.entries(read(acc, locale) ?? {}).filter(([key]) => !isNamespaceKey(key, namespace))),
     }), this.#rawTranslations);
 
-    const external = replaced.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => {
-      const data = read(this.#externalTranslations, locale) ?? {};
-
-      const own = Object.fromEntries(Object.entries(data).filter(([key]) => isNamespaceKey(key, namespace)));
-
-      if (!Object.keys(own).length) return acc;
-
-      return { ...acc, [locale]: { ...read(acc, locale), ...own } };
-    }, {});
-
-    const seeded = this.#merged({ raw, translations: this.#translations }, external);
+    const seeded = this.#merged({ raw, translations: this.#translations }, this.#externalOf(replaced));
     const merged = this.#merged(seeded, serialize([
       ...deliveries.filter(({ loader }) => !isReplaced(loader)),
       ...rebuilt,
@@ -880,10 +881,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * A recorded loader's namespace is kept as that loader's delivery, so params
    * that change later replace it; the rest is kept as data supplied without a
    * loader and, like a seed, records no namespace — the hand-off says which loaders it
-   * covers, and anything else loads again rather than going missing. A record
-   * naming no loader of this config is dropped, and its loader runs again.
+   * covers, and anything else loads again rather than going missing. `seeds`
+   * is what was seeded where params can change, displayed and kept as a seed
+   * so that it outlives a delivery. A record naming no loader of this config
+   * is dropped, and its loader runs again.
    */
-  #hydrateRecords(translations: Translations.SerializedTranslations, records: Snapshot.LoadRecord[]): void {
+  #hydrateRecords(translations: Translations.SerializedTranslations, records: Snapshot.LoadRecord[], seeds: Translations.SerializedTranslations): void {
     const { loaders = [] } = this.#config ?? {};
 
     const named = new Map(loaders.flatMap((loader) => (loader.id === null ? [] : [[loader.id, loader] as const])));
@@ -900,6 +903,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return [{ loader, signature, data: read(read(translations, loader.locale), loader.namespace) ?? {} }];
     });
 
+    // Under the data: it holds the seeds of the namespaces it carries already.
+    this.#mergeTranslations(seeds);
     this.#mergeTranslations(translations);
 
     deliveries.forEach((delivery) => {
@@ -917,6 +922,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     }, {});
 
     this.#keepExternal(external);
+    this.#keepExternal(seeds);
     this.#stampHandOff(translations);
   }
 
@@ -926,6 +932,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#loaderRecords.set(delivery.loader, delivery.signature);
 
     if (this.#parked.get(delivery.loader)?.signature === delivery.signature) this.#parked.delete(delivery.loader);
+  }
+
+  /** The data held without a loader in the namespaces of `loaders`. */
+  #externalOf(loaders: Array<Pick<Loader.Resolved, 'locale' | 'namespace'>>): Translations.SerializedTranslations {
+    return loaders.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => {
+      const data = read(this.#externalTranslations, locale) ?? {};
+
+      const own = Object.fromEntries(Object.entries(data).filter(([key]) => isNamespaceKey(key, namespace)));
+
+      if (!Object.keys(own).length) return acc;
+
+      return { ...acc, [locale]: { ...read(acc, locale), ...own } };
+    }, {});
   }
 
   /** Keeps data held without a loader, to rebuild a namespace from. */
