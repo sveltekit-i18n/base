@@ -48,10 +48,28 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
         return lang;
       };
 
+      let filled = false;
+
+      // Only the `<html>` start tag is filled: the template writes it, while
+      // the head and the body carry the app's content, where a placeholder
+      // stays as it is written.
       return Promise.resolve(resolve(event, {
-        transformPageChunk: ({ html }) => html
-          .replace('%lang%', negotiated)
-          .replace('%dir%', () => textDirection(negotiated())),
+        transformPageChunk: ({ html }) => {
+          if (filled) return html;
+
+          filled = true;
+
+          const start = html.search(/<html[\s>]/i);
+          const end = start === -1 ? -1 : html.indexOf('>', start) + 1;
+
+          if (end < 1) return html;
+
+          const tag = html.slice(start, end)
+            .replaceAll('%lang%', negotiated)
+            .replaceAll('%dir%', () => textDirection(negotiated()));
+
+          return html.slice(0, start) + tag + html.slice(end);
+        },
       }));
     },
 

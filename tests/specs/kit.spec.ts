@@ -126,6 +126,32 @@ describe('/kit', () => {
       expect(preferredLocale).toHaveBeenCalledTimes(1);
     });
 
+    it('fills the <html> start tag only, every placeholder there', async () => {
+      const template = (tag: string) => `<!doctype html><!-- %lang% -->${tag}<head><title>%lang% %dir%</title><meta content="%lang%"></head><body><p dir="%dir%">%lang%</p></body></html>`;
+
+      expect(await html(setup(), serverEvent('/'), template('<html lang="%lang%" dir="%dir%" data-x="%lang%">')))
+        .toBe(template('<html lang="cs" dir="ltr" data-x="cs">'));
+      expect(await html(setup(), serverEvent('/'), template('<HTML LANG="%lang%">'))).toBe(template('<HTML LANG="cs">'));
+      expect(await html(setup(), serverEvent('/'), template('<html>'))).toBe(template('<html>'));
+    });
+
+    it('fills the first chunk only, and leaves a page without an <html> tag alone', async () => {
+      const chunks = ['<head><title>%lang%</title></head>', '<html lang="%lang%">'];
+      const out: string[] = [];
+
+      await setup().handle({
+        event: serverEvent('/'),
+        resolve: (_event, options) => {
+          chunks.forEach((html, index) => { out.push(options?.transformPageChunk?.({ html, done: index === chunks.length - 1 }) ?? ''); });
+
+          return new Response(out.join(''));
+        },
+      });
+
+      expect(out).toEqual(chunks);
+      expect(await html(setup(), serverEvent('/'), '<htmlx lang="%lang%"><html lang="%lang%"')).toBe('<htmlx lang="%lang%"><html lang="%lang%"');
+    });
+
     it('negotiates in handle only for a chunk that asks for %lang%', async () => {
       const preferredLocale = vi.fn(() => 'en');
       const { handle } = setup({}, { preferredLocale });

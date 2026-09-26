@@ -404,7 +404,7 @@ import { defineI18n } from '@sveltekit-i18n/base/kit';
 export const { handle, load, use, get } = defineI18n(config, { preferredLocale });
 ```
 
-- `handle` – the `hooks.server.js` hook; fills `%lang%` and `%dir%` in `app.html`
+- `handle` – the `hooks.server.js` hook; fills `%lang%` and `%dir%` in `app.html`'s `<html>` tag
 - `load` – the root layout's `load`, exported from `+layout.server.js` and `+layout.js` alike: negotiates the locale, loads it on the server per request and hands it to the one instance a browser tab keeps
 - `use(() => data)` – called once in the root `+layout.svelte`; provides the instance, follows every navigation and keeps `<html lang>` and `<html dir>` in sync
 - `get()` – the instance, in any component below the root layout
