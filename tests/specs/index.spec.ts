@@ -7288,6 +7288,27 @@ describe('i18n hydrate', () => {
     expect(client.translations.en).toEqual({ 'article.title': 'Article 7', 'article.only7': 'x', 'article.back': 'Back', 'article.seeded': 'kept' });
   });
 
+  it('leaves out a parameterized namespace that lost a `__proto__` key, so no key of its params outlives them', async () => {
+    const loader = async ({ params }: Loader.Props) => (params.articleId === '6'
+      ? JSON.parse('{ "title": "Article 6", "only6": "x", "bad": { "__proto__": { "y": 1 } } }')
+      : { title: `Article ${params.articleId}` });
+
+    const config = { parser: valueParser, log, loaders: [{ id: 'article', locale: 'en', namespace: 'article', routes: [/^\/article\/(?<articleId>\d+)$/], loader }] };
+    const server = new i18n(config);
+
+    await server.loadTranslations('en', '/article/6');
+
+    expect(server.snapshot({ records: true })).toEqual({ translations: {}, records: [], locale: 'en', route: '/article/6' });
+
+    const client = new i18n(config);
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/article/6');
+    await client.setRoute('/article/7');
+
+    expect(client.translations.en).toEqual({ 'article.title': 'Article 7' });
+  });
+
   it('carries the seeds of parameterized namespaces only', async () => {
     const server = new i18n({
       parser: valueParser,
