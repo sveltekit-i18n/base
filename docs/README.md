@@ -1850,7 +1850,9 @@ What the payload leaves out:
 - **A literal `__proto__` key**, at any depth — SvelteKit serializes load data
   with `devalue`, which refuses an object carrying one, so keeping it would fail
   the render. The key is dropped with a warning; the rest of its namespace is
-  kept.
+  kept, and the loaders of that namespace stay out of the records, so the
+  client loads it whole. Without records, a namespace a loader serves is left
+  out, for the same reason. A locale named `__proto__` is left out altogether.
 
 Without records, plain data cannot say which loader delivered what, so
 `snapshot()` also leaves out:

@@ -7021,10 +7021,91 @@ describe('i18n snapshot', () => {
     await instance.loadTranslations('en', '/');
     instance.addTranslations({ en: JSON.parse('{"__proto__": {"a": "b"}}') });
 
-    const snapshot = instance.snapshot();
+    const { translations } = instance.snapshot({ records: true });
 
-    expect(hasOwnProtoKey(snapshot)).toBe(false);
-    expect(snapshot).toEqual({ en: { home: { list: [{ ok: '1' }], title: 'Home' } } });
+    expect(hasOwnProtoKey(translations)).toBe(false);
+    expect(translations).toEqual({ en: { home: { list: [{ ok: '1' }], title: 'Home' } } });
+  });
+
+  it('leaves a namespace that lost a literal `__proto__` key out of the plain snapshot, so the client loads it whole', async () => {
+    let calls = 0;
+    const loaders = [
+      { namespace: 'common', locale: 'en', loader: async () => { calls += 1; return JSON.parse('{"a": "x", "n": {"__proto__": {"b": "y"}}}'); } },
+      { namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) },
+    ];
+    const server = new i18n({ parser: valueParser, log, loaders });
+
+    await server.loadTranslations('en', '/');
+
+    const snapshot = server.snapshot();
+
+    expect(snapshot).toEqual({ en: { nav: { home: 'Home' } } });
+
+    const client = new i18n({ parser: valueParser, log, loaders });
+
+    client.hydrate({ translations: devalue.parse(devalue.stringify(snapshot)), locale: 'en', route: '/' });
+    calls = 0;
+    await client.loadTranslations('en', '/');
+
+    expect(calls).toBe(1);
+    expect(client.t('common.n.__proto__.b')).toBe('y');
+  });
+
+  it('keeps what no loader serves in the plain snapshot, apart from the `__proto__` key', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) }] });
+
+    await server.loadTranslations('en', '/');
+    server.addTranslations({ en: { common: { a: 'x', n: JSON.parse('{"__proto__": {"b": "y"}}') }, 'nav.x': { c: JSON.parse('{"__proto__": "z"}') } } });
+
+    // `nav` has a loader, so it goes whole, `nav.x` with it; `common` has none.
+    expect(server.snapshot()).toEqual({ en: { common: { a: 'x', n: {} } } });
+  });
+
+  it('records no loader whose data lost a literal `__proto__` key, so the client loads it again', async () => {
+    const calls: string[] = [];
+    const loaders = [
+      { namespace: '__proto__', locale: 'en', loader: async () => { calls.push('proto'); return { a: 'A' }; } },
+      { namespace: 'home', locale: 'en', loader: async () => { calls.push('home'); return JSON.parse('{"__proto__": "x", "title": "Home"}'); } },
+      { namespace: 'common', locale: 'en', loader: async () => { calls.push('common'); return { greeting: 'Hi' }; } },
+    ];
+    const server = new i18n({ parser: valueParser, log, loaders });
+
+    await server.loadTranslations('en', '/');
+
+    const envelope = server.snapshot({ records: true });
+
+    expect(envelope.records).toEqual([{ id: '["en","common"]' }]);
+
+    const client = new i18n({ parser: valueParser, log, loaders });
+
+    client.hydrate(devalue.parse(devalue.stringify(envelope)));
+    calls.length = 0;
+    await client.loadTranslations('en', '/');
+
+    expect(calls.sort()).toEqual(['home', 'proto']);
+    expect(client.t('__proto__.a')).toBe('A');
+  });
+
+  it('leaves a `__proto__` locale out of the snapshot, which load data cannot carry', async () => {
+    const instance = new i18n({
+      parser: valueParser,
+      log,
+      sanitizeLocales: false,
+      fallbackLocale: '__proto__',
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hi' }) },
+        { namespace: 'common', locale: '__proto__', loader: async () => ({ greeting: 'Proto' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    const envelope = instance.snapshot({ records: true });
+
+    expect(() => devalue.stringify(envelope)).not.toThrow();
+    expect(envelope.translations).toEqual({ en: { common: { greeting: 'Hi' } } });
+    expect(envelope.records).toEqual([{ id: '["en","common"]' }]);
+    expect(() => devalue.stringify(instance.snapshot())).not.toThrow();
   });
 });
 
