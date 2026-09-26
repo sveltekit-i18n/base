@@ -4767,6 +4767,151 @@ describe('i18n cache and invalidation', () => {
     expect(instance.loading).toBe(false);
   });
 
+  describe('a severed load whose route a later call left', () => {
+    class Redirect {
+      constructor(public status: number, public location: string) {}
+    }
+
+    const macrotask = () => new Promise((resolve) => { setTimeout(resolve); });
+
+    // Loaders of `common` (no routes), `a` and `b`, each call held by label.
+    const routed = (thrown?: unknown) => {
+      const log: string[] = [];
+      const settles = new Map<string, { resolve: (data: unknown) => void; reject: (reason: unknown) => void }>();
+      const loader = (namespace: string) => ({ route }: Loader.Props) => new Promise<any>((resolve, reject) => {
+        const label = `${namespace}@${route}`;
+
+        log.push(label);
+        settles.set(label, { resolve, reject });
+      });
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'common', locale: 'en', loader: loader('common') },
+          { namespace: 'a', locale: 'en', routes: ['/a'], loader: loader('a') },
+          { namespace: 'b', locale: 'en', routes: ['/b'], loader: loader('b') },
+        ],
+      });
+      const settle = (...labels: string[]) => labels.forEach((label) => {
+        const settling = settles.get(label);
+
+        if (thrown !== undefined && label === 'b@/b') settling?.reject(thrown);
+        else settling?.resolve({ at: label });
+      });
+
+      return { instance, log, settle };
+    };
+
+    it('stands a resumed call down that joined a later call\'s load once another route replaced both', async () => {
+      const a = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'a', locale: 'en', routes: ['/a'], loader: a.loader },
+          { namespace: 'b', locale: 'en', routes: ['/b'], loader: async () => ({ at: 'b' }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/');
+      const first = instance.setRoute('/a');
+      instance.invalidate('en');
+      const second = instance.setRoute('/a');
+
+      a.calls[0].resolve({ at: '1' });
+      await macrotask();
+      instance.invalidate('en');
+      const third = instance.setRoute('/b');
+      a.calls[1].resolve({ at: '2' });
+      await third;
+
+      const outcome = await Promise.race([
+        Promise.all([first, second]).then(() => 'settled'),
+        macrotask().then(macrotask).then(() => 'pending'),
+      ]);
+
+      expect(outcome).toBe('settled');
+      expect(instance.loading).toBe(false);
+    });
+
+    it.each(['/a', '/b'])('stands down, the %s load settling first', async (first) => {
+      const { instance, log, settle } = routed();
+
+      await instance.setLocale('en');
+      const left = instance.setRoute('/a');
+      instance.invalidate('en');
+      const current = instance.setRoute('/b');
+
+      const settleA = () => settle('common@/a', 'a@/a');
+      const settleB = () => settle('common@/b', 'b@/b');
+
+      if (first === '/a') settleA(); else settleB();
+      await macrotask();
+      if (first === '/a') settleB(); else settleA();
+
+      await Promise.all([left, current]);
+
+      expect(log).toEqual(['common@/a', 'a@/a', 'common@/b', 'b@/b']);
+      expect(instance.t('a.at')).toBe('a.at');
+      expect(instance.t('b.at')).toBe('b@/b');
+      expect(instance.loading).toBe(false);
+    });
+
+    it('resumes once the later call is undone, putting its route back', async () => {
+      const thrown = new Redirect(307, '/login');
+      const { instance, log, settle } = routed(thrown);
+
+      await instance.setLocale('en');
+      const left = instance.setRoute('/a');
+      instance.invalidate('en');
+      const current = instance.setRoute('/b');
+
+      settle('common@/a', 'a@/a');
+      await macrotask();
+      settle('common@/b', 'b@/b');
+
+      await expect(current).rejects.toBe(thrown);
+      await vi.waitFor(() => expect(log).toHaveLength(5));
+      settle('a@/a');
+      await left;
+
+      // What `common` delivered for '/b' landed and is recorded: only `a` is fetched again.
+      expect(log.at(-1)).toBe('a@/a');
+      expect(instance.t('a.at')).toBe('a@/a');
+      expect(instance.locale).toBe('en');
+    });
+
+    it('resumes once a later call for another locale is undone', async () => {
+      const en = held();
+      const guarded = held();
+      const thrown = new Redirect(307, '/login');
+      const instance = new i18n({
+        parser,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: async () => ({ a: 'de' }) },
+          { namespace: 'common', locale: 'en', loader: en.loader },
+          { namespace: 'common', locale: 'fr', loader: async () => ({ a: 'fr' }) },
+          { namespace: 'guarded', locale: 'fr', loader: guarded.loader },
+        ],
+      });
+
+      await instance.loadTranslations('de', '/');
+      const first = instance.setLocale('en');
+      instance.invalidate('en');
+      const second = instance.setLocale('fr');
+
+      en.calls[0].resolve({ a: 'stale' });
+      await macrotask();
+      guarded.calls[0].reject(thrown);
+
+      await expect(second).rejects.toBe(thrown);
+      await vi.waitFor(() => expect(en.calls).toHaveLength(2));
+      en.calls[1].resolve({ a: 'en' });
+      await first;
+
+      expect(instance.locale).toBe('en');
+    });
+  });
+
   it('a severed trigger joins the load a later trigger started instead of fetching again', async () => {
     let calls = 0;
     const resolvers: Array<(value: any) => void> = [];

@@ -25,6 +25,8 @@ type Call = {
     wanted: Map<Loader.Resolved, string | undefined>;
   };
   failed: boolean;
+  /** Settles, never rejecting, once the call's load does. */
+  settled?: Promise<void>;
 };
 
 /** A parked delivery an activating load counts on, with the request it serves. */
@@ -32,6 +34,8 @@ type Unparked = { request: LoadRequest; delivery: Delivery };
 
 type InflightLoad = {
   key: string;
+  /** The config it started under: a reconfiguration replaces its loaders. */
+  config: object | undefined;
   promise: Promise<void>;
   loaders: Loader.Resolved[];
   severed: Set<Loader.Resolved>;
@@ -1097,7 +1101,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * failed keeps them from being undone either way.
    */
   #stand(call: Call, promise: Promise<void>): Promise<void> {
-    promise.then(() => {
+    call.settled = promise.then(() => {
       if (!call.failed) this.#calls = this.#calls.slice(this.#calls.indexOf(call) + 1);
     }, () => undefined);
 
@@ -1378,7 +1382,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const promise = new Promise<void>((resolve, reject) => { outcome = { resolve, reject }; });
 
-    const entry: InflightLoad = { key, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls, unparked };
+    const entry: InflightLoad = { key, config: this.#config, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls, unparked };
 
     // Registered before any loader is called, so one that invalidates or
     // destroys the instance before its first `await` severs its own load too.
@@ -1444,7 +1448,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // Resumed once: a loader that invalidates what it loads each time it runs
     // would otherwise be fetched again for as long as it keeps doing so.
     settled
-      .then((severed) => (severed.length && !resumed ? this.#resume(locale, route, key, severed, entry.calls) : undefined))
+      .then((severed) => (severed.length && !resumed ? this.#resume(entry, locale, route, severed) : undefined))
       .then(outcome.resolve, outcome.reject);
 
     const settle = () => {
@@ -1470,18 +1474,26 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * them again, so a trigger's promise that resolves still means its locale
    * is loaded, and control flow the refetch throws rejects it as any load's
    * does. It runs once: what severs the refetch is left to the next trigger,
-   * as is the locale when the instance was destroyed, another locale was asked
-   * for, the config no longer has one of those loaders or a later trigger
-   * wants other params.
+   * as is the locale when the instance was destroyed or reconfigured. Once a
+   * later call asked for another locale or route, it waits for the calls since
+   * its own to settle: it stands down should the request stay replaced, and
+   * resumes should an undo put it back.
    */
-  #resume(locale: Config.Locale, route: string, key: string, severed: LoadRequest[], calls: Call[]): Promise<void> | undefined {
-    const { loaders = [] } = this.#config ?? {};
+  #resume(entry: InflightLoad, locale: Config.Locale, route: string, severed: LoadRequest[]): Promise<void> | undefined {
+    if (this.#destroyed || entry.config !== this.#config) return undefined;
 
-    if (this.#destroyed || this.#superseded(locale)) return undefined;
+    if (this.#superseded(locale) || this.#route !== route) {
+      // A resumed call joins a load after the calls it started, so the latest
+      // of them is found by its place in the chain, not in the load.
+      const last = Math.max(-1, ...entry.calls.map((call) => this.#calls.indexOf(call)));
+      const later = last === -1 ? [] : this.#calls.slice(last + 1);
 
-    if (severed.some((request) => !loaders.includes(request.loader) || !this.#isWanted(request))) return undefined;
+      if (!later.length) return undefined;
 
-    return this.#loadSelection(locale, route, key, severed, calls, true);
+      return Promise.all(later.flatMap(({ settled }) => settled ?? [])).then(() => this.#resume(entry, locale, route, severed));
+    }
+
+    return this.#loadSelection(locale, route, entry.key, severed, entry.calls, true);
   }
 }
 

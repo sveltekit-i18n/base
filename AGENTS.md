@@ -200,9 +200,10 @@ translation state, loading, caching, route matching, and preprocessing — but
   refetch that throws control flow rejects it, and control flow another of its
   loaders threw rejects it without the refetch); it resumes once — a refetch
   severed again is left to the next trigger — and stands down when
-  the instance was destroyed, another locale was requested, the config was
-  replaced or a later trigger wants other params, and a warm load never
-  resumes. A loader must not await a load of its own instance for the route
+  the instance was destroyed or the config was replaced. Once a later call
+  asked for another locale or route, it waits for the calls since its own
+  (`Call.settled`): it stands down when their request stands and resumes
+  when their undo puts its request back. A warm load never resumes. A loader must not await a load of its own instance for the route
   it was called with: that load can be the one awaiting the loader. A load of
   another route (the navigation a remote `query`'s `redirect()` awaits) is
   its own. The loading calls — `setLocale`, `setRoute`,
