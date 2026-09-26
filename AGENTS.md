@@ -58,7 +58,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 |------|------|
 | `src/index.ts` | entry — re-exports the class and public types |
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
-| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
+| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `matchLocale`, `textDirection`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
 | `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n` and the `Kit` types |
 | `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
@@ -367,7 +367,7 @@ differently.**
 - Notice unrelated dead code or a bug? **Mention it in chat** — don't fix
   silently in the same PR.
 
-## 4. Verify before committing
+## 4. Verify and review
 
 **Every commit's tip is green.**
 
@@ -376,6 +376,36 @@ differently.**
 - Type/lint/build errors never reach a commit, not even WIP.
 - Doc-only changes skip the build but still verify links resolve and markdown
   renders.
+
+**Nothing merges unreviewed.** The goal is fewest bugs in the product; a
+green suite only proves what it tests. Every change goes through this cycle:
+
+1. **Design check before code.** For a non-trivial change, a small panel
+   argues against the plan before any implementation, above all where it leans
+   on behaviour it does not own (SvelteKit, Vite, a JS engine, `Intl`). A
+   flawed design costs more than any code bug a later round catches.
+2. **Develop**, verified as above.
+3. **Review**, its scope picked by the change's risk and by the planned issues
+   it touches or will meet. Each finding needs a concrete scenario (input →
+   wrong output) and must survive independent skeptics trying to refute it.
+4. **Ground every claim.** A reviewer proves an assumption from the source
+   (the host's code, the engine's behaviour on every runtime the package
+   supports) or by reproducing it — never from memory.
+5. **Fix red → green** (§13), as fixups into the commit that introduced the
+   defect (§6).
+6. **Review the fix.** A fix is new code: each round of fixups gets a review
+   of at least its own delta. Stop when a round confirms nothing; after three
+   rounds that still confirm something, stop and ask — findings that keep
+   coming back mean the design is wrong.
+7. **Run it in a real host** when a change touches how the package meets
+   something its tests only simulate (SvelteKit's hooks and loads, Vite, a
+   bundler): build and render one of `lib`'s examples against the local build
+   before merge.
+8. **Review the release.** Before a minor or major release, review its whole
+   diff across the repositories, for the bugs that live between features no
+   single PR contains.
+
+The user decides when a PR merges; the cycle decides when it is ready to ask.
 
 ## 5. Commit on approval
 
