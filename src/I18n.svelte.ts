@@ -25,6 +25,8 @@ type Call = {
     wanted: Map<Loader.Resolved, string | undefined>;
   };
   failed: boolean;
+  /** Whether a load of it fetched its severed part again, which it does once. */
+  resumed: boolean;
   /** Settles, never rejecting, once the call's load does. */
   settled?: Promise<void>;
 };
@@ -1088,7 +1090,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * it fail.
    */
   #ask(): Call {
-    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false };
+    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false, resumed: false };
 
     this.#calls = [...this.#calls, call];
 
@@ -1240,7 +1242,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
-  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[], resumed = false): Promise<void> {
+  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[]): Promise<void> {
     const requests = this.#unloaded(selected);
     const unparked = calls.length ? this.#claimParked(selected) : [];
 
@@ -1260,7 +1262,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (inflight) return this.#join(inflight, calls, unparked);
 
-    return this.#start(locale, route, key, requests, calls, unparked, resumed);
+    return this.#start(locale, route, key, requests, calls, unparked);
   }
 
   /** The load in flight under `key` that delivers every one of `requests`. */
@@ -1374,7 +1376,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Fetches `requests` as a load in flight under `key`, and settles it. */
-  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], unparked: Unparked[], resumed: boolean): Promise<void> {
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], unparked: Unparked[]): Promise<void> {
     const onRoute = route ? ` and '${route}' route` : '';
 
     let rejection: ControlFlow | undefined;
@@ -1445,10 +1447,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
       : `Failed to load translations for '${locale}' locale${onRoute}.`, error));
 
-    // Resumed once: a loader that invalidates what it loads each time it runs
-    // would otherwise be fetched again for as long as it keeps doing so.
+    // Resumed once per call: a loader that invalidates what it loads each time
+    // it runs would otherwise be fetched again for as long as it keeps doing
+    // so, while a call that joined a resumed load still gets its own.
     settled
-      .then((severed) => (severed.length && !resumed ? this.#resume(entry, locale, route, severed) : undefined))
+      .then((severed) => (severed.length && entry.calls.some(({ resumed }) => !resumed) ? this.#resume(entry, locale, route, severed) : undefined))
       .then(outcome.resolve, outcome.reject);
 
     const settle = () => {
@@ -1473,8 +1476,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * Finishes an activating load an invalidation cut `severed` off: it fetches
    * them again, so a trigger's promise that resolves still means its locale
    * is loaded, and control flow the refetch throws rejects it as any load's
-   * does. It runs once: what severs the refetch is left to the next trigger,
-   * as is the locale when the instance was destroyed or reconfigured. Once a
+   * does. It runs once per call: what severs the refetch of every call it
+   * serves is left to the next trigger, as is the locale when the instance
+   * was destroyed or reconfigured. Once a
    * later call asked for another locale or route, it waits for the calls since
    * its own to settle: it stands down should the request stay replaced, and
    * resumes should an undo put it back.
@@ -1493,7 +1497,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return Promise.all(later.flatMap(({ settled }) => settled ?? [])).then(() => this.#resume(entry, locale, route, severed));
     }
 
-    return this.#loadSelection(locale, route, entry.key, severed, entry.calls, true);
+    entry.calls.forEach((call) => { call.resumed = true; });
+
+    return this.#loadSelection(locale, route, entry.key, severed, entry.calls);
   }
 }
 

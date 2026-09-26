@@ -1958,7 +1958,8 @@ trigger like any load: control flow it throws
 [rejects the trigger](#loader-required), while the part that already landed
 stays. The trigger refetches once: should the refetch be severed too — a loader
 that invalidates what it loads each time it runs, say — it resolves without
-activating. It leaves the severed part to the next trigger, too, when another
+activating, while a trigger that joined the refetch gets one refetch of its
+own. It leaves the severed part to the next trigger, too, when another
 loader of its load threw SvelteKit's control flow that still counts (the
 trigger then rejects with it), or when the config was replaced. When a later
 call asked for another locale or route meanwhile, the trigger waits for the

@@ -198,8 +198,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   load then fetches its severed part again (`#resume`) and activates once it
   arrives, so a trigger's promise keeps meaning "loaded" when it resolves (a
   refetch that throws control flow rejects it, and control flow another of its
-  loaders threw rejects it without the refetch); it resumes once — a refetch
-  severed again is left to the next trigger — and stands down when
+  loaders threw rejects it without the refetch); each call resumes once — a
+  refetch severed again is left to the next trigger, unless a call that joined
+  it has not resumed yet — and stands down when
   the instance was destroyed or the config was replaced. Once a later call
   asked for another locale or route, it waits for the calls since its own
   (`Call.settled`): it stands down when their request stands and resumes
