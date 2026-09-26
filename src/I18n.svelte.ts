@@ -1601,10 +1601,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       if (rejection) throw rejection.value;
 
       // A load of params the route no longer asks for, whatever it returned,
-      // leaves the activation to the load of the params it asks for.
+      // leaves the activation to the load of the params it asks for. One whose
+      // control flow a later call superseded failed: an undo that puts its
+      // request back loads it, unless that control flow still covers it.
       const replaced = served.some((request) => !this.#isWanted(request));
 
-      if (!entry.calls.length || replaced) return [];
+      if (!entry.calls.length || replaced || thrown.length) return [];
 
       if (!entry.severed.size) this.#activate(locale);
 
@@ -1662,7 +1664,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * later call asked for another locale or route, it waits for the calls since
    * its own to settle: it stands down should the request stay replaced, and
    * resumes should an undo put it back. A load whose params a later request
-   * replaced does not get here: an undo that puts it back loads it itself.
+   * replaced, or whose control flow it superseded, does not get here: an undo
+   * that puts it back loads it itself.
    */
   #resume(entry: InflightLoad, locale: Config.Locale, route: string, severed: LoadRequest[]): Promise<void> | undefined {
     if (this.#destroyed || entry.config !== this.#config) return undefined;
