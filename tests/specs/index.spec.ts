@@ -3367,6 +3367,87 @@ describe('i18n loaders that throw', () => {
     expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '3' });
   });
 
+  it.each([
+    ['earlier', 'resolves', 'rejects'],
+    ['later', 'rejects', 'rejects'],
+  ])('fails a replaced load\'s calls only while an undo puts its params back, the %s throwing first', async (first, earlierOutcome, laterOutcome) => {
+    const gate = held();
+    const thrown = new Redirect(307, '/login');
+    const instance = new i18n({
+      parser,
+      loaders: [common, { namespace: 'gate', locale: 'en', routes: items, loader: gate.loader }],
+    });
+
+    await instance.loadTranslations('en', '/');
+    const earlier = instance.setRoute('/item/1');
+    const later = instance.setRoute('/item/2');
+
+    const outcome = (promise: Promise<void>) => promise.then(() => 'resolves', () => 'rejects');
+    const settled = { earlier: outcome(earlier), later: outcome(later) };
+
+    const order = first === 'earlier' ? [0, 1] : [1, 0];
+    gate.calls[order[0]].reject(thrown);
+    await macrotask();
+    gate.calls[order[1]].reject(thrown);
+
+    // Throwing first, the earlier load serves params the later call replaced;
+    // throwing second, it serves the params the later call's undo put back.
+    expect(await settled.earlier).toBe(earlierOutcome);
+    expect(await settled.later).toBe(laterOutcome);
+    expect(instance.snapshot({ records: true }).route).toBe('/');
+  });
+
+  it('runs a loader with `cache: false` again on the trigger after a rejected call, though what it delivered then landed', async () => {
+    const live = vi.fn(async () => ({ at: `${live.mock.calls.length}` }));
+    const thrown = new Redirect(307, '/login');
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [
+        { namespace: 'live', locale: 'en', cache: false, loader: live },
+        { ...throwing(thrown), routes: ['/guarded'] },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+    await expect(instance.setRoute('/guarded')).rejects.toBe(thrown);
+
+    expect(instance.t('live.at')).toBe('2');
+
+    await instance.setRoute('/');
+
+    expect(live).toHaveBeenCalledTimes(3);
+    expect(instance.t('live.at')).toBe('3');
+  });
+
+  it.each([
+    ['fails soft', new Error('flaky')],
+    ['throws control flow', new Redirect(307, '/login')],
+  ])('fetches again for a trigger arriving after a load released, before it settled, when a loader %s', async (_, thrown) => {
+    let armed = true;
+    let arriving: Promise<void> | undefined;
+    const flaky = throwingWhen(() => flaky.mock.calls.length === 1, thrown, () => ({ ok: 'yes' }));
+    const instance: I18n = new i18n({
+      parser,
+      // Runs as the settle step applies what the load delivered — after the
+      // load left the loads in flight, before its promise settles.
+      preprocess: (translations) => {
+        if (armed) {
+          armed = false;
+          queueMicrotask(() => { arriving = instance.loadTranslations('en', '/'); });
+        }
+
+        return translations;
+      },
+      loaders: [common, { namespace: 'flaky', locale: 'en', loader: flaky }],
+    });
+
+    await instance.loadTranslations('en', '/', { activate: false }).catch(() => undefined);
+    await arriving;
+
+    expect(flaky).toHaveBeenCalledTimes(2);
+    expect(instance.locale).toBe('en');
+  });
+
   it('keeps what a hand-off set while a rejected load was in flight', async () => {
     const guarded = held();
     const thrown = new Redirect(307, '/login');
@@ -4602,6 +4683,32 @@ describe('i18n cache and invalidation', () => {
     expect(instance.t('common.greeting')).toBe('fresh');
     expect(instance.t('common.old')).toBe('common.old');
     expect(instance.locale).toBe('en');
+    expect(instance.loading).toBe(false);
+  });
+
+  it('stands a severed load down once a later trigger asks one of its loaders for other params', async () => {
+    const calls: string[] = [];
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => { calls.push('common'); return { a: 'common' }; } },
+        {
+          namespace: 'article',
+          locale: 'en',
+          routes: [/^\/article\/(?<id>\d+)$/],
+          loader: async ({ params }: Loader.Props) => { calls.push(`article@${params.id}`); return { id: params.id }; },
+        },
+      ],
+    });
+
+    const stale = instance.loadTranslations('en', '/article/1');
+    instance.invalidate('en');
+    const current = instance.loadTranslations('en', '/article/2');
+
+    await Promise.all([stale, current]);
+
+    expect(calls).toEqual(['common', 'article@1', 'common', 'article@2']);
+    expect(instance.t('article.id')).toBe('2');
     expect(instance.loading).toBe(false);
   });
 
