@@ -6,7 +6,7 @@ import { serverHalf } from '#kit-server';
 import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
 import type { Config } from '../types.js';
-import { configLocales, matchLocale, textDirection } from '../utils.js';
+import { configLocales, matchLocale, sanitizerFactory, textDirection } from '../utils.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -40,10 +40,16 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
 
   const pipe = (i18n: I18n): unknown => (config.extensions ?? []).reduce<unknown>((acc, extension) => extension(acc), i18n);
 
+  const sanitize = sanitizerFactory(config.sanitizeLocales);
+  const sanitized = (locale: string | null | undefined): string | undefined => (locale ? sanitize(locale)[0] : undefined);
+
   let configured: string[] | undefined;
+  // `initLocale` and `fallbackLocale`, spelled as the config's locales are and
+  // so sanitized alike.
+  let defaults: Array<string | undefined> = [];
 
   // Resolved on first use, never at import, and once: resolving the loaders
-  // reports what is wrong with them.
+  // and sanitizing reports what is wrong with them.
   const locales = (): string[] => {
     if (configured) return configured;
 
@@ -55,6 +61,8 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
       // The instance reports a malformed config itself.
       configured = [];
     }
+
+    defaults = [sanitized(config.initLocale), sanitized(config.fallbackLocale)];
 
     return configured;
   };
@@ -73,11 +81,28 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     }
   };
 
+  // What `preferredLocale` returns is the visitor's, so it goes through a
+  // custom sanitizer silently — a value it rejects is matched as it is — and
+  // never through the default one, which warns on every tag `Intl` does not
+  // know: either would turn a visitor's cookie into a report per request.
+  const visitorSanitized = (locale: string | null | undefined): string | null | undefined => {
+    const { sanitizeLocales: custom } = config;
+
+    if (!locale || typeof custom !== 'function') return locale;
+
+    try {
+      const result = custom(`${locale}`);
+
+      return result ? `${result}` : locale;
+    } catch {
+      return locale;
+    }
+  };
+
   const negotiate = (event: Kit.Event, ranges: string | readonly string[] | null | undefined): string | undefined => {
     // First: it sets the config's logger, which `preferred` reports through.
     const available = locales();
-
-    return [preferred(event), ranges, config.initLocale, config.fallbackLocale].reduce<string | undefined>(
+    return [visitorSanitized(preferred(event)), ranges, ...defaults].reduce<string | undefined>(
       (found, candidate) => found ?? matchLocale(candidate, available),
       undefined,
     );

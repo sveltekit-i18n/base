@@ -219,6 +219,48 @@ describe('/kit', () => {
       expect((await init.load(serverEvent('/', { lang: 'cs', isDataRequest: true }))).i18n.locale).toBe('cs');
     });
 
+    it('sanitizes initLocale and fallbackLocale as the config\'s locales are', async () => {
+      const loaders = (...locales: string[]) => locales.map((locale) => ({ locale, namespace: 'common', loader: async () => ({ greeting: locale }) }));
+
+      const alias = setup({ initLocale: 'iw', loaders: loaders('iw', 'en') });
+
+      expect((await alias.load(serverEvent('/', { lang: 'fr', isDataRequest: true }))).i18n.locale).toBe('he');
+
+      const custom = { sanitizeLocales: (locale: string) => locale.replace('_', '-'), loaders: loaders('en_US', 'cs_CZ') };
+
+      expect((await setup({ ...custom, initLocale: 'cs_CZ' }).load(serverEvent('/', { lang: 'fr', isDataRequest: true }))).i18n.locale).toBe('cs-CZ');
+      expect((await setup({ ...custom, fallbackLocale: 'en_US' }).load(serverEvent('/', { lang: 'fr', isDataRequest: true }))).i18n.locale).toBe('en-US');
+    });
+
+    it('runs what preferredLocale returns through a custom sanitizeLocales', async () => {
+      const { load } = setup({
+        sanitizeLocales: (locale: string) => locale.replace('_', '-'),
+        loaders: ['en_US', 'cs_CZ'].map((locale) => ({ locale, namespace: 'common', loader: async () => ({ greeting: locale }) })),
+      }, { preferredLocale: (event) => event.cookies?.get('lang') });
+
+      expect((await load(serverEvent('/', { lang: 'en', cookie: 'cs_CZ', isDataRequest: true }))).i18n.locale).toBe('cs-CZ');
+    });
+
+    it('reports nothing when a custom sanitizeLocales rejects what preferredLocale returns', async () => {
+      const { load, errors, warnings } = setup({
+        sanitizeLocales: (locale: string) => new Intl.Locale(locale).baseName,
+      }, { preferredLocale: (event) => event.cookies?.get('lang') });
+
+      for (const cookie of ['not a tag!', 'not a tag!']) {
+        expect((await load(serverEvent('/', { lang: 'cs', cookie, isDataRequest: true }))).i18n.locale).toBe('cs');
+      }
+
+      expect([...errors, ...warnings]).toEqual([]);
+    });
+
+    it('reads what a custom sanitizeLocales returns for preferredLocale as a string', async () => {
+      const { load } = setup({
+        sanitizeLocales: (locale: string) => new Intl.Locale(locale).minimize() as unknown as string,
+      }, { preferredLocale: (event) => event.cookies?.get('lang') });
+
+      expect((await load(serverEvent('/', { lang: 'en', cookie: 'cs-Latn-CZ', isDataRequest: true }))).i18n.locale).toBe('cs');
+    });
+
     it('sets the route alone when nothing matches', async () => {
       const { load, calls } = setup();
       const page = await load(serverEvent('/about', { lang: 'fr' }));
