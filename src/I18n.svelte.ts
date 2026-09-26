@@ -18,18 +18,26 @@ type Tables = { raw: Translations.SerializedTranslations; translations: Translat
  * the params its matching loaders were wanted for — to put back should it
  * fail, and whether it did.
  */
+/** The params signature a loader is wanted for; `null` while the route does not select it. */
+type Wanted = string | null;
+
 type Call = {
   replaced: {
     requestedLocale: Config.Locale | undefined;
     route: string | undefined;
-    wanted: Map<Loader.Resolved, string | undefined>;
+    wanted: Map<Loader.Resolved, Wanted | undefined>;
   };
   failed: boolean;
+  /** The control flow its load threw, which an undo back to it does not run again. */
+  threw: ControlFlow[];
   /** Whether a load of it fetched its severed part again, which it does once. */
   resumed: boolean;
   /** Settles, never rejecting, once the call's load does. */
   settled?: Promise<void>;
 };
+
+/** What an undo put back: whether the request changed, and the control flow the undone calls threw. */
+type Undone = { changed: boolean; threw: ControlFlow[] };
 
 /** A parked delivery an activating load counts on, with the request it serves. */
 type Unparked = { request: LoadRequest; delivery: Delivery };
@@ -108,11 +116,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   #externalTranslations: Translations.SerializedTranslations = {};
 
-  // The params signature the next trigger asks each loader for: the one the
-  // most recent call asked for, unless a failed call put an earlier one's back.
+  // The params signature the next trigger asks each loader for:
+  // the one the most recent call asked for, unless a failed call put an
+  // earlier one's back, and `null` for a loader its route does not select.
   // Loads settle out of order, and a delivery for params the route no longer
   // asks for must not replace what it displays; a warm load asks for nothing.
-  #wanted = new Map<Loader.Resolved, string>();
+  #wanted = new Map<Loader.Resolved, Wanted>();
 
   // The latest delivery of each loader for params nothing wanted yet — a warm
   // load of another route's params, typically a preload — so the trigger that
@@ -500,7 +509,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       this.#locale = locale;
     }
 
-    if (locale !== undefined && route !== undefined) this.#want(this.#matchLoaders(locale, route));
+    const resolved = this.#resolveLocale(locale);
+
+    if (resolved !== undefined && route !== undefined) this.#want(this.#matchLoaders(resolved, route));
   });
 
   /**
@@ -1079,9 +1090,24 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     else this.#handedOff.clear();
   }
 
-  /** Records the params the current route asks each matching loader for. */
-  #want(matching: LoadRequest[]): void {
-    matching.forEach(({ loader, signature }) => this.#wanted.set(loader, signature));
+  /**
+   * Records the params the current route asks each matching loader for, and
+   * none of every other loader: a loader of a locale the request left must not
+   * keep params its route asked for. Returns what it replaced.
+   */
+  #want(matching: LoadRequest[]): Map<Loader.Resolved, Wanted | undefined> {
+    const { loaders = [] } = this.#config ?? {};
+
+    const wants = new Map<Loader.Resolved, Wanted>([
+      ...loaders.map((loader) => [loader, null] as const),
+      ...matching.map(({ loader, signature }) => [loader, signature] as const),
+    ]);
+
+    const replaced = new Map(Array.from(wants.keys(), (loader) => [loader, this.#wanted.get(loader)]));
+
+    wants.forEach((signature, loader) => this.#wanted.set(loader, signature));
+
+    return replaced;
   }
 
   /**
@@ -1090,7 +1116,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * it fail.
    */
   #ask(): Call {
-    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false, resumed: false };
+    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false, threw: [], resumed: false };
 
     this.#calls = [...this.#calls, call];
 
@@ -1113,32 +1139,39 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * Marks the calls a load failed for, then undoes and drops failed calls from
    * the end of the chain: a failed call behind one that has not failed stays,
-   * and stays applied, until that one fails too.
+   * and stays applied, until that one fails too. Returns whether the undo put
+   * another request back, with the control flow of the calls it undid and of
+   * this load, or `undefined` when it undid nothing.
    */
-  #fail(calls: Call[]): void {
+  #fail(calls: Call[], thrown: ControlFlow[]): Undone | undefined {
     calls.forEach((call) => {
       call.failed = true;
+      call.threw = [...call.threw, ...thrown];
     });
 
     const before = { locale: this.#requestedLocale, route: this.#route };
 
-    let undone = false;
+    let threw: ControlFlow[] | undefined;
 
     for (let last = this.#calls.at(-1); last?.failed; last = this.#calls.at(-1)) {
       this.#undo(last);
       this.#calls = this.#calls.slice(0, -1);
-      undone = true;
+      threw = [...threw ?? [], ...last.threw];
     }
 
-    if (!undone) return;
+    if (!threw) return undefined;
 
-    this.#restore();
+    this.#rewant();
 
-    if (before.locale !== this.#requestedLocale || before.route !== this.#route) {
+    const changed = before.locale !== this.#requestedLocale || before.route !== this.#route;
+
+    if (changed) {
       const onRoute = this.#route ? ` on '${this.#route}' route` : '';
 
       logger.debug(`Undoing the failed calls: the request is back to '${this.#requestedLocale}' locale${onRoute}.`);
     }
+
+    return { changed, threw: [...threw, ...thrown] };
   }
 
   /**
@@ -1160,9 +1193,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * The loaders the request an undo left in place selects: wanted for the
    * params its route yields, and no longer recorded as loaded for others —
    * whatever another load delivered for them meanwhile stays displayed until
-   * the next trigger fetches the params asked for.
+   * the request loads them again. Runs before the failed load applies what
+   * its other loaders delivered, so that is filtered by what is wanted now.
    */
-  #restore(): void {
+  #rewant(): void {
     const locale = this.#resolveLocale(this.#requestedLocale);
 
     if (!locale || this.#route === undefined) return;
@@ -1174,6 +1208,51 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     matching.forEach(({ loader, signature }) => {
       if (this.#loaderRecords.has(loader) && this.#loaderRecords.get(loader) !== signature) this.#loaderRecords.delete(loader);
     });
+  }
+
+  /**
+   * Once the failed load has applied what its other loaders delivered, the
+   * request the undo put back activates if its data is there — a loader with
+   * `cache: false` counts once its record holds the params — unless an
+   * activating load of it is in flight that activates it or fails. It is
+   * loaded otherwise, by an activating call nobody awaits: the load that would
+   * have activated it may have resolved without activating while it was
+   * replaced, and a load still waiting to resume joins this one. It loads
+   * nothing when the undo put back the request that failed, or when that
+   * request needs a loader for the params an undone call's load, or this one,
+   * threw control flow for: a failure never runs again by itself.
+   */
+  #settleUndo({ changed, threw: controlFlow }: Undone): void {
+    const locale = this.#resolveLocale(this.#requestedLocale);
+    const route = this.#route;
+
+    if (!locale || route === undefined) return;
+
+    const matching = this.#matchLoaders(locale, route);
+    const missing = this.#unloaded(matching).filter(({ loader, signature }) => loader.cache !== false || this.#loaderRecords.get(loader) !== signature);
+
+    if (!missing.length) {
+      const key = this.#inflightKey(locale, route, matching);
+
+      // A severed load, or one of a replaced config, activates nothing when
+      // it settles.
+      const activating = Array.from(this.#inflight).some((entry) => entry.key === key && entry.calls.length && !entry.severed.size && entry.config === this.#config);
+
+      if (activating) return;
+
+      this.#applyWanted(this.#claimParked(matching).map(({ delivery }) => delivery));
+      this.#activate(locale);
+
+      return;
+    }
+
+    const threw = missing.some(({ loader, signature }) => controlFlow.some((flow) => flow.loader === loader && flow.signature === signature));
+
+    if (!changed || threw) return;
+
+    const call = this.#ask();
+
+    void this.#stand(call, this.#load(locale, route, call));
   }
 
   /**
@@ -1225,20 +1304,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // Recorded before the in-flight check, so a trigger joining a load, or one
     // served from the records, still decides which params the route shows.
     if (call) {
-      matching.forEach(({ loader }) => call.replaced.wanted.set(loader, this.#wanted.get(loader)));
-      this.#want(matching);
+      call.replaced.wanted = this.#want(matching);
       this.#passHandOff(locale, route);
     }
 
+    return this.#loadSelection(locale, route, this.#inflightKey(locale, route, matching), matching, call ? [call] : []);
+  }
+
+  /**
+   * The key of a load in flight: what the trigger selected and the route it
+   * came from. A loader receives the route, so a load for another route may
+   * deliver, or throw, what does not fit this one — and one awaiting a
+   * navigation to it would wait on itself.
+   */
+  #inflightKey(locale: Config.Locale, route: string, matching: LoadRequest[]): string {
     const { loaders = [] } = this.#config ?? {};
 
-    // Keyed by what the trigger selected and the route it came from: a loader
-    // receives the route, so a load for another route may deliver, or throw,
-    // what does not fit this one — and one awaiting a navigation to it would
-    // wait on itself.
-    const inflightKey = JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [loaders.indexOf(loader), signature])]);
-
-    return this.#loadSelection(locale, route, inflightKey, matching, call ? [call] : []);
+    return JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [loaders.indexOf(loader), signature])]);
   }
 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
@@ -1287,9 +1369,17 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return entry.promise;
   }
 
-  /** Whether the next trigger asks `loader` for `signature`, or for no params in particular. */
+  /**
+   * Whether the next trigger asks `loader` for `signature`: the params its
+   * route yields, none while the route does not select the loader, or any
+   * before a trigger asked.
+   */
   #isWanted({ loader, signature }: { loader: Loader.Resolved; signature: string }): boolean {
-    return (this.#wanted.get(loader) ?? signature) === signature;
+    const wanted = this.#wanted.get(loader);
+
+    if (wanted === undefined) return true;
+
+    return (wanted ?? '') === signature;
   }
 
   /**
@@ -1302,7 +1392,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    */
   #applyWanted(deliveries: Delivery[]): void {
     const wanted = deliveries.filter(({ loader, signature }) => {
-      if (this.#wanted.has(loader)) return this.#wanted.get(loader) === signature;
+      const wanted = this.#wanted.get(loader);
+
+      if (typeof wanted === 'string') return wanted === signature;
 
       const previous = this.#deliveries.get(loader);
 
@@ -1415,19 +1507,24 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // them or a later call superseded it: the locale does not advance, and
       // what they replaced is put back unless a later call that has not failed
       // came since.
-      if (controlFlow.some(({ loader }) => !entry.severed.has(loader))) this.#fail(entry.calls);
+      const thrown = controlFlow.filter(({ loader }) => !entry.severed.has(loader));
+      const undone = thrown.length ? this.#fail(entry.calls, thrown) : undefined;
 
       // With control flow, what the other loaders delivered lands as a warm
       // load's does. Should applying it fail, that is only logged: the caller
       // gets the control flow.
+      let failure: { error: unknown } | undefined;
+
       try {
         this.#applyWanted([...held, ...current]);
       } catch (error) {
-        if (!rejection) throw error;
-
-        logError(`Failed to load translations for '${locale}' locale${onRoute}.`, error);
+        if (rejection) logError(`Failed to load translations for '${locale}' locale${onRoute}.`, error);
+        else failure = { error };
       }
 
+      if (undone) this.#settleUndo(undone);
+
+      if (failure) throw failure.error;
       if (rejection) throw rejection.value;
 
       // A load of params the route no longer asks for, whatever it returned,
@@ -1481,7 +1578,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * was destroyed or reconfigured. Once a
    * later call asked for another locale or route, it waits for the calls since
    * its own to settle: it stands down should the request stay replaced, and
-   * resumes should an undo put it back.
+   * resumes should an undo put it back. A load whose params a later request
+   * replaced does not get here: an undo that puts it back loads it itself.
    */
   #resume(entry: InflightLoad, locale: Config.Locale, route: string, severed: LoadRequest[]): Promise<void> | undefined {
     if (this.#destroyed || entry.config !== this.#config) return undefined;

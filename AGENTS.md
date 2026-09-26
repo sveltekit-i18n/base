@@ -128,16 +128,24 @@ translation state, loading, caching, route matching, and preprocessing — but
   the last, so a later call that has not failed keeps what it asked for, and
   once that one fails too, both are undone. The undo is per field: a locale or
   a route nothing was asked for before stands, and `hydrate()` empties
-  `#calls`, so a hand-off stands. `#restore()` then wants the params the
-  restored route asks for and drops the records of other params; the restored
-  request activates once a load of it settles — its own, if still in flight,
-  or else the next trigger's. The other
+  `#calls`, so a hand-off stands. `#rewant()` then wants the params the
+  restored route asks for and drops the records of other params. The other
   loaders' deliveries are then applied and recorded as a warm load's are,
-  filtered by `#wanted` after the undo. Control flow is
+  filtered by `#wanted` after the undo, and `#settleUndo()` activates the
+  restored request when nothing is left to fetch (a `cache: false` loader
+  whose record holds the params counts as fetched) and no activating load of it
+  is in flight that activates it or fails (a severed one, or one of a replaced
+  config, activates nothing when it settles), and otherwise starts an
+  activating load of it that nobody awaits — it joins a load of it still in
+  flight, counts towards `loading` and reports its own control flow. It loads
+  nothing when the undo put back the request that failed, nor when a loader
+  it needs threw control flow for those params in the failed load or in a
+  call the undo dropped (control flow an invalidation severed does not
+  count): a failure never runs again by itself, and the next trigger loads it. Control flow is
   discarded — like a delivery, and logged at `debug` — when an invalidation
   severed that loader, and, for an activating load, when a later request
-  superseded its locale or wants other params from that loader; a resumed
-  refetch that throws rejects the call after the rest has landed. A failed
+  superseded its locale or wants other params from that loader (a route that
+  does not select it wants none); a resumed refetch that throws rejects the call after the rest has landed. A failed
   load rejects every caller that shares it and is reported through the logger
   once, by the load itself; a load nobody awaits never becomes an unhandled
   rejection.
@@ -168,13 +176,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   delivered before — the namespace is rebuilt from `#externalTranslations` and
   each loader's last delivery (`#deliveries`), so no stale key survives and a
   sibling keeps its part. Last request wins for params too: every ACTIVATING
-  trigger records the params it wants per matching loader (`#wanted`), even one
-  that joins a load or fetches nothing, and a delivery for other params is
-  parked (`#parked`, the latest per loader, as a router keeps one preload)
-  instead of applied — a warm load wants nothing, so it never replaces what is
-  shown, nor what a loader no route wants params of delivered for others
-  (only `loadNamespace()` off the loader's routes, which asks for no params,
-  replaces that). Parking stamps the locale, so parked data lives within the
+  trigger records the params it wants per matching loader (`#wanted`), and
+  none (`null`) of every other loader,
+  even one that joins a load or fetches nothing, and a delivery for other
+  params is parked (`#parked`, the latest per loader, as a router keeps one
+  preload) instead of applied — a warm load wants nothing, so neither it nor a
+  load of a loader the route does not select replaces what is shown, nor what
+  that loader delivered for other params (only a delivery for no params,
+  `loadNamespace()` off the loader's routes, replaces that). Parking stamps the locale, so parked data lives within the
   `cache` window. The activating trigger that wants parked params CLAIMS them
   for its load (`unparked`) and leaves them parked: no later park replaces a
   claimed delivery, and every other trigger still finds it there, so nothing
@@ -204,7 +213,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   the instance was destroyed or the config was replaced. Once a later call
   asked for another locale or route, it waits for the calls since its own
   (`Call.settled`): it stands down when their request stands and resumes
-  when their undo puts its request back. A warm load never resumes. A loader must not await a load of its own instance for the route
+  when their undo puts its request back. A load of which a later request wants
+  other params from a loader it ran or claimed (or none, of one it asked
+  params of) resolves without activating at once, and `#settleUndo()` loads its request should an undo put it back. A warm load never resumes. A loader must not await a load of its own instance for the route
   it was called with: that load can be the one awaiting the loader. A load of
   another route (the navigation a remote `query`'s `redirect()` awaits) is
   its own. The loading calls — `setLocale`, `setRoute`,
