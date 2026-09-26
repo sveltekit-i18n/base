@@ -1213,6 +1213,80 @@ describe('i18n instance', () => {
       await instance.loadNamespace('article');
       expect(article).toHaveBeenCalledTimes(2);
     });
+    it.each([
+      ['what it delivered was invalidated', false],
+      ['it failed for them', true],
+    ])('wants no params of a loader the route left once %s', async (_, fails) => {
+      const article = vi.fn(async ({ params }: Loader.Props) => {
+        if (fails && params.id) throw new Error('unavailable');
+
+        return { title: `A${params.id ?? ''}` };
+      });
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'article', locale: 'en', routes: [/^\/article\/(?<id>\d+)$/], loader: article }] });
+
+      await instance.loadTranslations('en', '/article/1');
+      await instance.setRoute('/');
+      if (!fails) instance.invalidate('en', 'article');
+      await instance.loadNamespace('article');
+
+      expect(instance.translations.en).toEqual({ 'article.title': 'A' });
+      await instance.loadNamespace('article');
+      expect(article).toHaveBeenCalledTimes(2);
+    });
+    it('wants no params of a loader of a locale a later request left', async () => {
+      const article = vi.fn(async ({ params }: Loader.Props) => ({ title: `A${params.id ?? ''}` }));
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [
+          { namespace: 'article', locale: 'en', routes: [/^\/article\/(?<id>\d+)$/], loader: article },
+          { namespace: 'common', locale: 'de', loader: async () => ({ ok: 'ja' }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/article/1');
+      await instance.setLocale('de');
+      await instance.setRoute('/');
+      instance.invalidate('en', 'article');
+      await instance.loadNamespace('article', 'en');
+
+      expect(instance.translations.en).toEqual({ 'article.title': 'A' });
+      expect(article).toHaveBeenCalledTimes(2);
+    });
+    it('parks what a load for a route left delivers over earlier params, for the trigger that asks for them', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const item = itemLoader(resolvers);
+      const loader = vi.fn(item.loader);
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ ...item, loader }] });
+
+      const first = instance.loadTranslations('en', '/item/1');
+      resolvers['1']();
+      await first;
+
+      const left = instance.setRoute('/item/2');
+      await instance.setRoute('/');
+      resolvers['2']();
+      await left;
+
+      expect(instance.translations.en).toEqual({ 'item.id': '1' });
+
+      await instance.setRoute('/item/2');
+
+      expect(instance.translations.en).toEqual({ 'item.id': '2' });
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+    it('applies what a load for a route left delivers while it replaces nothing', async () => {
+      const resolvers: Record<string, () => void> = {};
+      const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ ok: 'yes' }) }, itemLoader(resolvers)] });
+
+      await instance.loadTranslations('en', '/');
+      const left = instance.setRoute('/item/1');
+      await instance.setRoute('/');
+      resolvers['1']();
+      await left;
+
+      expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'item.id': '1' });
+    });
 
     describe('while the load that applies them is in flight', () => {
       // `side` runs on every trigger; `hold` keeps the next one in flight.
@@ -2718,7 +2792,373 @@ describe('i18n loaders that throw', () => {
     expect(instance.locale).toBe('cs');
   });
 
-  it('puts back the request while no locale is active yet, so the next trigger activates it', async () => {
+  describe('an undo that puts back a request whose data is missing', () => {
+    const pages = [/^\/p\/(?<id>\d+)$/];
+
+    const setup = (extra: Loader.LoaderModule[] = []) => {
+      const common = held();
+      const page = held();
+      const gate = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: common.loader },
+          { namespace: 'page', locale: 'de', routes: pages, loader: page.loader },
+          { namespace: 'gate', locale: 'de', routes: ['/p/2'], loader: gate.loader },
+          ...extra,
+        ],
+      });
+
+      return { common, page, gate, instance };
+    };
+
+    const macrotask = () => new Promise((resolve) => { setTimeout(resolve); });
+
+    it('loads the params a severed call asked for once a later call for other params is undone', async () => {
+      const { common, page, gate, instance } = setup();
+
+      const home = instance.loadTranslations('de', '/');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+
+      const first = instance.setRoute('/p/1');
+      instance.invalidate('de', 'page');
+      const second = instance.setRoute('/p/2');
+
+      page.calls[0].resolve({ id: 'stale' });
+      await first;
+      page.calls[1].resolve({ id: '2' });
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(second).rejects.toBeInstanceOf(Redirect);
+
+      await vi.waitFor(() => expect(page.calls).toHaveLength(3));
+      page.calls[2].resolve({ id: '1' });
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(page.loader).toHaveBeenLastCalledWith(expect.objectContaining({ params: { id: '1' } }));
+      expect(instance.translations.de).toEqual({ 'common.ok': 'ja', 'page.id': '1' });
+      expect(instance.locale).toBe('de');
+    });
+
+    it('loads what a load that stood down left out once an invalidation dropped it and the later call is undone', async () => {
+      const { common, page, gate, instance } = setup();
+
+      const home = instance.loadTranslations('de', '/');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+
+      const first = instance.setRoute('/p/1');
+      const second = instance.setRoute('/p/2');
+
+      page.calls[0].resolve({ id: '1' });
+      await first;
+      instance.invalidate('de', 'common');
+      page.calls[1].resolve({ id: '2' });
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(second).rejects.toBeInstanceOf(Redirect);
+
+      await vi.waitFor(() => expect(common.calls).toHaveLength(2));
+      await vi.waitFor(() => expect(page.calls).toHaveLength(3));
+      common.calls[1].resolve({ ok: 'wieder' });
+      page.calls[2].resolve({ id: '1' });
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(page.loader).toHaveBeenLastCalledWith(expect.objectContaining({ params: { id: '1' } }));
+      expect(instance.translations.de).toEqual({ 'common.ok': 'wieder', 'page.id': '1' });
+    });
+
+    it('loads a loader the later route left out, with the one it asked for other params', async () => {
+      const only = held();
+      const { common, page, gate, instance } = setup([{ namespace: 'only', locale: 'de', routes: ['/p/1'], loader: only.loader }]);
+
+      const home = instance.loadTranslations('de', '/');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+
+      const first = instance.setRoute('/p/1');
+      instance.invalidate('de', 'only');
+      const second = instance.setRoute('/p/2');
+
+      only.calls[0].resolve({ at: 'stale' });
+      page.calls[0].resolve({ id: '1' });
+      await first;
+      page.calls[1].resolve({ id: '2' });
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(second).rejects.toBeInstanceOf(Redirect);
+
+      await vi.waitFor(() => expect(only.calls).toHaveLength(2));
+      await vi.waitFor(() => expect(page.calls).toHaveLength(3));
+      only.calls[1].resolve({ at: 'fresh' });
+      page.calls[2].resolve({ id: '1' });
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(page.loader).toHaveBeenLastCalledWith(expect.objectContaining({ params: { id: '1' } }));
+      expect(instance.translations.de).toEqual({ 'common.ok': 'ja', 'page.id': '1', 'only.at': 'fresh' });
+    });
+
+    it('loads nothing again when the loader that loaded it last has `cache: false`', async () => {
+      const live = vi.fn(async () => ({ at: 'live' }));
+      const gate = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'live', locale: 'de', routes: ['/a'], cache: false as const, loader: live },
+          { namespace: 'gate', locale: 'de', routes: ['/b'], loader: gate.loader },
+        ],
+      });
+
+      await instance.loadTranslations('de', '/a');
+      const left = instance.setRoute('/b');
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(left).rejects.toBeInstanceOf(Redirect);
+      await macrotask();
+
+      expect(live).toHaveBeenCalledTimes(1);
+      expect(instance.loading).toBe(false);
+    });
+
+    it('loads it once when that load throws control flow too', async () => {
+      const { common, page, gate, instance } = setup();
+
+      const home = instance.loadTranslations('de', '/');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+
+      const first = instance.setRoute('/p/1');
+      instance.invalidate('de', 'page');
+      const second = instance.setRoute('/p/2');
+
+      page.calls[0].resolve({ id: 'stale' });
+      await first;
+      page.calls[1].resolve({ id: '2' });
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(second).rejects.toBeInstanceOf(Redirect);
+
+      await vi.waitFor(() => expect(page.calls).toHaveLength(3));
+      page.calls[2].reject(new Redirect(307, '/login'));
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await macrotask();
+
+      expect(page.calls).toHaveLength(3);
+    });
+
+    it('runs no loader again for the params the load of a call it undoes threw control flow for', async () => {
+      const common = held();
+      const page = held();
+      const gate = held();
+      const other = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: common.loader },
+          { namespace: 'page', locale: 'de', routes: ['/a'], loader: page.loader },
+          { namespace: 'gate', locale: 'de', routes: ['/b'], loader: gate.loader },
+          { namespace: 'other', locale: 'de', routes: ['/c'], loader: other.loader },
+        ],
+      });
+
+      const home = instance.loadTranslations('de', '/');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+      const a = instance.setRoute('/a');
+      page.calls[0].resolve({ id: 'a' });
+      await a;
+      instance.invalidate('de', 'page');
+
+      const b = instance.setRoute('/b');
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(b).rejects.toBeInstanceOf(Redirect);
+      await vi.waitFor(() => expect(page.calls).toHaveLength(2));
+
+      const c = instance.setRoute('/c');
+      page.calls[1].reject(new Redirect(307, '/login'));
+      await macrotask();
+      other.calls[0].reject(new Redirect(307, '/login'));
+      await expect(c).rejects.toBeInstanceOf(Redirect);
+      await macrotask();
+
+      expect(page.calls).toHaveLength(2);
+      expect(instance.loading).toBe(false);
+    });
+
+    it('loads what an invalidation severed from the failed load, though it threw control flow', async () => {
+      const common = held();
+      const gate = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: common.loader },
+          { namespace: 'gate', locale: 'de', routes: ['/b'], loader: gate.loader },
+        ],
+      });
+
+      const home = instance.loadTranslations('de', '/a');
+      common.calls[0].resolve({ ok: 'ja' });
+      await home;
+      instance.invalidate('de', 'common');
+
+      const b = instance.setRoute('/b');
+      instance.invalidate('de', 'common');
+      common.calls[1].reject(new Redirect(307, '/login'));
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(b).rejects.toBeInstanceOf(Redirect);
+
+      await vi.waitFor(() => expect(common.calls).toHaveLength(3));
+      common.calls[2].resolve({ ok: 'wieder' });
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(instance.translations.de).toEqual({ 'common.ok': 'wieder' });
+    });
+
+    it.each([
+      ['a replaced config', async (instance: I18n, config: Config.T) => { await instance.loadConfig(config); }],
+      ['an invalidation', (instance: I18n) => { instance.invalidate('de'); }],
+    ])('activates a request put back whose load in flight %s severed', async (_, sever) => {
+      const de = held();
+      const gate = held();
+      const config = {
+        parser: valueParser,
+        loaders: [
+          commonOf('en'),
+          { namespace: 'common', locale: 'de', loader: de.loader },
+          { namespace: 'gate', locale: 'de', routes: ['/b'], loader: gate.loader },
+        ],
+      };
+      const instance = new i18n(config);
+
+      await instance.loadTranslations('en', '/');
+      const switched = instance.setLocale('de');
+      await sever(instance, config);
+      const warm = instance.loadTranslations('de', '/', { activate: false });
+      de.calls[1].resolve({ ok: 'ja' });
+      await warm;
+
+      const b = instance.setRoute('/b');
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(b).rejects.toBeInstanceOf(Redirect);
+
+      expect(instance.locale).toBe('de');
+
+      de.calls[0].resolve({ ok: 'alt' });
+      await switched;
+      await macrotask();
+
+      expect(instance.locale).toBe('de');
+    });
+
+    it('leaves the activation of a request put back to its activating load in flight', async () => {
+      const de = held();
+      const gate = held();
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          commonOf('en'),
+          { namespace: 'common', locale: 'de', loader: de.loader },
+          { namespace: 'gate', locale: 'de', routes: ['/b'], loader: gate.loader },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/');
+      const switched = instance.setLocale('de');
+      const b = instance.setRoute('/b');
+
+      de.calls[1].resolve({ ok: 'ja' });
+      gate.calls[0].reject(new Redirect(307, '/login'));
+      await expect(b).rejects.toBeInstanceOf(Redirect);
+
+      expect(instance.locale).toBe('en');
+
+      de.calls[0].reject(new Redirect(307, '/login'));
+      await expect(switched).rejects.toBeInstanceOf(Redirect);
+
+      expect(instance.locale).toBe('en');
+    });
+  });
+
+  it('activates the route an undo puts back once a load of it settled while replaced', async () => {
+    const item = held();
+    const gate = held();
+    const thrown = new Redirect(307, '/login');
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [
+        { namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/], loader: item.loader },
+        { namespace: 'gate', locale: 'en', routes: ['/'], loader: gate.loader },
+      ],
+    });
+
+    await instance.setLocale('en');
+    const itemRoute = instance.setRoute('/item/1');
+    const home = instance.setRoute('/');
+
+    item.calls[0].resolve({ id: '1' });
+    await itemRoute;
+    gate.calls[0].reject(thrown);
+    await expect(home).rejects.toBe(thrown);
+
+    expect(instance.locale).toBe('en');
+    expect(instance.translations.en).toEqual({ 'item.id': '1' });
+
+    await instance.setRoute('/item/1');
+
+    expect(item.loader).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['resolves', 'for params', /^\/a\/(?<id>\d+)$/, '/a/1'],
+    ['rejects', 'for none', '/a', '/a'],
+  ])('%s a call whose load %s a later route that does not select the loader that threw replaced', async (outcome, _, pattern, route) => {
+    const gate = held();
+    const thrown = new Redirect(307, '/login');
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [commonOf('en'), { namespace: 'gate', locale: 'en', routes: [pattern], loader: gate.loader }],
+    });
+
+    await instance.loadTranslations('en', '/');
+    const left = instance.setRoute(route);
+
+    await instance.setRoute('/b');
+    gate.calls[0].reject(thrown);
+
+    if (outcome === 'resolves') await left;
+    else await expect(left).rejects.toBe(thrown);
+
+    expect(instance.locale).toBe('en');
+  });
+
+  it('activates the request an undo puts back while only a warm load of it is in flight', async () => {
+    const de = held();
+    const fr = held();
+    const thrown = new Redirect(307, '/login');
+    const instance = new i18n({
+      parser: valueParser,
+      loaders: [commonOf('en'), { namespace: 'common', locale: 'de', loader: de.loader }, { namespace: 'common', locale: 'fr', loader: fr.loader }],
+    });
+
+    await instance.loadTranslations('en', '/');
+    const earlier = instance.setLocale('de');
+    const later = instance.setLocale('fr');
+
+    de.calls[0].resolve({ a: 'de' });
+    await earlier;
+    instance.invalidate('de');
+
+    const warm = instance.loadNamespace('common', 'de');
+    const other = instance.loadTranslations('de', '/x', { activate: false });
+
+    de.calls[2].resolve({ a: 'de' });
+    await other;
+    fr.calls[0].reject(thrown);
+    await expect(later).rejects.toBe(thrown);
+
+    expect(instance.locale).toBe('de');
+
+    de.calls[1].resolve({ a: 'de' });
+    await warm;
+  });
+
+  it('puts back the request while no locale is active yet, and activates it with its data already there', async () => {
     const en = held();
     const cs = held();
     const thrown = new Redirect(307, '/login');
@@ -2736,7 +3176,7 @@ describe('i18n loaders that throw', () => {
     cs.calls[0].reject(thrown);
     await expect(switched).rejects.toBe(thrown);
 
-    expect(instance.locale).toBeUndefined();
+    expect(instance.locale).toBe('en');
 
     const next = instance.setRoute('/');
 
@@ -2903,10 +3343,7 @@ describe('i18n loaders that throw', () => {
     expect(instance.locale).toBe('en');
   });
 
-  it.each([
-    ['de', 'fr'],
-    ['fr', 'en'],
-  ])('keeps a call that came between the calls a rejected load shares, the %s load settling first', async (settledFirst, active) => {
+  it.each(['de', 'fr'])('keeps a call that came between the calls a rejected load shares, the %s load settling first', async (settledFirst) => {
     const de = held();
     const fr = held();
     const thrown = new Redirect(307, '/login');
@@ -2944,8 +3381,8 @@ describe('i18n loaders that throw', () => {
       await settleDe();
     }
 
-    // Settled before the undo, the call between waits for the next trigger.
-    expect(instance.locale).toBe(active);
+    // Settled before the undo, the call between activates with it.
+    expect(instance.locale).toBe('fr');
 
     await instance.setRoute('/');
 
@@ -2953,10 +3390,7 @@ describe('i18n loaders that throw', () => {
     expect(instance.locale).toBe('fr');
   });
 
-  it.each([
-    ['earlier', 'en'],
-    ['later', 'de'],
-  ])('activates what an earlier switch asked for once a load of it settles after a later one is undone, the %s settling first', async (first, active) => {
+  it.each(['earlier', 'later'])('activates what an earlier switch asked for once a later one is undone and a load of it settled, the %s settling first', async (first) => {
     const de = held();
     const fr = held();
     const thrown = new Redirect(307, '/login');
@@ -2991,8 +3425,8 @@ describe('i18n loaders that throw', () => {
       await settleEarlier();
     }
 
-    // Its own load activates it while in flight; once settled, the next trigger does.
-    expect(instance.locale).toBe(active);
+    // Its own load activates it while in flight; once settled, the undo does.
+    expect(instance.locale).toBe('de');
 
     await instance.setRoute('/');
 
@@ -3386,12 +3820,18 @@ describe('i18n loaders that throw', () => {
 
     await expect(load).rejects.toBe(thrown);
 
+    // The undo loads the params it put back, which the invalidation dropped.
+    await vi.waitFor(() => expect(item.calls).toHaveLength(4));
+    item.calls[3].resolve({ id: '1' });
+    await vi.waitFor(() => expect(instance.loading).toBe(false));
+
     // Data for the params the route no longer asks for is discarded.
     const warm = instance.loadTranslations('en', '/item/2', { activate: false });
-    item.calls[3].resolve({ id: '2' });
+    item.calls[4].resolve({ id: '2' });
     await warm;
 
     expect(instance.translations.en).toEqual({ 'item.id': '1' });
+    expect(item.loader).toHaveBeenCalledWith(expect.objectContaining({ params: { id: '1' } }));
   });
 
   it('forgets the params a rejected call asked a loader for when no call asked for any before, so a warm load parks others', async () => {
@@ -4901,7 +5341,10 @@ describe('i18n cache and invalidation', () => {
       expect(instance.locale).toBe('en');
     });
 
-    it('resumes once a later call for another locale is undone', async () => {
+    it.each([
+      ['no params', undefined, '/'],
+      ['params', [/^\/p\/(?<id>\w+)$/], '/p/1'],
+    ])('loads the request back once a later call for another locale is undone, its loader capturing %s', async (_, routes, route) => {
       const en = held();
       const guarded = held();
       const thrown = new Redirect(307, '/login');
@@ -4909,13 +5352,13 @@ describe('i18n cache and invalidation', () => {
         parser,
         loaders: [
           { namespace: 'common', locale: 'de', loader: async () => ({ a: 'de' }) },
-          { namespace: 'common', locale: 'en', loader: en.loader },
+          { namespace: 'common', locale: 'en', ...(routes ? { routes } : {}), loader: en.loader },
           { namespace: 'common', locale: 'fr', loader: async () => ({ a: 'fr' }) },
           { namespace: 'guarded', locale: 'fr', loader: guarded.loader },
         ],
       });
 
-      await instance.loadTranslations('de', '/');
+      await instance.loadTranslations('de', route);
       const first = instance.setLocale('en');
       instance.invalidate('en');
       const second = instance.setLocale('fr');
@@ -4929,7 +5372,7 @@ describe('i18n cache and invalidation', () => {
       en.calls[1].resolve({ a: 'en' });
       await first;
 
-      expect(instance.locale).toBe('en');
+      await vi.waitFor(() => expect(instance.locale).toBe('en'));
     });
   });
 

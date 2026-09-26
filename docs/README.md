@@ -204,8 +204,13 @@ every locale.
   `setLocale()`, a `setRoute()`, an activating `loadTranslations()` or a
   [`hydrate()`](#hydrateenvelope). Should that later call fail too, both are
   undone. A later `setRoute()` therefore loads the locale asked for before, not
-  the rejected one; the request put back activates once a load of it settles —
-  its own, if it is still in flight, or else the next trigger's. A locale or a route nothing was asked for before stands,
+  the rejected one. The request put back activates at once when its data is
+  already there — or leaves it to its own activating load still in flight,
+  which activates it or fails — and is loaded again otherwise — the undo starts that load
+  itself, `loading` shows it, and it joins a load of the request still in
+  flight — unless the undo put back the very request that failed, or a loader
+  it needs threw for it in the load of a call the undo drops: a failure never runs again by itself, so the
+  next trigger loads that. A locale or a route nothing was asked for before stands,
   each on its own: it is all there is for the next trigger to load.
 - **What the other loaders delivered is kept**, as a
   [warm load](#loadtranslationslocale-route-options) keeps it: it lands in the
@@ -217,8 +222,9 @@ every locale.
   is kept, and the call still rejects with the control flow.
 - **Control flow a later call replaced is discarded.** The load of a call a
   later one replaced — with another locale, or with other route params for the
-  loader that threw — resolves without it; a later route of the same locale
-  that does not select that loader replaces nothing. A warm load asks for
+  loader that threw — resolves without it. A later route that does not select
+  that loader asks it for no params, so it replaces the load of params its
+  routes captured, not one of none. A warm load asks for
   nothing, so nothing replaces its control flow, unless it shares the load of
   an activating call, whose outcome it then gets. What a loader throws is
   discarded like its data when an invalidation severed it before its load
@@ -465,7 +471,11 @@ the loader as `params`, and the loader runs again whenever the params change:
   preload: the trigger that asks for those params applies it instead of
   fetching it again. It counts towards its locale's [`cache`](#cache-optional)
   window, and `invalidate()` drops it — even while a trigger is about to apply
-  it, which then fetches it again.
+  it, which then fetches it again. A loader the current route does not select
+  is asked for no params: data a load of another route delivers for it lands
+  only while it replaces nothing, and what
+  [`loadNamespace()`](#loadnamespacenamespace-locale) fetches for it without
+  params lands.
 
 Use a non-capturing group (`(?:...)`) where you only need grouping.
 
@@ -1965,7 +1975,12 @@ trigger then rejects with it), or when the config was replaced. When a later
 call asked for another locale or route meanwhile, the trigger waits for the
 calls since its own: it resolves without activating should their request
 stand — the later call loads what it asked for — and fetches its part again
-should their control flow put its request back. `invalidate()` itself still
+should their control flow put its request back. When the later call wants
+other [route params](#route-params) of a loader the trigger's load ran or
+took from a preload — or none of one its route gave params to, because the
+later route does not select it — the trigger resolves without activating at
+once: should an undo put its request back, the undo loads it.
+`invalidate()` itself still
 starts nothing: only a trigger that was already running finishes its job.
 
 A loader with [`cache: false`](#cache-optional) is covered too: the call ends
