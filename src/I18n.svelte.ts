@@ -550,8 +550,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * hand-off named, whose seeded data would keep the client's loaders from
    * ever running.
    * A literal `__proto__` key is left out too, and with records its
-   * namespace's loaders are, without them a namespace a loader serves, so the
-   * client loads it whole: the serializer SvelteKit hands load data to refuses an
+   * namespace's loaders are, and a namespace whose loader captures params,
+   * without them a namespace a loader serves, so the client loads it whole: the serializer SvelteKit hands load data to refuses an
    * object that carries one. A locale
    * named `__proto__` is left out altogether.
    *
@@ -608,16 +608,17 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
         stripped.set(locale, lost);
 
-        // Plain data names the namespaces it holds, and a plain hand-off keeps
-        // their loaders from running: a namespace a loader serves goes whole
-        // instead, for the client to load. One no loader serves keeps the rest.
-        if (!withRecords) {
-          const served = loaders
-            .filter((loader) => loader.locale === locale && lost.some((key) => isNamespaceKey(key, loader.namespace)))
-            .map(({ namespace }) => namespace);
+        // The namespace goes without its record, whole: data plain or unrecorded
+        // is kept on the client as data no loader delivered, which a plain
+        // hand-off marks loaded and new params could not replace. It goes for
+        // the client to load instead — with records, only where params can
+        // change. One no loader serves keeps the rest.
+        const served = loaders
+          .filter((loader) => loader.locale === locale && (!withRecords || capturesParams(loader.routes)))
+          .filter((loader) => lost.some((key) => isNamespaceKey(key, loader.namespace)))
+          .map(({ namespace }) => namespace);
 
-          kept = Object.fromEntries(Object.entries(relevant).filter(([key]) => !served.some((namespace) => isNamespaceKey(key, namespace))));
-        }
+        kept = Object.fromEntries(Object.entries(relevant).filter(([key]) => !served.some((namespace) => isNamespaceKey(key, namespace))));
       }
 
       // An empty entry would still stamp the locale's freshness on the client,

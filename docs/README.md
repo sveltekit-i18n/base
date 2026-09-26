@@ -1858,8 +1858,9 @@ What the payload leaves out:
   with `devalue`, which refuses an object carrying one, so keeping it would fail
   the render. The key is dropped with a warning; the rest of its namespace is
   kept, and the loaders of that namespace stay out of the records, so the
-  client loads it whole. Without records, a namespace a loader serves is left
-  out, for the same reason. A locale named `__proto__` is left out altogether.
+  client loads it whole. A namespace whose loader can capture params is left
+  out, since data no record names could not be replaced by the next params,
+  and without records, so is a namespace a loader serves, for the same reason. A locale named `__proto__` is left out altogether.
 
 Without records, plain data cannot say which loader delivered what, so
 `snapshot()` also leaves out:
