@@ -1427,7 +1427,11 @@ wherever reads are tracked (component templates, `$derived`, `$effect`); the
 load-triggering methods return the promise of the **matching** load —
 concurrent duplicate triggers that select the same loaders for the same locale
 and route join the load already in flight (and receive its promise) instead of
-fetching twice. A trigger from another route loads for its own: a loader
+fetching twice. Triggers from the same route whose selections merely overlap —
+a route load and a [`loadNamespace()`](#loadnamespacenamespace-locale) of one
+of its namespaces, say — still share each loader they both run for the same
+params, and each settles once everything it waits on has. A trigger from
+another route loads for its own: a loader
 receives the route, so what it delivers, or throws, for one need not fit
 another. Those methods,
 [`loadConfig()`](#loadconfigconfig),

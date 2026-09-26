@@ -2332,6 +2332,229 @@ describe('i18n loading concurrency', () => {
   });
 });
 
+describe('i18n fetches shared per loader', () => {
+  class Redirect {
+    constructor(public status: number, public location: string) {}
+  }
+
+  const macrotask = () => new Promise((resolve) => { setTimeout(resolve); });
+
+  const setup = (options: { cache?: false; error?: (message: string) => void } = {}) => {
+    const calls: string[] = [];
+    const common = held();
+    const editor = held();
+    const instance = new i18n({
+      parser: valueParser,
+      log: { level: 'error', logger: { error: options.error ?? (() => {}), warn: () => {}, debug: () => {} } },
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: () => { calls.push('common'); return common.loader(); } },
+        { namespace: 'editor', locale: 'en', routes: ['/edit'], ...(options.cache === false ? { cache: false as const } : {}), loader: () => { calls.push('editor'); return editor.loader(); } },
+      ],
+    });
+
+    return { calls, common, editor, instance };
+  };
+
+  it('fetches a namespace once for a route load and `loadNamespace()` from that route', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const home = instance.loadTranslations('en', '/');
+    common.calls[0].resolve({ ok: 'yes' });
+    await home;
+
+    const route = instance.setRoute('/edit');
+    const namespace = instance.loadNamespace('editor');
+
+    editor.calls.forEach(({ resolve }) => resolve({ title: 'Editor' }));
+    await Promise.all([route, namespace]);
+
+    expect(calls).toEqual(['common', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Editor' });
+  });
+
+  it('fetches a namespace once for `loadNamespace()` and a route load after it', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const first = instance.loadTranslations('en', '/edit');
+    common.calls[0].resolve({ ok: 'yes' });
+    editor.calls[0].resolve({ title: 'Editor' });
+    await first;
+    instance.invalidate('en', 'editor');
+
+    const namespace = instance.loadNamespace('editor');
+    const route = instance.setRoute('/edit');
+
+    editor.calls.slice(1).forEach(({ resolve }) => resolve({ title: 'Fresh' }));
+    await Promise.all([route, namespace]);
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Fresh' });
+  });
+
+  it('joins what a load severed in part still fetches, and fetches only the severed part', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const first = instance.loadTranslations('en', '/edit');
+    instance.invalidate('en', 'editor');
+    const second = instance.loadTranslations('en', '/edit');
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+
+    common.calls[0].resolve({ ok: 'yes' });
+    editor.calls[0].resolve({ title: 'Stale' });
+    editor.calls[1].resolve({ title: 'Fresh' });
+    await Promise.all([first, second]);
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Fresh' });
+    expect(instance.locale).toBe('en');
+  });
+
+  it('severs a shared fetch for every load waiting on it', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const home = instance.loadTranslations('en', '/');
+    common.calls[0].resolve({ ok: 'yes' });
+    await home;
+
+    const route = instance.setRoute('/edit');
+    const namespace = instance.loadNamespace('editor');
+
+    instance.invalidate('en', 'editor');
+    editor.calls[0].resolve({ title: 'Stale' });
+    await namespace;
+
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes' });
+
+    await macrotask();
+    editor.calls[1].resolve({ title: 'Fresh' });
+    await route;
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Fresh' });
+  });
+
+  it('raises `loading` once an activating trigger joins a warm fetch', async () => {
+    const { common, editor, instance } = setup();
+
+    const first = instance.loadTranslations('en', '/edit');
+    common.calls[0].resolve({ ok: 'yes' });
+    editor.calls[0].resolve({ title: 'Editor' });
+    await first;
+    instance.invalidate('en', 'editor');
+
+    const warm = instance.loadNamespace('editor');
+
+    expect(instance.loading).toBe(false);
+
+    const route = instance.setRoute('/edit');
+
+    expect(editor.loader).toHaveBeenCalledTimes(2);
+    expect(instance.loading).toBe(true);
+
+    editor.calls[1].resolve({ title: 'Fresh' });
+    await Promise.all([warm, route]);
+
+    expect(instance.loading).toBe(false);
+  });
+
+  it('neither recurses nor hangs when a loader starts a load of its own route before its first `await`', async () => {
+    const calls: string[] = [];
+    let nested: Promise<void> | undefined;
+    const instance: I18n = new i18n({
+      parser: valueParser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ ok: 'yes' }) },
+        {
+          namespace: 'editor',
+          locale: 'en',
+          routes: ['/edit'],
+          loader: async () => {
+            calls.push('editor');
+            nested ??= instance.loadNamespace('editor', 'en');
+            return { title: 'Editor' };
+          },
+        },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/edit');
+    await nested;
+
+    expect(calls).toEqual(['editor']);
+    expect(instance.t('editor.title')).toBe('Editor');
+  });
+
+  it('shares no fetch that failed soft', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const first = instance.loadTranslations('en', '/edit');
+    editor.calls[0].reject(new Error('unavailable'));
+    await macrotask();
+
+    const namespace = instance.loadNamespace('editor', 'en');
+    editor.calls[1].resolve({ title: 'Editor' });
+    await namespace;
+    common.calls[0].resolve({ ok: 'yes' });
+    await first;
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Editor' });
+  });
+
+  it('shares the fetch of a loader that delivered until a load waiting on it has recorded it', async () => {
+    const { calls, common, editor, instance } = setup();
+
+    const first = instance.loadTranslations('en', '/edit');
+    editor.calls[0].resolve({ title: 'Editor' });
+    await macrotask();
+
+    const namespace = instance.loadNamespace('editor', 'en');
+    common.calls[0].resolve({ ok: 'yes' });
+    await Promise.all([first, namespace]);
+
+    expect(calls).toEqual(['common', 'editor']);
+    expect(instance.translations.en).toEqual({ 'common.ok': 'yes', 'editor.title': 'Editor' });
+  });
+
+  it('shares no fetch of a loader with `cache: false` that delivered', async () => {
+    const { calls, common, editor, instance } = setup({ cache: false });
+
+    const first = instance.loadTranslations('en', '/edit');
+    editor.calls[0].resolve({ title: 'First' });
+    await macrotask();
+
+    const namespace = instance.loadNamespace('editor', 'en');
+    editor.calls[1].resolve({ title: 'Second' });
+    await namespace;
+    common.calls[0].resolve({ ok: 'yes' });
+    await first;
+
+    expect(calls).toEqual(['common', 'editor', 'editor']);
+  });
+
+  it('reports the control flow of a shared fetch once', async () => {
+    const errors: string[] = [];
+    const { common, editor, instance } = setup({ error: (message) => errors.push(message) });
+    const thrown = new Redirect(307, '/login');
+
+    const home = instance.loadTranslations('en', '/');
+    common.calls[0].resolve({ ok: 'yes' });
+    await home;
+
+    const route = instance.setRoute('/edit');
+    const namespace = instance.loadNamespace('editor');
+
+    editor.calls[0].reject(thrown);
+    await expect(route).rejects.toBe(thrown);
+    await expect(namespace).rejects.toBe(thrown);
+
+    expect(editor.loader).toHaveBeenCalledTimes(1);
+    expect(errors.filter((message) => message.includes('Rejecting the load'))).toHaveLength(1);
+  });
+});
+
 describe('i18n loaders that throw', () => {
   // Shaped like SvelteKit's `Redirect` and `HttpError`, neither an `Error`.
   class Redirect {
@@ -3624,7 +3847,8 @@ describe('i18n loaders that throw', () => {
 
     await instance.setRoute('/item/1');
 
-    expect(page).toHaveBeenCalledTimes(4);
+    // `loadNamespace()` shared the route load's fetch of `page`.
+    expect(page).toHaveBeenCalledTimes(3);
     expect(instance.t('page.title')).toBe('Page 1');
   });
 

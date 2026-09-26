@@ -58,7 +58,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 |------|------|
 | `src/index.ts` | entry — re-exports the class and public types |
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
-| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `matchLocale`, `textDirection`, `toDotNotation`, `serialize`, `fetchTranslations`, `testRoute`) |
+| `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `matchLocale`, `textDirection`, `toDotNotation`, `serialize`, `fetchTranslation`, `testRoute`) |
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
 | `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n` and the `Kit` types |
 | `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
@@ -100,7 +100,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   trigger what a loader delivered or threw for another route — a loader
   receives the route. A trigger joins a
   load under its key only while that load delivers everything the trigger has
-  to fetch — nothing severed, nothing left out; `loading` is
+  to fetch — nothing severed, nothing left out. A trigger that joins no load
+  still shares, per loader, the fetch in flight for the same params and route
+  (`#fetches`, registered before any loader of the load runs; one that
+  delivered stays until a load waiting on it applied or parked the delivery,
+  while one that failed, and one of a `cache: false` loader, leaves with its
+  outcome, so the next load runs that loader again): each load that waits on a fetch gets its outcome, `#sever`
+  cuts it off for all of them, and its control flow is reported once
+  (`#reported`); `loading` is
   derived from the set of in-flight ACTIVATING loads. A warm load
   (`loadTranslations(…, { activate: false })`, and every `loadNamespace`,
   which selects by namespace and ignores `routes`) only fills the tables: it

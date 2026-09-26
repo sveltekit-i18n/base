@@ -747,34 +747,32 @@ const isControlFlow = (value: unknown): boolean => {
   }
 };
 
-// Every loader is called before the first one is awaited, and all of them
-// settle before the fetch does. One that throws is logged and costs only its
-// own data; SvelteKit's control flow is returned for the load to report and
-// reject with once every loader has settled. Only a throw is retried: an
-// empty answer is an answer, and it still replaces what the loader delivered
-// for other params.
-export const fetchTranslations = async (requests: LoadRequest[], route: string): Promise<Fetched> => {
-  const responses = await Promise.all(requests.map(async ({ loader: resolved, params, signature }) => {
-    const { loader, locale, namespace } = resolved;
+// One loader's fetch. One that throws is logged and costs only its own data;
+// SvelteKit's control flow is returned for the load to report and reject with
+// once every loader of it has settled. Only a throw is retried: an empty
+// answer is an answer, and it still replaces what the loader delivered for
+// other params.
+export const fetchTranslation = async ({ loader: resolved, params, signature }: LoadRequest, route: string): Promise<Fetched> => {
+  const { loader, locale, namespace } = resolved;
 
-    try {
-      const data = await loader({ locale, namespace, route, params });
+  try {
+    const data = await loader({ locale, namespace, route, params });
 
-      return { deliveries: [{ loader: resolved, signature, data: data || {} }], controlFlow: [] };
-    } catch (error) {
-      if (isControlFlow(error)) return { deliveries: [], controlFlow: [{ loader: resolved, signature, value: error }] };
+    return { deliveries: [{ loader: resolved, signature, data: data || {} }], controlFlow: [] };
+  } catch (error) {
+    if (isControlFlow(error)) return { deliveries: [], controlFlow: [{ loader: resolved, signature, value: error }] };
 
-      logError(`Failed to load translation. Verify your ${loaderName(resolved)} Loader.`, error);
+    logError(`Failed to load translation. Verify your ${loaderName(resolved)} Loader.`, error);
 
-      return { deliveries: [], controlFlow: [] };
-    }
-  }));
-
-  return {
-    deliveries: responses.flatMap(({ deliveries }) => deliveries),
-    controlFlow: responses.flatMap(({ controlFlow }) => controlFlow),
-  };
+    return { deliveries: [], controlFlow: [] };
+  }
 };
+
+/** The fetches of a load as one. */
+export const mergeFetched = (fetched: Fetched[]): Fetched => ({
+  deliveries: fetched.flatMap(({ deliveries }) => deliveries),
+  controlFlow: fetched.flatMap(({ controlFlow }) => controlFlow),
+});
 
 // `exec` advances `lastIndex` on a `g`/`y` pattern, so a route object reused
 // across navigations would match only every other time — and writing to the

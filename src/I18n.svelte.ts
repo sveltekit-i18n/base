@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 
-import { capturesParams, fetchTranslations, hasOwn, loaderName, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
+import { capturesParams, fetchTranslation, hasOwn, loaderName, mergeFetched, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
 import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -42,12 +42,20 @@ type Undone = { changed: boolean; threw: ControlFlow[] };
 /** A parked delivery an activating load counts on, with the request it serves. */
 type Unparked = { request: LoadRequest; delivery: Delivery };
 
+/**
+ * One loader's fetch in flight, which every load from its route that asks the
+ * loader for the same params waits on.
+ */
+type Fetch = { request: LoadRequest; route: string; outcome: Promise<Fetched> };
+
 type InflightLoad = {
   key: string;
   /** The config it started under: a reconfiguration replaces its loaders. */
   config: object | undefined;
   promise: Promise<void>;
   loaders: Loader.Resolved[];
+  /** What it waits on: the fetches it started, and those of other loads it joined. */
+  fetches: Fetch[];
   severed: Set<Loader.Resolved>;
   calls: Call[];
   unparked: Unparked[];
@@ -152,6 +160,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * either kind, an invalidation cut off while the load was in flight.
    */
   #inflight = new Set<InflightLoad>();
+
+  // The loaders' fetches in flight, which loads from the same route share
+  // wherever their selections differ.
+  #fetches = new Set<Fetch>();
+
+  // The control flow of a shared fetch already reported: every load it
+  // rejects gets it, and it was thrown once.
+  #reported = new WeakSet<ControlFlow>();
 
   /**
    * The activating calls since the last one whose load resolved without
@@ -637,13 +653,55 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Runs the loaders a locale and route select, WITHOUT applying their data.
-   * The `cache` expiry is evaluated by load triggers, not here.
+   * The fetches of `requests` from `route`, WITHOUT applying their data: each
+   * joins the one in flight for the same loader, params and route, and `run`
+   * starts the rest. Those are registered before `run` calls any loader, so a
+   * loader that starts a load of its own route joins its own fetch instead of
+   * running again. A fetch that delivered stays in the table until a load
+   * waiting on it has applied or parked the delivery; any other, and one of a
+   * loader with `cache: false`, leaves it with its outcome, so the next load
+   * runs the loader again. The `cache` expiry is evaluated by load triggers,
+   * not here.
    */
-  async #fetch(requests: LoadRequest[], route: string): Promise<Fetched> {
-    logger.debug('Fetching translations...');
+  #fetch(requests: LoadRequest[], route: string): { fetches: Fetch[]; run: () => void } {
+    const started: Array<{ fetch: Fetch; outcome: { resolve: (fetched: Fetched) => void; reject: (reason: unknown) => void } }> = [];
 
-    return fetchTranslations(requests, route);
+    const fetches = requests.map((request) => {
+      const shared = Array.from(this.#fetches).find((fetch) => fetch.route === route
+        && fetch.request.loader === request.loader
+        && fetch.request.signature === request.signature);
+
+      if (shared) return shared;
+
+      let outcome!: { resolve: (fetched: Fetched) => void; reject: (reason: unknown) => void };
+
+      const fetch: Fetch = { request, route, outcome: new Promise<Fetched>((resolve, reject) => { outcome = { resolve, reject }; }) };
+
+      this.#fetches.add(fetch);
+      started.push({ fetch, outcome });
+
+      return fetch;
+    });
+
+    const run = () => {
+      if (started.length) logger.debug('Fetching translations...');
+
+      started.forEach(({ fetch, outcome }) => {
+        const release = (fetched?: Fetched) => {
+          if (!fetched?.deliveries.length || fetch.request.loader.cache === false) this.#fetches.delete(fetch);
+        };
+
+        fetchTranslation(fetch.request, route).then((fetched) => {
+          release(fetched);
+          outcome.resolve(fetched);
+        }, (reason: unknown) => {
+          release();
+          outcome.reject(reason);
+        });
+      });
+    };
+
+    return { fetches, run };
   }
 
   /**
@@ -1074,6 +1132,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#inflight.forEach(({ loaders, unparked, severed }) => {
       [...loaders, ...unparked.map(({ request }) => request.loader)].filter(covers).forEach((loader) => severed.add(loader));
     });
+
+    this.#fetches.forEach((fetch) => {
+      if (covers(fetch.request.loader)) this.#fetches.delete(fetch);
+    });
   }
 
   /**
@@ -1411,6 +1473,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     if (wanted.length) this.#applyDeliveries(wanted);
   }
 
+  /** Takes the fetches `entry` waited on out of the table, once what they delivered is applied or parked. */
+  #release({ fetches }: InflightLoad): void {
+    fetches.forEach((fetch) => this.#fetches.delete(fetch));
+  }
+
   /** What is parked for `requests`, for the load that applies it once it settles. */
   #claimParked(requests: LoadRequest[]): Unparked[] {
     return requests.flatMap((request) => {
@@ -1476,14 +1543,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const promise = new Promise<void>((resolve, reject) => { outcome = { resolve, reject }; });
 
-    const entry: InflightLoad = { key, config: this.#config, promise, loaders: requests.map(({ loader }) => loader), severed: new Set(), calls, unparked };
+    const { fetches, run } = this.#fetch(requests, route);
+
+    const entry: InflightLoad = { key, config: this.#config, promise, loaders: requests.map(({ loader }) => loader), fetches, severed: new Set(), calls, unparked };
 
     // Registered before any loader is called, so one that invalidates or
     // destroys the instance before its first `await` severs its own load too.
     this.#inflight.add(entry);
     if (calls.length) this.#pending = new Set(this.#pending).add(promise);
 
-    const settled = this.#fetch(requests, route).then(({ deliveries, controlFlow }) => {
+    run();
+
+    const settled = Promise.all(fetches.map(({ outcome }) => outcome)).then(mergeFetched).then(({ deliveries, controlFlow }) => {
       // Released before the load settles: a trigger arriving in between must
       // not join a load whose activation step has already run — it finds the
       // data recorded and activates at once.
@@ -1522,6 +1593,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
         else failure = { error };
       }
 
+      this.#release(entry);
+
       if (undone) this.#settleUndo(undone);
 
       if (failure) throw failure.error;
@@ -1539,10 +1612,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
 
     // Reported here so a load nobody awaits is still visible. What a resume
-    // adopts is a load of its own, which reports itself.
-    settled.catch((error) => logError(rejection
-      ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
-      : `Failed to load translations for '${locale}' locale${onRoute}.`, error));
+    // adopts is a load of its own, which reports itself; control flow a
+    // shared fetch threw is reported by the first load it rejects.
+    settled.catch((error) => {
+      if (rejection) {
+        if (this.#reported.has(rejection)) return;
+
+        this.#reported.add(rejection);
+      }
+
+      logError(rejection
+        ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
+        : `Failed to load translations for '${locale}' locale${onRoute}.`, error);
+    });
 
     // Resumed once per call: a loader that invalidates what it loads each time
     // it runs would otherwise be fetched again for as long as it keeps doing
@@ -1552,8 +1634,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       .then(outcome.resolve, outcome.reject);
 
     const settle = () => {
-      // Only a `#fetch` that rejected skipped the release above.
+      // Only a settle step that threw before its release skipped the one above.
       this.#inflight.delete(entry);
+      this.#release(entry);
 
       if (!this.#pending.has(promise)) return;
 
