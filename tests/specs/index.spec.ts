@@ -2097,6 +2097,56 @@ describe('i18n loading concurrency', () => {
     expect(calls).toBe(1);
   });
 
+  it('does not share a load in flight with a trigger from another route', async () => {
+    const routes: string[] = [];
+    const instance = new i18n({
+      parser,
+      loaders: [{ namespace: 'common', locale: 'en', loader: async ({ route }: Loader.Props) => { routes.push(route); return { at: route }; } }],
+    });
+
+    const first = instance.loadTranslations('en', '/a', { activate: false });
+    const second = instance.loadTranslations('en', '/b', { activate: false });
+
+    expect(second).not.toBe(first);
+
+    await Promise.all([first, second]);
+
+    expect(routes).toEqual(['/a', '/b']);
+  });
+
+  it.each([
+    ['a warm load', 'before', { activate: false }],
+    ['a warm load', 'after', { activate: false }],
+    ['an activating load', 'before', {}],
+    ['an activating load', 'after', {}],
+  ])('settles a load whose loader awaits %s of another route %s its first `await`', async (_, when, options) => {
+    const routes: string[] = [];
+    const instance: I18n = new i18n({
+      parser,
+      loaders: [{
+        namespace: 'common',
+        locale: 'en',
+        // A SvelteKit remote query that redirects awaits the navigation it
+        // causes, whose load selects this loader again.
+        loader: async ({ route }: Loader.Props) => {
+          routes.push(route);
+
+          if (when === 'after') await Promise.resolve();
+          if (route === '/account') await instance.loadTranslations('en', '/account/login', options);
+
+          return { at: route };
+        },
+      }],
+    });
+
+    const load = instance.loadTranslations('en', '/account');
+    const outcome = await Promise.race([load.then(() => 'settled'), new Promise((resolve) => { setTimeout(resolve, 500, 'hangs'); })]);
+
+    expect(outcome).toBe('settled');
+    expect(routes).toEqual(['/account', '/account/login']);
+    expect(instance.loading).toBe(false);
+  });
+
   it('activates the most recently requested locale when loads resolve out of order', async () => {
     const gates: Record<string, () => void> = {};
     const blockUntilOpened = (locale: string) => new Promise<void>((resolve) => { gates[locale] = resolve; });
@@ -3289,7 +3339,7 @@ describe('i18n loaders that throw', () => {
     expect(instance.translations.en).toEqual({ 'detail.title': 'Item 0' });
   });
 
-  it('puts back the request of a rejected call whose load a resumed one joined', async () => {
+  it('resumes a severed call for its own route, apart from a later route change that rejects', async () => {
     const guarded = held();
     const thrown = new Redirect(307, '/login');
     const instance = new i18n({
@@ -3303,18 +3353,20 @@ describe('i18n loaders that throw', () => {
     const second = instance.setRoute('/other');
 
     guarded.calls[0].resolve({ title: 'stale' });
-    // The first load has resumed by then, joining the second.
-    await macrotask();
     guarded.calls[1].reject(thrown);
 
     await expect(second).rejects.toBe(thrown);
-    await expect(first).rejects.toBe(thrown);
     expect(instance.snapshot({ records: true }).route).toBe('/');
+
+    await vi.waitFor(() => expect(guarded.calls).toHaveLength(3));
+    guarded.calls[2].resolve({ title: 'fresh' });
+    await first;
+
+    expect(instance.locale).toBe('en');
 
     await instance.setRoute('/');
 
-    expect(guarded.loader).toHaveBeenCalledTimes(2);
-    expect(instance.locale).toBe('de');
+    expect(guarded.loader).toHaveBeenCalledTimes(3);
   });
 
   it('puts back the params of a rejected call whose load resumed', async () => {
@@ -4286,7 +4338,7 @@ describe('i18n loadNamespace', () => {
     expect(calls).toEqual({ common: 1, home: 1, editor: 1 });
   });
 
-  it('fetches once for concurrent calls, whichever route they come from', async () => {
+  it('fetches once for concurrent calls from one route, and once for each other route', async () => {
     const calls: Calls = {};
     const { loader, calls: settles } = held();
     const instance = new i18n({ parser: valueParser, log, loaders: loaders(calls, loader) });
@@ -4294,15 +4346,18 @@ describe('i18n loadNamespace', () => {
     await instance.loadTranslations('en', '/');
 
     const first = instance.loadNamespace('editor');
+    const joined = instance.loadNamespace('editor');
+
+    expect(joined).toBe(first);
 
     await instance.setRoute('/about');
 
     const second = instance.loadNamespace('editor');
 
-    settles[0]?.resolve({ title: 'Editor' });
+    settles.forEach(({ resolve }) => resolve({ title: 'Editor' }));
     await Promise.all([first, second]);
 
-    expect(calls.editor).toBe(1);
+    expect(calls.editor).toBe(2);
     expect(instance.t('editor.title')).toBe('Editor');
   });
 

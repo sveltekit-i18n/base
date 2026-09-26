@@ -165,8 +165,10 @@ the sanitized `locale` and the `namespace` this run fetches translations for,
 the `route` the load was triggered for (without [`basePath`](#basepath)), and the `params` its
 [`routes`](#route-params) captured (`{}` when they capture none). Loaders that
 don't need the context can simply take no parameters. A loader must not
-await a load of the same instance — `setLocale()`, `loadNamespace()` and the
-rest: that load can be the one waiting for the loader, which then never settles.
+await a load of the same instance for the route it was called with —
+`setLocale()`, `loadNamespace()` and the rest: that load can be the one waiting
+for the loader, which then never settles. A load of another route, such as the
+navigation a remote `query`'s `redirect()` waits on, is a load of its own.
 
 A loader that throws is reported and runs again on the next load trigger; the
 rest of the load lands without its data. One that returns nothing (`undefined`
@@ -528,8 +530,8 @@ For such a loader the core keeps no freshness of its own:
 - It **runs on every load trigger that selects it**, by locale and route, and
   [`loadNamespace()`](#loadnamespacenamespace-locale) runs it too — off its
   `routes` only until it has delivered, like any loader. Freshness and
-  deduplication across triggers are its source's job; concurrent triggers still
-  share one load.
+  deduplication across triggers are its source's job; concurrent triggers from
+  one route still share one load.
 - Its data is applied each time it delivers, like any refetch.
 - It starts no [`cache`](#cache) window, and the config's `cache` does not apply
   to it: an expiry neither runs it again nor discards what it is fetching.
@@ -1414,8 +1416,10 @@ Everything lives on one reactive instance. Reading its properties is reactive
 wherever reads are tracked (component templates, `$derived`, `$effect`); the
 load-triggering methods return the promise of the **matching** load —
 concurrent duplicate triggers that select the same loaders for the same locale
-join the load already in flight (and receive its promise) instead of fetching
-twice, whichever route they were called from. Those methods,
+and route join the load already in flight (and receive its promise) instead of
+fetching twice. A trigger from another route loads for its own: a loader
+receives the route, so what it delivers, or throws, for one need not fit
+another. Those methods,
 [`loadConfig()`](#loadconfigconfig),
 [`addTranslations()`](#addtranslationstranslations),
 [`hydrate()`](#hydrateenvelope) and assigning [`locale`](#locale) track none
@@ -1618,7 +1622,7 @@ cannot replace it meanwhile, and should the call fail, it stays aside. A loader 
 runs again instead.
 It does not evaluate the [`cache`](#cache) window; the next activating trigger
 does. An activating trigger selecting the same loaders for the same locale
-joins it: `loading` turns `true`, the locale activates when the shared load
+and route joins it: `loading` turns `true`, the locale activates when the shared load
 settles, and both calls share its outcome — when a loader throws SvelteKit's
 control flow, both reject with it. Once it has settled, the activating call
 fetches nothing (a [`cache: false`](#cache-optional) loader aside) and
@@ -1694,8 +1698,9 @@ async function openEditor() {
   called — with none.
 - It honours the load records like every other trigger: calling it on every
   interaction fetches once (a [`cache: false`](#cache-optional) loader runs
-  each time on its routes), and concurrent calls share one fetch, whichever
-  route they come from.
+  each time on its routes), and concurrent calls from one route share one
+  fetch — with a route load that runs the same loader too. A call from
+  another route fetches for its own, since a loader receives the route.
 - What it loads **stays loaded across routes**, so a namespace can be present
   outside every route its loader declares, and it reaches
   [`snapshot()`](#snapshotoptions).

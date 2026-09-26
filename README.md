@@ -369,7 +369,7 @@ log: {
 
 ### Methods
 
-Load-triggering methods return the promise of the matching load — concurrent duplicate triggers share one in-flight load (and its promise) instead of fetching twice.
+Load-triggering methods return the promise of the matching load — concurrent duplicate triggers from one route share one in-flight load (and its promise) instead of fetching twice.
 
 - `loadTranslations(locale, route?, options?)` – load translations for locale and route; `route` defaults to the current one, and `{ activate: false }` only fills the tables without switching to them
 - `loadNamespace(namespace, locale?)` – load one namespace on demand, whatever its loaders' routes, without switching to it; it stays loaded across routes
