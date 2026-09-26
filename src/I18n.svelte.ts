@@ -61,8 +61,12 @@ type InflightLoad = {
   unparked: Unparked[];
 };
 
-/** A top-level key holding part of `namespace` — the namespace itself or a key flattened out of it. */
-const isNamespaceKey = (key: string, namespace: Loader.Key) => key === namespace || key.startsWith(`${namespace}.`);
+/**
+ * A top-level key holding part of `namespace` — the namespace itself or a key
+ * flattened out of it. Keys are strings, so an off-contract namespace that is
+ * not one holds none of them.
+ */
+const isNamespaceKey = (key: string, namespace: Loader.Key) => typeof namespace === 'string' && (key === namespace || key.startsWith(`${namespace}.`));
 
 /**
  * The config as it is held, rather than as it arrives: `resolveLoaders` has
