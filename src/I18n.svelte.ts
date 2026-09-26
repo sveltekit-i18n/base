@@ -1191,11 +1191,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Starts (or joins) a load. A load already in flight for the same locale
-   * that selected the same loaders for the same params is returned as-is while
-   * it delivers everything the trigger has to fetch, so concurrent duplicate
-   * triggers share one fetch — whichever route they came from, and whether
-   * they selected by route or by `namespace`. The pending entry is registered
+   * Starts (or joins) a load. A load already in flight for the same locale and
+   * route that selected the same loaders for the same params is returned as-is
+   * while it delivers everything the trigger has to fetch, so concurrent
+   * duplicate triggers share one fetch — whether they selected by route or by
+   * `namespace`. The pending entry is registered
    * synchronously, so `loading` is observable right after the triggering call;
    * a load with nothing to fetch never registers at all, so cache-served
    * navigations do not flicker the flag. A warm load — one without an
@@ -1226,9 +1226,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const { loaders = [] } = this.#config ?? {};
 
-    // Keyed by what the trigger selected, not by the route it came from. NUL
-    // never appears in a sanitized locale, so no two selections share a key.
-    const inflightKey = [locale, ...matching.map(({ loader, signature }) => `${loaders.indexOf(loader)}:${signature}`)].join('\u0000');
+    // Keyed by what the trigger selected and the route it came from: a loader
+    // receives the route, so a load for another route may deliver, or throw,
+    // what does not fit this one — and one awaiting a navigation to it would
+    // wait on itself.
+    const inflightKey = JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [loaders.indexOf(loader), signature])]);
 
     return this.#loadSelection(locale, route, inflightKey, matching, call ? [call] : []);
   }

@@ -94,9 +94,11 @@ translation state, loading, caching, route matching, and preprocessing — but
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
   `setRoute`/`loadTranslations`/`loadNamespace` start loads directly and
   return the promise of the MATCHING load — the in-flight key is what a
-  trigger SELECTED (locale, then each loader and params signature), not the
-  route it came from, so concurrent duplicates join instead of fetching twice
-  and a namespace load never joins an unrelated route load. A trigger joins a
+  trigger SELECTED (locale, then each loader and params signature) and the
+  route it came from, so concurrent duplicates join instead of fetching twice,
+  a namespace load never joins an unrelated route load, and no load hands a
+  trigger what a loader delivered or threw for another route — a loader
+  receives the route. A trigger joins a
   load under its key only while that load delivers everything the trigger has
   to fetch — nothing severed, nothing left out; `loading` is
   derived from the set of in-flight ACTIVATING loads. A warm load
@@ -200,8 +202,10 @@ translation state, loading, caching, route matching, and preprocessing — but
   severed again is left to the next trigger — and stands down when
   the instance was destroyed, another locale was requested, the config was
   replaced or a later trigger wants other params, and a warm load never
-  resumes. A loader must not await a load of its own instance: that load can
-  be the one awaiting the loader. The loading calls — `setLocale`, `setRoute`,
+  resumes. A loader must not await a load of its own instance for the route
+  it was called with: that load can be the one awaiting the loader. A load of
+  another route (the navigation a remote `query`'s `redirect()` awaits) is
+  its own. The loading calls — `setLocale`, `setRoute`,
   `loadTranslations`, `loadNamespace` and `loadConfig` — and `addTranslations`
   and `hydrate` read the state they write untracked, so an `$effect` may call
   them. Neither expiry nor `invalidate` ever removes displayed translations
