@@ -4767,6 +4767,27 @@ describe('i18n cache and invalidation', () => {
     expect(instance.loading).toBe(false);
   });
 
+  it('resumes a trigger that joined a resumed load once that load is severed again', async () => {
+    const { loader, calls } = held();
+    const instance = new i18n({ parser: valueParser, loaders: [{ namespace: 'common', locale: 'en', loader }] });
+
+    const first = instance.loadTranslations('en', '/');
+    instance.invalidate('en');
+    calls[0].resolve({ at: 'stale' });
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+
+    const joined = instance.loadTranslations('en', '/');
+    instance.invalidate('en');
+    calls[1].resolve({ at: 'stale again' });
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    calls[2].resolve({ at: 'fresh' });
+
+    await Promise.all([first, joined]);
+
+    expect(instance.t('common.at')).toBe('fresh');
+    expect(instance.locale).toBe('en');
+  });
+
   describe('a severed load whose route a later call left', () => {
     class Redirect {
       constructor(public status: number, public location: string) {}
