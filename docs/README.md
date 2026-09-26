@@ -2072,8 +2072,12 @@ export { load } from '$lib/i18n';
 
 - **`handle`** replaces `%lang%` with the negotiated locale, or with an empty
   string when nothing matches, and `%dir%` with its
-  [direction](#textdirectionlocale), `ltr` when nothing matches. Without the
-  hook, both ship literally.
+  [direction](#textdirectionlocale), `ltr` when nothing matches – every one
+  of them in the `<html>` start tag, and nowhere else: the rest of the page
+  carries the app's content, `<svelte:head>` included, where a placeholder
+  ships as it is written. Without the hook, both ship literally. Anything
+  else the locale belongs in, an `og:locale` meta for one, goes in
+  `<svelte:head>` from `i18n.locale`.
 - **`load`** is one function for both layout files: it tells the server's
   event from the universal one. The server branch negotiates, loads the locale
   for the route into a fresh instance and returns its
