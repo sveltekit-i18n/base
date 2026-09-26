@@ -2144,9 +2144,12 @@ candidate that matches, [`en-GB` falling back to `en`](#matchlocalerequested-ava
 3. [`initLocale`](#initlocale);
 4. [`fallbackLocale`](#fallbacklocale).
 
-When nothing matches, the page renders with no active locale. `initLocale` is
-a candidate here, not a load: the instances `/kit` builds leave it out, since
-the negotiated locale is loaded instead.
+`initLocale` and `fallbackLocale` are [sanitized](#sanitizelocales) as the
+config's locales are, and so is what `preferredLocale` returns when
+`sanitizeLocales` is a function; header ranges are matched as sent, apart from
+case. When nothing matches, the page renders with no active locale.
+`initLocale` is a candidate here, not a load: the instances `/kit` builds leave
+it out, since the negotiated locale is loaded instead.
 
 `preferredLocale` runs in `handle`, in the server `load` and, in an app without
 a server `load`, in the universal one, whose event has no `cookies` (hence

@@ -40,7 +40,8 @@ export namespace Kit {
      * The visitor's choice, read from the event: a cookie, a route param, a
      * profile in `locals`. It is tried before `Accept-Language` (without a
      * server load, before `navigator.languages`), and a value no configured
-     * locale matches is skipped. It runs on every navigation and every
+     * locale matches is skipped; a custom `sanitizeLocales` is applied to it
+     * first. It runs on every navigation and every
      * preload, so it must be pure: it reads the event and writes nothing.
      *
      * @example
