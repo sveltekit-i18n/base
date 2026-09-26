@@ -11,6 +11,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 - [Utilities](#utilities)
 - [The parser contract](#the-parser-contract)
 - [TypeScript](#typescript)
+- [Upgrading from 3.0](#upgrading-from-30)
 - [See Also](#see-also)
 
 ## Configuration
@@ -3076,6 +3077,139 @@ letting the constructor's inference stand.
 
 For type-safe translation keys, supply a [`schema`](#schema); the wider
 TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+
+---
+
+## Upgrading from 3.0
+
+A 3.0 config loads in 3.1 as it is, and nothing public was removed. What
+changes is how some loads behave — and one change affects every app that hands
+server-rendered data to the client through `addTranslations()`, so read
+**Behaviour changes** first.
+
+### Behaviour changes
+
+**Seeds no longer count as loaded.** In 3.0, data passed to
+[`translations`](#translations) or
+[`addTranslations()`](#addtranslationstranslations) marked its namespaces
+loaded, so their loaders never ran. In 3.1 it only seeds the tables: the
+loaders of those namespaces still run, and their data merges over the seed. A
+client that took the server's [`snapshot()`](#snapshotoptions) through
+`addTranslations()` therefore fetches everything again after hydration —
+switch it to [`hydrate()`](#hydrateenvelope):
+
+```javascript
+// 3.0
+i18n.addTranslations(data.translations);
+
+// 3.1 — the server returns { i18n: i18n.snapshot({ records: true }) }
+i18n.hydrate(data.i18n);
+await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
+
+// 3.1 — or, with the server returning { locale: i18n.locale, translations: i18n.snapshot() }
+i18n.hydrate({ translations: data.translations, locale: data.locale });
+await i18n.loadTranslations(data.locale ?? i18n.locale, url.pathname);
+```
+
+The locale handed over is the server instance's `locale`, not the raw value
+your `handle` negotiated: `hydrate()` writes it as it is.
+
+The [SSR recipe](#3-build-the-instance-the-app-renders-with) shows the whole
+wiring, and [SvelteKit](#sveltekit) does it for you.
+
+**`snapshot()` serializes what the instance holds, not what the route
+claims.** 3.0 left out a namespace owned only by loaders of other routes; 3.1
+keeps it, so the payload can grow. The plain form leaves out instead what
+plain data cannot hand over — a namespace fed by several loaders, a namespace
+of a loader whose `routes` capture params, and a namespace none of whose
+loaders delivered — and the client loads those itself. The records form,
+`snapshot({ records: true })`, hands them over too — except a namespace of a
+loader that captures params when several loaders feed it or one of them holds
+no record, which the client still loads itself. See
+[`snapshot()`](#snapshotoptions).
+
+**Each loader is recorded on its own.** In 3.0, a namespace counted as loaded
+once any of its loaders had delivered, so a sibling scoped to another route
+never ran. In 3.1 each loader runs on its own routes and merges into what the
+others delivered, so a namespace can be split into
+[`routes`-scoped chunks](#namespace-required).
+
+**Named capture groups are route params.** 3.0 reserved them. In 3.1 a named
+group in a route `RegExp` reaches the loader as `params`, the loader runs
+again when they change, and its new data replaces what it delivered for the
+previous params. Turn a group you only use for grouping into a non-capturing
+one, `(?:...)`. See [Route params](#route-params).
+
+**SvelteKit's `redirect()` and `error()` below 500 reject the load.** In 3.0
+every throw failed soft. In 3.1 a loader that throws that control flow rejects
+the load once its other loaders have settled, the locale does not advance, and
+the call is undone. Any other throw, an `error()` of 500 or more included,
+still fails soft. A loader that redirects must not run on the page it
+redirects to. See [`loader`](#loader-required).
+
+**A loader that returns nothing counts as loaded.** In 3.0 a loader resolving
+`undefined` or `null` ran again on every trigger; in 3.1 it has answered, as
+one returning `{}` has. Throw when you want it retried. See
+[`loader`](#loader-required).
+
+**A request for a locale nothing serves changes nothing.** In 3.0,
+`setLocale()` with a locale no loader, no translations and no
+[`fallbackLocale`](#fallbacklocale) serve still became the requested locale,
+and `loadTranslations()` still moved the route. In 3.1, once the instance
+knows a locale, such a request writes neither. See
+[`setLocale()`](#setlocalelocale).
+
+**An invalidation no longer drops a whole load in flight.** In 3.0,
+`invalidate()` discarded all of a load in flight for the locale, and its
+trigger resolved without activating. In 3.1 only the invalidated loaders are
+discarded, the rest lands, and an activating trigger fetches the discarded
+part again before it activates. See
+[`invalidate()`](#invalidatelocale-namespace).
+
+**A custom `preprocess` that throws keeps nothing.** In 3.0 `rawTranslations`
+kept the data even though `translations` did not. In 3.1 neither table
+changes. In both, the loaders run again on the next trigger. See [Custom Function](#custom-function).
+
+**The tables are replaced whole.** [`translations` and
+`rawTranslations`](#translations--rawtranslations) are held as raw state: in
+the browser they are the objects themselves, not proxies, and changing them in
+place re-renders nothing. Write with
+[`addTranslations()`](#addtranslationstranslations), as before.
+
+### Type changes
+
+- **`Loader.Props` gains `namespace` and `params`**, both required. A loader
+  that reads only `locale` and `route` still type-checks; code that calls a
+  loader by hand passes them. See [`loader`](#loader-required).
+- **`Loader.LoaderModule`**: `locale` and `namespace` may be arrays, and `key`
+  is optional. Code that reads a descriptor's `locale` or `key` as a string
+  runs it through [`resolveLoaders`](#resolveloadersloaders-sanitizelocales)
+  first and reads the resolved `locale` and `namespace`. Naming both `key` and
+  `namespace` is a type error. It is now a union, so an `interface` can no
+  longer extend it — use a type alias with `&`.
+- New types: `Loader.Params`, `Loader.Resolved`, the `Snapshot` namespace,
+  `Config.T['basePath']`, `Schema.FromInstance`, and the `Kit` namespace from
+  `@sveltekit-i18n/base/kit`.
+
+### Deprecations
+
+- **The loader `key` is now `namespace`.** `key` is still honored and warned
+  about through the logger once per loader descriptor; it is removed in the
+  next major. See [`namespace`](#namespace-required).
+
+### New
+
+- [`@sveltekit-i18n/base/kit`](#sveltekit) — `defineI18n()` wires a SvelteKit app: `handle`, `load`, `use()` and `get()`.
+- [`basePath`](#basepath) — strips SvelteKit's `kit.paths.base` from every route handed in.
+- [Several locales and namespaces](#several-locales-and-namespaces) — one loader descriptor for many pairs.
+- [Route params](#route-params) — named capture groups reach the loader as `params`.
+- [`cache: false`](#cache-optional) on a loader — for a source that does its own caching.
+- [`loadTranslations(…, { activate: false })`](#loadtranslationslocale-route-options) — fills the tables without switching; it does not count towards `loading`.
+- [`loadNamespace(namespace, locale?)`](#loadnamespacenamespace-locale) — loads one namespace on demand, whatever the route.
+- [`invalidate(locale?, namespace?)`](#invalidatelocale-namespace) — invalidates one namespace.
+- [`snapshot({ records: true })`](#snapshotoptions) and [`hydrate(envelope?)`](#hydrateenvelope) — the SSR hand-off with load records.
+- [`matchLocale()`](#matchlocalerequested-available), [`textDirection()`](#textdirectionlocale) and [`resolveLoaders()`](#resolveloadersloaders-sanitizelocales) from `@sveltekit-i18n/base/utils`.
+- [`Schema.FromInstance`](#schema) — reads the key schema off a constructed instance.
 
 ---
 
