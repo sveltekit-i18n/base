@@ -573,6 +573,10 @@ const withIds = (loaders: Array<Omit<Loader.Resolved, 'id'>>): Loader.Resolved[]
 // downstream knows there were several: the two names of the namespace, and a
 // list of locales or namespaces, which expands into one loader per pair with
 // its locale sanitized. Each loader is named by its content here too.
+// A module-level config is read by an instance per request, so the deprecated
+// name is reported once per descriptor rather than once per instance.
+const reportedDeprecations = new WeakSet<object>();
+
 export const resolveLoaders = (
   input: readonly Loader.LoaderModule[] = [],
   sanitizeLocales: Config.SanitizeLocales = true,
@@ -583,7 +587,10 @@ export const resolveLoaders = (
     try {
       const { namespace, key, locale, loader, routes, cache } = descriptor;
 
-      if (key !== undefined) logger.warn(`Loader '${String(key)}' uses 'key', which is deprecated. Rename it to 'namespace'.`);
+      if (key !== undefined && !reportedDeprecations.has(descriptor)) {
+        reportedDeprecations.add(descriptor);
+        logger.warn(`Loader '${String(key)}' uses 'key', which is deprecated. Rename it to 'namespace'.`);
+      }
 
       if (cache !== undefined && cache !== false) {
         logger.error(`Ignoring the 'cache' of loader '${String(namespace ?? key)}': only 'false' is accepted.`);
