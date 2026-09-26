@@ -1637,6 +1637,26 @@ describe('i18n instance', () => {
 
     expect(instance.locale).toBe('en');
   });
+  it('snapshots and hydrates beside a non-string key that has not delivered, without throwing', async () => {
+    const config = {
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: Symbol('other') as unknown as string, locale: 'en', routes: ['/other'], loader: async () => ({ greeting: 'Other' }) },
+      ],
+    };
+    const server = new i18n(config);
+
+    await server.loadTranslations('en', '/');
+
+    expect(server.snapshot()).toEqual({ en: { common: { greeting: 'Hello' } } });
+
+    const client = new i18n({ ...config, loaders: [...config.loaders].reverse() });
+
+    expect(() => client.hydrate({ locale: 'en', route: '/', translations: server.snapshot() })).not.toThrow();
+    expect(client.locale).toBe('en');
+  });
   it('drops a loader whose accessor throws and keeps the resolvable ones', async () => {
     const errorSpy = vi.fn();
     const boom = new Error('locale accessor');
