@@ -1948,7 +1948,9 @@ Marks loaded translations stale — for one locale, or for all of them when
 called without a locale, and for one namespace, or for all of them when called
 without one. The call itself starts **no** load and the currently displayed
 translations stay in place; loaders run again on the next load trigger and
-fresh data replaces the old.
+their fresh data merges over the old — a key the source has dropped stays until
+the loader's [params](#route-params) change or the instance is recreated (see
+[`cache`](#cache)).
 
 ```javascript
 // A CMS webhook / admin action told us the English content changed:
