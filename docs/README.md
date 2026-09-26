@@ -1960,10 +1960,12 @@ stays. The trigger refetches once: should the refetch be severed too — a loade
 that invalidates what it loads each time it runs, say — it resolves without
 activating. It leaves the severed part to the next trigger, too, when another
 loader of its load threw SvelteKit's control flow that still counts (the
-trigger then rejects with it), when another locale was asked for meanwhile,
-when later params replaced the ones it asked for, or when the config was
-replaced. `invalidate()` itself still starts nothing: only a trigger that was
-already running finishes its job.
+trigger then rejects with it), or when the config was replaced. When a later
+call asked for another locale or route meanwhile, the trigger waits for the
+calls since its own: it resolves without activating should their request
+stand — the later call loads what it asked for — and fetches its part again
+should their control flow put its request back. `invalidate()` itself still
+starts nothing: only a trigger that was already running finishes its job.
 
 A loader with [`cache: false`](#cache-optional) is covered too: the call ends
 the hand-off that holds it back after [`hydrate()`](#hydrateenvelope), and a
