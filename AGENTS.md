@@ -222,7 +222,8 @@ translation state, loading, caching, route matching, and preprocessing — but
   (`Call.settled`): it stands down when their request stands and resumes
   when their undo puts its request back. A load of which a later request wants
   other params from a loader it ran or claimed (or none, of one it asked
-  params of) resolves without activating at once, and `#settleUndo()` loads its request should an undo put it back. A warm load never resumes. A loader must not await a load of its own instance for the route
+  params of), or whose control flow a later request superseded, resolves
+  without activating at once, and `#settleUndo()` loads its request should an undo put it back. A warm load never resumes. A loader must not await a load of its own instance for the route
   it was called with: that load can be the one awaiting the loader. A load of
   another route (the navigation a remote `query`'s `redirect()` awaits) is
   its own. The loading calls — `setLocale`, `setRoute`,

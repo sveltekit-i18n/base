@@ -5598,6 +5598,39 @@ describe('i18n cache and invalidation', () => {
 
       await vi.waitFor(() => expect(instance.locale).toBe('en'));
     });
+
+    it('does not resume a call whose other loader threw control flow once an undo puts its locale back', async () => {
+      const common = held();
+      const x = held();
+      const en = held();
+      const thrown = new Redirect(303, '/login');
+      const instance = new i18n({
+        parser: valueParser,
+        loaders: [
+          { namespace: 'common', locale: 'de', loader: common.loader },
+          { namespace: 'x', locale: 'de', loader: x.loader },
+          { namespace: 'common', locale: 'en', loader: en.loader },
+        ],
+      });
+
+      const first = instance.loadTranslations('de', '/');
+      const second = instance.setLocale('en');
+      instance.invalidate('de', 'x');
+
+      common.calls[0].reject(thrown);
+      x.calls[0].resolve({ k: 'x' });
+      await macrotask();
+
+      en.calls[0].reject(thrown);
+      await expect(second).rejects.toBe(thrown);
+      await macrotask();
+
+      expect(x.loader).toHaveBeenCalledTimes(1);
+      await first;
+      expect(instance.locale).toBeUndefined();
+      expect(instance.translations).toEqual({});
+      expect(instance.loading).toBe(false);
+    });
   });
 
   it('a severed trigger joins the load a later trigger started instead of fetching again', async () => {
