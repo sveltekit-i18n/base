@@ -1022,6 +1022,12 @@ where the value came from — a URL segment, a cookie, an `Accept-Language`
 header. A locale `Intl` does not recognize is lowercased and reported through
 the [logger](#loglevel).
 
+Spell locales in their canonical form — `he` rather than `iw`, `fil` rather
+than `tl`. `Intl` resolves an alias from the engine's own CLDR data, so two
+runtimes can resolve it differently: a server on Node and a browser on Safari
+would then key one locale two ways, and the [SSR hand-off](#hydrateenvelope)
+between them would miss.
+
 **`false` — locales stay exactly as authored:**
 
 ```javascript
