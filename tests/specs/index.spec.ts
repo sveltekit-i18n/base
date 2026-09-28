@@ -7915,6 +7915,33 @@ describe('type inference', () => {
     expect(annotated).toBeInstanceOf(i18n);
   });
 
+  it('reads the key schema off a config as before when nothing is registered', () => {
+    type TestSchema = { 'common.placeholder': { value: string } };
+    type Other = { 'other.key': never };
+
+    // This program registers nothing (tests/types/registry/ covers a program
+    // that does), so every slot types as it did before the registry.
+    expectTypeOf<Schema.Registered>().toEqualTypeOf<never>();
+
+    expectTypeOf<Schema.FromConfig<{ parser: Parser.T }>>().toEqualTypeOf<never>();
+    expectTypeOf<Schema.FromConfig<{ schema: any }>>().toEqualTypeOf<never>();
+    expectTypeOf<Schema.FromConfig<Config.T>>().toEqualTypeOf<never>();
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    expectTypeOf<Schema.FromConfig<{ schema: {} }>>().toEqualTypeOf<never>();
+    expectTypeOf<Schema.FromConfig<{ schema: Record<string, any> }>>().toEqualTypeOf<never>();
+
+    expectTypeOf<Schema.FromConfig<{ schema: TestSchema }>>().toEqualTypeOf<TestSchema>();
+    expectTypeOf<Schema.FromConfig<{ schema: TestSchema | undefined }>>().toEqualTypeOf<TestSchema>();
+    expectTypeOf<Schema.FromConfig<{ schema: TestSchema | null }>>().toEqualTypeOf<never>();
+    expectTypeOf<Schema.FromConfig<Config.T<Parser.Params, string, TestSchema>>>().toEqualTypeOf<TestSchema>();
+    expectTypeOf<Schema.FromConfig<{ schema: TestSchema } | { schema: Other }>>().toEqualTypeOf<TestSchema | Other>();
+
+    const untyped = new i18n({ parser, log });
+
+    expectTypeOf<Schema.FromInstance<typeof untyped>>().toEqualTypeOf<never>();
+    expect(untyped).toBeInstanceOf(i18n);
+  });
+
   it('reads the key schema back off a constructed instance', () => {
     type TestSchema = { 'common.placeholder': { value: string } };
 

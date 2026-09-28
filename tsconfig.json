@@ -31,5 +31,8 @@
     "./tests",
     "./*.js",
     "./*.ts"
-  ]
+  ],
+  // Programs of their own, each with its own registration: one here would
+  // type every schema-less instance in the suite.
+  "exclude": ["./tests/types"]
 }

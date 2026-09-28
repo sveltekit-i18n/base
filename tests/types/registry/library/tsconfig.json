@@ -1,0 +1,8 @@
+{
+  "extends": "../tsconfig.source.json",
+  "compilerOptions": {
+    // The core's source is part of this program, so the spec's emit carries it alongside.
+    "rootDir": "../../../.."
+  },
+  "include": ["."]
+}

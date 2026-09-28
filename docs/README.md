@@ -1087,21 +1087,41 @@ union TypeScript completes on the instance stays open — see
 
 **Type:** `{ [translationKey]: PayloadType }` (optional)
 
-A map of each translation key to the payload its message expects — the slot a
-generated schema artifact fills. Supplying it types [`t()`](#tkey-params) and
-[`l()`](#llocale-key-params): keys autocomplete, an unknown key is a type error,
-and the payload argument is checked against the key's entry.
+A map of each translation key to the payload its message expects. It types
+[`t()`](#tkey-params) and [`l()`](#llocale-key-params): keys autocomplete, an
+unknown key is a type error, and the payload argument is checked against the
+key's entry.
 
-**Only the type is read.** Nothing reads this value at runtime, so the artifact
-may be empty as long as it is typed:
+**Register it once for the app.** A generated artifact registers the app's
+schema in the global `SvelteKitI18n.Register` interface, and every instance
+whose config states no `schema` is typed by it — `new I18n(config)` and the
+[`/kit`](#sveltekit) wiring alike, with nothing to wire:
 
 ```typescript
-type TranslationSchema = {
+// src/i18n-schema.d.ts — a global script: no top-level import or export
+interface TranslationSchema {
   'common.greeting': { name: string };  // payload required
   'common.about': never;                // message takes no parameters
   'home.title': { title?: string };     // nothing required — payload optional
-};
+}
 
+declare namespace SvelteKitI18n {
+  interface Register {
+    schema: TranslationSchema;
+  }
+}
+```
+
+```typescript
+const i18n = new I18n(config); // typed by TranslationSchema
+```
+
+**Or state it per instance.** Only the type of the slot is read — nothing
+reads the value at runtime — so a config may carry an empty value, as long as
+it is typed. A schema stated this way is an explicit choice for that instance,
+and it wins over the registry:
+
+```typescript
 const i18n = new I18n({
   ...config,
   schema: {} as TranslationSchema,
@@ -1141,35 +1161,65 @@ i18n.t('common.about', { title: 'About' }); // payload for a message that takes 
 The payload occupies slot 0 of the parser's params, so a parser's **trailing**
 slots survive: an ICU `formats` argument still type-checks after the payload.
 
-**⚠️ A schema whose keys are not a closed set is ignored.** An open index
-signature (`Record<string, …>`), or a schema with no keys at all, would reject
-every key or demand a payload for keys it knows nothing about — so keys stay
-plain strings instead and calls are typed as if no schema were supplied:
+**Precedence.** The slot the config states decides; only an absent one reads
+the registry:
+
+| The config's `schema` | Keys and payloads are typed by |
+|---|---|
+| absent, or typed `any` (a plain `Config.T` annotation) | the registry — plain strings when nothing is registered |
+| a closed schema (`{} as X`, `Config.T<Params, Output, X>`, `X \| undefined`) | `X`: a stated schema always wins |
+| a schema whose keys are not a closed set (`{}`, `Record<string, …>`) | nothing — keys are plain strings |
+
+**`schema: {}` opts out.** An open index signature (`Record<string, …>`), or a
+schema with no keys at all, would reject every key or demand a payload for keys
+it knows nothing about — so it types nothing: keys stay plain strings, as if no
+schema were supplied, and since the slot is stated, the registry stays out too.
+An instance with a catalogue of its own — a second instance in the app, a test,
+a Storybook story — states its closed schema, or opts out:
 
 ```typescript
 new I18n({ ...config, schema: {} });
 new I18n({ ...config, schema: {} as Record<string, { value: string }> });
 ```
 
+A registration with no keys — what a generator writes before its first run —
+types nothing either.
+
+**⚠️ The registry covers the whole program, so a library never registers.**
+Only the app's generated artifact fills `SvelteKitI18n.Register`. A library's
+own instances state their schema, or `schema: {}`, which also keeps an app's
+registry away from a workspace library compiled inside the app's program. A
+library's declarations are built without a registration and carry no schema,
+so an app's registry does not reach them. Two registrations whose `schema`
+differs are a type error (TS2717) with `skipLibCheck: false`, and silent with
+SvelteKit's default `skipLibCheck: true`, where the first one wins.
+
+**⚠️ The registry needs base 3.1** (`sveltekit-i18n` 3.1) or newer. An older
+core ignores the registration without a diagnostic; there, state the schema per
+instance.
+
 **⚠️ Construction time only.** The type is read off the config the constructor
-receives: a later [`loadConfig()`](#loadconfigconfig) cannot retype an existing
-instance, and an [`extension`](#extensions) typed by a fixed return type erases
-the instance's type parameters altogether — that surface is typed by the
-extension, not by the schema. An extension typed by an `Extension.Operator`
+receives, and the registry with it: a later
+[`loadConfig()`](#loadconfigconfig) cannot retype an existing instance, and an
+[`extension`](#extensions) typed by a fixed return type erases the instance's
+type parameters altogether — that surface is typed by the extension, not by the
+schema. An extension typed by an `Extension.Operator`
 keeps them (see [Extensions and the constructor's type](#extensions-and-the-constructors-type)).
 
-No generator ships in this package: the schema is a type you hand-write for a
-small project, or a generated artifact for a large one —
+No generator ships in this package — the slot and the registry do. The schema
+is a type you hand-write for a small project, or a generated artifact for a
+large one —
 [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate
 package, generates one (see
 [Message parameter extraction](#message-parameter-extraction) for the
 build-time contract a generator reads messages through). The types the slot is
 resolved through are exported from the package root as the `Schema` namespace —
-`Schema.FromConfig`, `Schema.FromInstance`, `Schema.Key`, `Schema.Params` and
-`Schema.Payload` — for generators and wrapper packages; application code only
-supplies `schema`. `FromConfig` reads the slot off a config, `FromInstance` off
-a constructed instance — what an extension has in hand when it types its own
-output.
+`Schema.Registered`, `Schema.FromConfig`, `Schema.FromInstance`, `Schema.Key`,
+`Schema.Params` and `Schema.Payload` — for generators and wrapper packages;
+application code only registers or supplies a schema. `Registered` reads the
+registry, `FromConfig` the schema a config types its instance with (the
+precedence above), and `FromInstance` the one a constructed instance carries —
+what an extension has in hand when it types its own output.
 
 ---
 
@@ -3250,7 +3300,8 @@ what it follows in the effect itself.
   `Snapshot.Envelope`, no argument the data alone. A hand-written object typed
   as the instance implements them.
 - New types: `Loader.Params`, `Loader.Resolved`, the `Snapshot` namespace,
-  `Config.T['basePath']`, `Schema.FromInstance`, and the `Kit` namespace from
+  `Config.T['basePath']`, `Schema.FromInstance`, `Schema.Registered`, the global
+  `SvelteKitI18n.Register` interface, and the `Kit` namespace from
   `@sveltekit-i18n/base/kit`.
 
 ### Deprecations
@@ -3272,6 +3323,7 @@ what it follows in the effect itself.
 - [`snapshot({ records: true })`](#snapshotoptions) and [`hydrate(envelope?)`](#hydrateenvelope) — the SSR hand-off with load records.
 - [`matchLocale()`](#matchlocalerequested-available), [`textDirection()`](#textdirectionlocale) and [`resolveLoaders()`](#resolveloadersloaders-sanitizelocales) from `@sveltekit-i18n/base/utils`.
 - [`Schema.FromInstance`](#schema) — reads the key schema off a constructed instance.
+- [`SvelteKitI18n.Register`](#schema) — the app registers its key schema once, and every instance whose config states no `schema` is typed by it; `Schema.Registered` reads it. With nothing registered, every config types as in 3.0.
 
 ---
 

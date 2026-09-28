@@ -149,21 +149,21 @@ export namespace Config {
     parser: Parser.T<P, O>;
     /**
      * A key schema — a map of translation key to the payload its message
-     * expects (`never` for a message without parameters). Supplying it types
-     * `t`/`l`: keys autocomplete and a wrong payload is a type error. Only its
-     * TYPE is read, so a generated artifact may export a value that is empty
-     * at runtime — as long as that value is TYPED, e.g.
-     * `export const schema = {} as TranslationSchema`. A schema whose keys are not a
-     * closed set (an open index signature, or no keys at all) is ignored and
-     * keys stay plain strings. Read at construction time only: a later
-     * `loadConfig()` cannot retype the instance, and an extension typed by a
-     * fixed return type erases the instance's type parameters, while one
-     * typed by an `Extension.Operator` (`Extension.Generic`) keeps them.
+     * expects (`never` for a message without parameters). It types `t`/`l`:
+     * keys autocomplete and a wrong payload is a type error. Left out, the
+     * schema the app registers in `SvelteKitI18n.Register` types the
+     * instance; stated, it wins over the registry. Only its TYPE is read, so
+     * the value may be empty at runtime — as long as it is TYPED, e.g.
+     * `{} as TranslationSchema`. A schema whose keys are not a closed set (an
+     * open index signature, or no keys at all, as in `schema: {}`) types
+     * nothing and keeps the registry out: keys stay plain strings. Read at
+     * construction time only: a later `loadConfig()` cannot retype the
+     * instance, and an extension typed by a fixed return type erases the
+     * instance's type parameters, while one typed by an `Extension.Operator`
+     * (`Extension.Generic`) keeps them.
      *
      * @example
-     * import { schema } from './generated/i18n-schema.js';
-     *
-     * const i18n = new I18n({ ...config, schema });
+     * const i18n = new I18n({ ...config, schema: {} as TranslationSchema });
      */
     schema?: S;
     /**
@@ -557,6 +557,20 @@ export namespace Parser {
   export type ExtractParamsFactory<O = unknown> = (options?: O) => ExtractParams;
 }
 
+declare global {
+  namespace SvelteKitI18n {
+    /**
+     * The app's type registry, filled by a generated global script
+     * (`interface Register { schema: TranslationSchema }`). Its `schema` types
+     * every instance whose config states none. Every copy of the core declares
+     * it empty, and a library never registers: the registry covers the whole
+     * program.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    interface Register {}
+  }
+}
+
 export namespace Schema {
   /**
    * A schema types calls only when its keys form a specific, closed set. An
@@ -568,9 +582,25 @@ export namespace Schema {
     ? false
     : string extends keyof S ? false : true;
 
-  /** The key schema carried by a config; `never` when there is none to use. */
-  export type FromConfig<C> = C extends { schema?: infer S extends object }
-    ? (HasClosedKeys<S> extends true ? S : never)
+  /** `S` when its keys are a closed set, `never` otherwise. A union schema is taken whole. */
+  type Closed<S> = [S] extends [object] ? (HasClosedKeys<S> extends true ? S : never) : never;
+
+  /** What a config's `schema` slot holds; `unknown` when it is absent or typed `any`. */
+  type Slot<C> = C extends { schema?: infer S } ? S : unknown;
+
+  /** The key schema `SvelteKitI18n.Register` carries; `never` when it carries none to use. */
+  export type Registered = SvelteKitI18n.Register extends { schema: infer S } ? Closed<S> : never;
+
+  /**
+   * The key schema a config types its instance with; `never` when there is
+   * none to use. A slot the config states decides — a closed schema is that
+   * schema, one without a closed key set (`{}`) opts out to plain string keys
+   * — while an absent slot, or one typed `any` (a plain `Config.T`
+   * annotation), reads the registry. A union of configs yields the union of
+   * their schemas.
+   */
+  export type FromConfig<C> = C extends unknown
+    ? (unknown extends Slot<C> ? Registered : Closed<Slot<C>>)
     : never;
 
   /**

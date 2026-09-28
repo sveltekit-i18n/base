@@ -1,0 +1,16 @@
+{
+  // An app's settings, except `skipLibCheck`: SvelteKit turns it on, and it
+  // hides a second, conflicting `Register.schema` (TS2717) and whatever the
+  // published declarations get wrong.
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    // Ambient rune declarations for the source copy's .svelte.ts modules.
+    "types": ["svelte"]
+  }
+}

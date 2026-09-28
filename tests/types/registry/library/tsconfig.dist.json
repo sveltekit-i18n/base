@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.dist.json",
+  "compilerOptions": {
+    // The emit names the core by package name, which the `exports` map
+    // resolves only against a known root.
+    "rootDir": "."
+  },
+  "include": ["."]
+}
