@@ -2195,7 +2195,10 @@ it out, since the negotiated locale is loaded instead.
 a server `load`, in the universal one, whose event has no `cookies` (hence
 `cookies?.`). It runs on every navigation and every preload, so it must only
 read the event. A value it returns that no configured locale matches is
-skipped, and one that throws is logged once and skipped.
+skipped, and one that throws is logged once and skipped. With a server `load`,
+it never runs in the browser: a navigation to a prerendered page takes the
+locale `preferredLocale` gave that page at build time, and otherwise keeps the
+tab's.
 
 The server's answer rules. `i18n.setLocale('cs')` in the browser switches the
 tab, and the switch stands across navigations until the server answers
@@ -2217,7 +2220,17 @@ export const { handle, load, use, get } = defineI18n(config, {
 ```
 
 Loader [`routes`](#routes-optional) then see the locale segment
-(`/cs/about`), since they match `url.pathname`.
+(`/cs/about`), since they match `url.pathname`. With an optional segment
+(`[[lang]]`), the unprefixed pages name the default locale themselves:
+
+```javascript
+preferredLocale: (event) => event.params.lang ?? 'en',
+```
+
+Without the `?? 'en'`, `/about` has no answer from the URL, and a navigation
+from `/cs/x` to a prerendered `/about` keeps `cs`. A default returned from
+`preferredLocale` says the URL names that locale; the default for a visitor
+whose cookie or header names none belongs in [`initLocale`](#initlocale).
 
 ### What `data.i18n` is
 
@@ -2266,6 +2279,7 @@ SvelteKit run the layout again on the next navigation.
 | Hydration | — | the tab's instance, from the same snapshot, active before the first render | `use()` provides it |
 | Navigation | negotiates, returns the locale and the route | warms the target locale for the new route | `use()` switches and sets the route at commit |
 | Preload | the same | the same | none: a preload shows nothing |
+| Navigation to a prerendered page | — (the build's page render) | warms the locale `preferredLocale` gave at build time, or else the tab's | `use()` switches to that locale at commit, or keeps the tab's |
 
 Each preload runs `load`, which warms the target locale's translations for the
 link's route. To keep hovering from fetching, turn preloading off where it
@@ -2282,9 +2296,12 @@ costs too much: `data-sveltekit-preload-data="false"`.
   `<html lang>` can name another locale than the page renders. Put the locale in the URL, or add
   the server `load`.
 - **A prerendered page has no visitor.** It renders the locale
-  `preferredLocale` finds in the URL, or else `initLocale`/`fallbackLocale`; a
-  query string (`?lang=`) does not reach it. A client navigation to one keeps
-  the tab's locale.
+  `preferredLocale` finds in the URL, or else `initLocale`/`fallbackLocale`. A
+  client navigation to one takes the locale `preferredLocale` gave at build
+  time, and otherwise keeps the tab's, so a cookie-first `preferredLocale` that
+  falls back to the URL follows the URL there. A query string (`?lang=`) does
+  not reach a prerendered page and the build's hostname is not the visitor's,
+  so a locale read from either is not supported on one.
 - **With a `reroute` hook,** loaders match the path the visitor requested, not
   the one SvelteKit rerouted to.
 - **A negotiated response varies by visitor.** The page and its `__data.json`

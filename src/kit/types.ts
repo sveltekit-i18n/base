@@ -33,7 +33,14 @@ export namespace Kit {
    * locale and the route always, the tables and their records on a page
    * render only. Plain data, for `devalue`.
    */
-  export type Payload = Omit<Snapshot.Envelope, 'translations'> & Partial<Pick<Snapshot.Envelope, 'translations'>>;
+  export type Payload = Omit<Snapshot.Envelope, 'translations'> & Partial<Pick<Snapshot.Envelope, 'translations'>> & {
+    /**
+     * Set on a page render when `preferredLocale` gave the locale. A
+     * prerendered page's data is that render, so a navigation to one takes
+     * its locale only when the build's `preferredLocale` gave it.
+     */
+    preferred?: true;
+  };
 
   export type Options = {
     /**
@@ -43,6 +50,9 @@ export namespace Kit {
      * locale matches is skipped; a custom `sanitizeLocales` is applied to it
      * first. It runs on every navigation and every
      * preload, so it must be pure: it reads the event and writes nothing.
+     * With a server load it runs on the server only: a navigation to a
+     * prerendered page takes the locale it gave at build time, and otherwise
+     * keeps the tab's.
      *
      * @example
      * preferredLocale: (event) => event.cookies?.get('lang')

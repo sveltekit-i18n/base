@@ -1,10 +1,10 @@
 import { logger } from '../logger.js';
 import { matchLocale, routePrefix, textDirection, withoutBasePath } from '../utils.js';
-import type { ServerHalf, Shared } from './internal.js';
+import type { Negotiated, ServerHalf, Shared } from './internal.js';
 import type { Kit } from './types.js';
 
 export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): ServerHalf => {
-  const answer = (event: Kit.RequestEvent): string | undefined => negotiate(event, event.request.headers.get('accept-language'));
+  const answer = (event: Kit.RequestEvent): Negotiated => negotiate(event, event.request.headers.get('accept-language'));
 
   let warned = false;
 
@@ -42,7 +42,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
       const negotiated = (): string => {
         if (lang === undefined) {
           check(event);
-          lang = answer(event) ?? '';
+          lang = answer(event).locale ?? '';
         }
 
         return lang;
@@ -80,7 +80,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
 
       check(event);
 
-      const locale = answer(event);
+      const { locale, preferred } = answer(event);
 
       if (event.isDataRequest) return { i18n: { locale, route: withoutBasePath(route, basePath) } };
 
@@ -88,7 +88,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
 
       await (locale ? i18n.loadTranslations(locale, route) : i18n.setRoute(route));
 
-      return { i18n: i18n.snapshot({ records: true }) };
+      return { i18n: { ...i18n.snapshot({ records: true }), ...(preferred ? { preferred: true as const } : {}) } };
     },
   };
 };
