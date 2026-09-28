@@ -72,6 +72,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/specs/kit.spec.ts` | the `/kit` suite, in `happy-dom` |
 | `tests/components/` | the Svelte components `kit.spec.ts` mounts |
 | `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
+| `tests/specs/registry.spec.ts` | compiles the `tests/types/registry/` fixtures with `tsc` |
+| `tests/types/registry/` | type fixtures of the schema registry — programs of their own, outside `typecheck` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
@@ -293,9 +295,20 @@ translation state, loading, caching, route matching, and preprocessing — but
   narrows keys and payloads from the config that reaches the constructor; only
   its TYPE is read, so the slot may hold an empty value
   (`{} as TranslationSchema`), and a schema whose keys are not a closed set
-  degrades to plain `string` keys rather than rejecting every call. This package ships the
-  slot, not the generator that fills it — never document a CLI or a plugin as
-  if it shipped here.
+  degrades to plain `string` keys rather than rejecting every call. The app
+  may instead register its schema once in the global
+  `SvelteKitI18n.Register` interface (`declare global` in `types.ts`, empty in
+  every copy of the core; `Schema.Registered` reads it). `Schema.FromConfig`
+  decides the precedence: a stated closed schema wins, a stated schema without
+  a closed key set (`schema: {}`) opts out to plain keys, and only an absent or
+  `any` slot (a plain `Config.T` annotation) reads the registry; it
+  distributes over a union of configs, and with nothing registered every
+  config types exactly as it did without the registry. The registry is read
+  there only — the `I18n` type parameters keep `never` as their default, so a
+  library's declarations built without a registration carry none — and a
+  library never registers. This package ships the slot and the registry, not
+  the generator that fills them — never document a CLI or a plugin as if it
+  shipped here.
 - **Locales ride a fourth class type parameter**
   (`I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>`), not an
   intersection. The loader locales, `initLocale`, `fallbackLocale` and
@@ -590,6 +603,16 @@ not RCE/XSS.
   exceptions are `tests/specs/kit.spec.ts`, which needs a DOM for `use()` and
   `get()`, and `tests/specs/dist.spec.ts`, which exercises the SHIPPED artifact
   and runs separately via `npm run test:dist` (which builds first).
+- A type test that needs a registration in `SvelteKitI18n.Register` goes to
+  `tests/types/registry/`, never into the main program: a registration types
+  every schema-less instance in the program it is part of, the suite's
+  included. Each directory there is one program with two tsconfigs — against
+  the source (`tsconfig.json`) and the shipped declarations
+  (`tsconfig.dist.json`) — which `tests/utils/registry.ts` compiles with `tsc`
+  at `skipLibCheck: false`, from `registry.spec.ts` and `dist.spec.ts`. The
+  main `tsconfig.json` excludes `tests/types`, and ESLint ignores it. A
+  fixture asserts with `@ts-expect-error` and a type-level `Equal`, so it
+  fails by compiling.
 - Drive behavior through the **public API** (`new i18n(CONFIG)`, reactive
   properties, awaited method returns). Pure helpers may be imported directly
   from `src/` when that yields a more deterministic test (e.g. unit-testing

@@ -1,0 +1,12 @@
+{
+  // The shipped artifact, reached by package name through the `exports` map,
+  // with the source as a second copy of the core in the same program.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "#kit-env": ["../../../src/kit/env.ts"],
+      "#kit-server": ["../../../src/kit/server.ts"],
+      "base-copy": ["../../../src/index.ts"]
+    }
+  }
+}

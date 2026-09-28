@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import I18n from '../../dist/index.js';
 import { read } from '../../src/utils.js';
+import { describeRegistry } from '../utils/registry.js';
 
 // The published artifact ships UNCOMPILED rune modules (`dist/I18n.svelte.js`)
 // for the consumer's bundler to compile — which is exactly what this suite's
@@ -90,3 +91,6 @@ describe('published artifact', () => {
     else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
   });
 });
+
+// The registry's `declare global` has to survive `svelte-package`.
+describeRegistry('dist');

@@ -312,18 +312,29 @@ preprocess: 'full' // 'full' | 'preserveArrays' | 'none' | custom function
 
 ### `schema`
 
-A map of translation key to the payload its message expects (`never` for a message that takes none). Supplying it types `t`/`l` — keys autocomplete, an unknown key is a type error, and the payload argument is checked. Only its type is read, so the value can stay empty at runtime:
+A map of translation key to the payload its message expects (`never` for a message that takes none). It types `t`/`l` — keys autocomplete, an unknown key is a type error, and the payload argument is checked. Register it once for the app, in a global script, and every instance whose config states no `schema` is typed by it:
 
 ```typescript
-type TranslationSchema = {
+// src/i18n-schema.d.ts — no top-level import or export
+interface TranslationSchema {
   'common.greeting': { name: string };
   'common.farewell': never;
-};
+}
 
+declare namespace SvelteKitI18n {
+  interface Register {
+    schema: TranslationSchema;
+  }
+}
+```
+
+Or state it per instance — only its type is read, so the value can stay empty at runtime, and a stated schema wins over the registry:
+
+```typescript
 const i18n = new I18n({ ...config, schema: {} as TranslationSchema });
 ```
 
-Hand-write it for a small set of messages, or point the slot at a generated artifact — [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate package, generates one. A schema whose keys are not a closed set is ignored, and keys stay plain strings. See [`schema`](./docs/README.md#schema) for the full rules.
+Hand-write it for a small set of messages, or generate it — [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate package, generates one. A schema whose keys are not a closed set (`schema: {}`) types nothing and keeps the registry out, so keys stay plain strings. A library never registers. The registry needs base 3.1 or newer. See [`schema`](./docs/README.md#schema) for the full rules.
 
 ### `cache`
 

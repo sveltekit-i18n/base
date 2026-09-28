@@ -1,0 +1,14 @@
+{
+  // The source this repository builds, with the built artifact as a second
+  // copy of the core in the same program.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@sveltekit-i18n/base": ["../../../src/index.ts"],
+      "@sveltekit-i18n/base/kit": ["../../../src/exports/kit.ts"],
+      "#kit-env": ["../../../src/kit/env.ts"],
+      "#kit-server": ["../../../src/kit/server.ts"],
+      "base-copy": ["../../../dist/index.d.ts"]
+    }
+  }
+}
