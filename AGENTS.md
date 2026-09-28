@@ -313,14 +313,18 @@ translation state, loading, caching, route matching, and preprocessing — but
   the instance's public members. One `load` serves both layout files, split by
   `'cookies' in event`; the server branch reads `url` before any return (a
   load re-runs on a navigation only for what it read) and sends the tables on
-  a page render only, the locale and the route on a data request. The server
+  a page render only, the locale and the route on a data request, and marks a
+  page render whose locale `preferredLocale` gave (`preferred: true`), never a
+  data request; `preferredLocale` never runs in the browser when a server
+  `load` exists. The server
   builds an instance per pass; the browser keeps one per tab, and only the
   pass that builds it activates — every later pass is a warm load of one
   target, since it may be a preload. `use()` activates at commit, comparing the
   server's answer with the last commit's (the per-result `tab` memory), so a
   client `setLocale()` stands until the answer changes; an answer given before
-  the active locale changed, or read from a prerendered file (a later pass
-  carrying the tables), changes nothing. The locale a commit is still
+  the active locale changed changes nothing, and neither does one read from a
+  prerendered file (a later pass carrying the tables) unless the build's
+  `preferredLocale` gave its locale (`payload.preferred`). The locale a commit is still
   switching to (`tab.switching`) counts as the active one while the active
   locale is still the one it switched from — for the comparison and for the
   warm target — so the wiring's own switch is no client change, while a client

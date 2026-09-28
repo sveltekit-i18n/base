@@ -1,10 +1,13 @@
 import type { I18n } from '../I18n.svelte.js';
 import type { Kit } from './types.js';
 
+/** The negotiated locale, and whether `preferredLocale` gave it. */
+export type Negotiated = { locale: string | undefined; preferred: boolean };
+
 /** What the server half needs from the factory. */
 export type Shared = {
   create: () => I18n;
-  negotiate: (event: Kit.Event, ranges: string | readonly string[] | null | undefined) => string | undefined;
+  negotiate: (event: Kit.Event, ranges: string | readonly string[] | null | undefined) => Negotiated;
   /** The locales the config serves. */
   locales: () => string[];
   basePath: string | undefined;

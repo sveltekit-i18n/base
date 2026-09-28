@@ -7,6 +7,7 @@ import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
 import type { Config } from '../types.js';
 import { configLocales, matchLocale, sanitizerFactory, textDirection } from '../utils.js';
+import type { Negotiated } from './internal.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -99,13 +100,17 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     }
   };
 
-  const negotiate = (event: Kit.Event, ranges: string | readonly string[] | null | undefined): string | undefined => {
+  const negotiate = (event: Kit.Event, ranges: string | readonly string[] | null | undefined): Negotiated => {
     // First: it sets the config's logger, which `preferred` reports through.
     const available = locales();
-    return [visitorSanitized(preferred(event)), ranges, ...defaults].reduce<string | undefined>(
-      (found, candidate) => found ?? matchLocale(candidate, available),
-      undefined,
-    );
+    const chosen = matchLocale(visitorSanitized(preferred(event)), available);
+
+    if (chosen !== undefined) return { locale: chosen, preferred: true };
+
+    return {
+      locale: [ranges, ...defaults].reduce<string | undefined>((found, candidate) => found ?? matchLocale(candidate, available), undefined),
+      preferred: false,
+    };
   };
 
   const server = serverHalf({ create, negotiate, locales, basePath: config.basePath });
@@ -133,11 +138,13 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
 
     // A live server sends the tables on a page render only, so a later pass
     // that carries them read a prerendered file, whose locale was negotiated
-    // at build time, without the visitor. Node and Deno define
-    // `navigator.languages` too, from the server's own environment.
-    const answer = !fresh && payload?.translations
-      ? tab.answer
-      : payload ? payload.locale : negotiate(event, BROWSER ? navigator.languages : undefined);
+    // at build time, without the visitor: it counts only when the build's
+    // `preferredLocale` gave it. Node and Deno define `navigator.languages`
+    // too, from the server's own environment.
+    const prerendered = !fresh && payload?.translations;
+    const answer = prerendered
+      ? (payload.preferred ? payload.locale : tab.answer)
+      : payload ? payload.locale : negotiate(event, BROWSER ? navigator.languages : undefined).locale;
 
     if (BROWSER) Object.assign(tab, { i18n, surface });
 

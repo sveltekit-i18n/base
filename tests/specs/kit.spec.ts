@@ -48,11 +48,11 @@ const setup = (extra: Record<string, any> = {}, options: Kit.Options = {}) => {
 
 const url = (path: string) => new URL(`https://x.test${path}`);
 
-type EventOptions = { lang?: string; isDataRequest?: boolean; cookie?: string; id?: string | null };
+type EventOptions = { lang?: string; isDataRequest?: boolean; cookie?: string; id?: string | null; params?: Record<string, string> };
 
-const serverEvent = (path: string, { lang = 'cs', isDataRequest = false, cookie, id = path }: EventOptions = {}) => ({
+const serverEvent = (path: string, { lang = 'cs', isDataRequest = false, cookie, id = path, params = {} }: EventOptions = {}) => ({
   url: url(path),
-  params: {},
+  params,
   route: { id },
   isDataRequest,
   cookies: { get: (name: string) => (name === 'lang' ? cookie : undefined) },
@@ -175,6 +175,61 @@ describe('/kit', () => {
       expect((await load(serverEvent('/', { isDataRequest: true }))).i18n.locale).toBe('cs');
       expect((await load(serverEvent('/', { isDataRequest: true }))).i18n.locale).toBe('cs');
       expect(errors).toEqual(['[i18n]: `preferredLocale` failed. Negotiating without it.']);
+    });
+
+    it('marks a page render whose locale preferredLocale gave', async () => {
+      const { load } = setup({}, { preferredLocale: (event) => event.params.lang });
+      const page = await load(serverEvent('/cs/about', { lang: 'en', params: { lang: 'cs' } }));
+
+      expect(page.i18n.locale).toBe('cs');
+      expect(page.i18n.preferred).toBe(true);
+      expect(wire(page).i18n.preferred).toBe(true);
+    });
+
+    it('marks no payload whose locale preferredLocale did not give, nor a data request', async () => {
+      const unmarked = async (options: Kit.Options, extra: Record<string, any> = {}, event = serverEvent('/', { lang: 'fr' })) => {
+        const page = await setup(extra, options).load(event);
+
+        expect(page.i18n).not.toHaveProperty('preferred');
+
+        return page.i18n.locale;
+      };
+
+      expect(await unmarked({}, {}, serverEvent('/', { lang: 'cs' }))).toBe('cs');
+      expect(await unmarked({ preferredLocale: () => undefined }, { initLocale: 'en' })).toBe('en');
+      expect(await unmarked({ preferredLocale: () => null }, { fallbackLocale: 'en' })).toBe('en');
+      expect(await unmarked({ preferredLocale: () => 'de' }, {}, serverEvent('/', { lang: 'cs' }))).toBe('cs');
+      expect(await unmarked({ preferredLocale: () => { throw new Error('cookie'); } }, {}, serverEvent('/', { lang: 'cs' }))).toBe('cs');
+
+      // A prerendered page reads no search params: SvelteKit's getter throws.
+      const { load, errors } = setup({ initLocale: 'en' }, { preferredLocale: (event) => event.url.searchParams.get('lang') });
+
+      for (let i = 0; i < 2; i += 1) {
+        const event = serverEvent('/', { lang: 'fr' });
+
+        Object.defineProperty(event.url, 'searchParams', { get: () => { throw new Error('Cannot access url.searchParams on a page with prerendering enabled'); } });
+
+        const page = await load(event);
+
+        expect(page.i18n.locale).toBe('en');
+        expect(page.i18n).not.toHaveProperty('preferred');
+      }
+
+      expect(errors).toEqual(['[i18n]: `preferredLocale` failed. Negotiating without it.']);
+
+      const preferred = setup({}, { preferredLocale: (event) => event.params.lang });
+
+      expect(await preferred.load(serverEvent('/cs/', { isDataRequest: true, params: { lang: 'cs' } }))).toEqual({ i18n: { locale: 'cs', route: '/cs/' } });
+    });
+
+    it('marks a region of a locale, and a value a custom sanitizeLocales matches', async () => {
+      const region = await setup({}, { preferredLocale: () => 'en-GB' }).load(serverEvent('/'));
+
+      expect(region.i18n).toMatchObject({ locale: 'en', preferred: true });
+
+      const custom = await setup({ sanitizeLocales: (locale: string) => locale.toLowerCase() }, { preferredLocale: () => 'EN' }).load(serverEvent('/'));
+
+      expect(custom.i18n).toMatchObject({ locale: 'en', preferred: true });
     });
 
     it('sends the tables on a page render only, and reads url first', async () => {
@@ -363,6 +418,12 @@ describe('/kit', () => {
     // browser through devalue, as SvelteKit sends it.
     const page = (path: string, locale = 'cs', translations?: Record<string, any>) => wire({
       i18n: { locale, route: path, ...(translations ? { translations } : {}) },
+    });
+
+    // A prerendered `__data.json`: the build's page render, with its tables,
+    // marked when the build's `preferredLocale` gave the locale.
+    const prerendered = (path: string, locale: string, preferred = true) => wire({
+      i18n: { locale, route: path, translations: { [locale]: { 'common.greeting': `common ${locale}` } }, ...(preferred ? { preferred: true } : {}) },
     });
 
     beforeEach(() => {
@@ -756,6 +817,183 @@ describe('/kit', () => {
       await vi.waitFor(() => expect(i18n.snapshot({ records: true }).route).toBe('/about'));
       expect(i18n.locale).toBe('cs');
       expect(wiring.calls.filter((call) => call.startsWith('en:'))).toEqual([]);
+      void unmount(component);
+    });
+
+    it('follows the locale the build\'s preferredLocale gave a prerendered page, Back included', async () => {
+      const wiring = setup();
+      const data = cell<object>(await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+
+      data.current = await wiring.load(universalEvent('/en/about', prerendered('/en/about', 'en')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.locale).toBe('en'));
+      expect(document.documentElement.lang).toBe('en');
+
+      data.current = await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+      void unmount(component);
+    });
+
+    it('warms a marked prerendered locale on a preload without activating it, and switches once at commit', async () => {
+      const wiring = setup();
+      const data = cell<object>(await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+
+      const preloaded = await wiring.load(universalEvent('/en/b', prerendered('/en/b', 'en')));
+
+      expect(wiring.calls).toEqual(['en:common:/en/b']);
+      expect(i18n.locale).toBe('cs');
+      expect(i18n.snapshot({ records: true }).route).toBe('/cs/');
+
+      data.current = preloaded;
+      flushSync();
+      expect(i18n.locale).toBe('en');
+      expect(wiring.calls).toEqual(['en:common:/en/b']);
+      void unmount(component);
+    });
+
+    it('follows a live answer after an unmarked prerendered page in a mixed app', async () => {
+      const wiring = setup();
+      const data = cell<object>(await wiring.load(universalEvent('/', page('/', 'cs'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+
+      data.current = await wiring.load(universalEvent('/docs', prerendered('/docs', 'en', false)));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.snapshot({ records: true }).route).toBe('/docs'));
+      expect(i18n.locale).toBe('cs');
+
+      data.current = await wiring.load(universalEvent('/account', page('/account', 'en')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.locale).toBe('en'));
+      void unmount(component);
+    });
+
+    it('keeps a client setLocale through a marked prerendered page until its answer changes', async () => {
+      const wiring = setup({ translations: { de: { 'common.greeting': 'Hallo' } } });
+      const data = cell<object>(await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+      await i18n.setLocale('de');
+
+      data.current = await wiring.load(universalEvent('/cs/x', prerendered('/cs/x', 'cs')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.snapshot({ records: true }).route).toBe('/cs/x'));
+      expect(i18n.locale).toBe('de');
+
+      data.current = await wiring.load(universalEvent('/en/', prerendered('/en/', 'en')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.locale).toBe('en'));
+
+      await i18n.setLocale('cs');
+
+      // Preloaded under the choice the tab showed then.
+      const preloaded = await wiring.load(universalEvent('/cs/about', prerendered('/cs/about', 'cs')));
+
+      await i18n.setLocale('en');
+      data.current = preloaded;
+      flushSync();
+      await vi.waitFor(() => expect(i18n.snapshot({ records: true }).route).toBe('/cs/about'));
+      expect(i18n.locale).toBe('en');
+      void unmount(component);
+    });
+
+    it('does not switch on a reused marked payload whose answer the tab already took', async () => {
+      const wiring = setup();
+      const payload = prerendered('/cs/', 'cs');
+      const data = cell<object>(await wiring.load(universalEvent('/cs/', payload)));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+      await i18n.setLocale('en');
+
+      data.current = await wiring.load(universalEvent('/cs/', payload));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.loading).toBe(false));
+      expect(i18n.locale).toBe('en');
+      void unmount(component);
+    });
+
+    it('switches again at the next commit when its switch to a marked prerendered locale failed', async () => {
+      const thrown: unknown = { status: 303, location: '/login' };
+      let runs = 0;
+      const wiring = setup({
+        loaders: [
+          { locale: 'en', namespace: 'common', loader: () => Promise.resolve({ greeting: 'Hello' }) },
+          {
+            locale: 'cs',
+            namespace: 'common',
+            cache: false,
+            loader: async () => {
+              runs += 1;
+              if (runs === 2) throw thrown;
+
+              return { greeting: 'Ahoj' };
+            },
+          },
+        ],
+      });
+      const data = cell<object>(await wiring.load(universalEvent('/en/', prerendered('/en/', 'en'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('en'));
+
+      data.current = await wiring.load(universalEvent('/cs/b', prerendered('/cs/b', 'cs')));
+      flushSync();
+      await vi.waitFor(() => expect(runs).toBe(2));
+      await vi.waitFor(() => expect(i18n.loading).toBe(false));
+      expect(i18n.locale).toBe('en');
+
+      data.current = await wiring.load(universalEvent('/cs/c', prerendered('/cs/c', 'cs')));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+      void unmount(component);
+    });
+
+    it('never runs preferredLocale in the browser when a server load exists', async () => {
+      const preferredLocale = vi.fn((event: Kit.Event) => event.params.lang);
+      const wiring = setup({}, { preferredLocale });
+      const data = cell<object>(await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs'), { lang: 'cs' })));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('cs'));
+
+      data.current = await wiring.load(universalEvent('/en/', page('/en/', 'en'), { lang: 'en' }));
+      flushSync();
+      data.current = await wiring.load(universalEvent('/cs/x', prerendered('/cs/x', 'cs'), { lang: 'cs' }));
+      flushSync();
+      data.current = await wiring.load(universalEvent('/en/x', prerendered('/en/x', 'en', false), { lang: 'en' }));
+      flushSync();
+      await vi.waitFor(() => expect(i18n.loading).toBe(false));
+      expect(preferredLocale).not.toHaveBeenCalled();
+      void unmount(component);
+    });
+
+    it('hydrates a marked prerendered page on the first pass, and keeps the marker out of the state', async () => {
+      const wiring = setup();
+      const data = cell<object>(await wiring.load(universalEvent('/en/', prerendered('/en/', 'en'))));
+      const { component } = mountLayout(wiring, data);
+      const { i18n } = data.current as { i18n: any };
+
+      await vi.waitFor(() => expect(i18n.locale).toBe('en'));
+      expect(document.body.innerHTML).toContain('common en');
+      expect(i18n.snapshot()).not.toHaveProperty('preferred');
+      expect(i18n.snapshot({ records: true })).not.toHaveProperty('preferred');
       void unmount(component);
     });
 
