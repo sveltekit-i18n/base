@@ -50,9 +50,10 @@ export namespace Kit {
      * locale matches is skipped; a custom `sanitizeLocales` is applied to it
      * first. It runs on every navigation and every
      * preload, so it must be pure: it reads the event and writes nothing.
-     * With a server load it runs on the server only: a navigation to a
-     * prerendered page takes the locale it gave at build time, and otherwise
-     * keeps the tab's.
+     * With a server load it runs in the browser only on a root error page
+     * rendered without the server's data (an unknown URL a static host answers
+     * with its fallback page): a navigation to a prerendered page takes the
+     * locale it gave at build time, and otherwise keeps the tab's.
      *
      * @example
      * preferredLocale: (event) => event.cookies?.get('lang')

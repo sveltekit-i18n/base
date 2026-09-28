@@ -964,7 +964,7 @@ describe('/kit', () => {
       void unmount(component);
     });
 
-    it('never runs preferredLocale in the browser when a server load exists', async () => {
+    it('never runs preferredLocale in the browser on a pass that carries the server\'s data', async () => {
       const preferredLocale = vi.fn((event: Kit.Event) => event.params.lang);
       const wiring = setup({}, { preferredLocale });
       const data = cell<object>(await wiring.load(universalEvent('/cs/', prerendered('/cs/', 'cs'), { lang: 'cs' })));

@@ -228,11 +228,11 @@ A named capture group in a `RegExp` route is a load parameter: its match reaches
   locale: 'en',
   namespace: 'article',
   routes: [/^\/article\/(?<articleId>[^/]+)/],
-  loader: async ({ locale, params }) => (await fetch(`/api/articles/${params.articleId}/i18n/${locale}`)).json(),
+  loader: async ({ locale, params }) => (await fetch(`${API_ORIGIN}/api/articles/${params.articleId}/i18n/${locale}`)).json(),
 }
 ```
 
-See [route params](./docs/README.md#route-params) for the rules.
+`API_ORIGIN` stands for an origin such as `https://api.example.com`: a loader runs on the server too, where `fetch` takes only an absolute URL. See [route params](./docs/README.md#route-params) for the rules.
 
 A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](./docs/README.md#cache-optional).
 

@@ -333,11 +333,15 @@ against SvelteKit 2.70 and the 3.0 prerelease):
   locale: 'en',
   namespace: 'common',
   loader: async ({ locale }) => {
-    const response = await fetch(`/api/translations/${locale}/common`);
+    const response = await fetch(`${API_ORIGIN}/api/translations/${locale}/common`);
     return await response.json();
   },
 }
 ```
+
+A loader runs on the server too, where `fetch` takes only an absolute URL (the
+core hands a loader no `fetch` of its own), so `API_ORIGIN` in these examples
+stands for an origin such as `https://api.example.com`.
 
 **⚠️ `route` is context, not a cache key.** A loader runs at most once per
 locale per freshness window (see [`cache`](#cache)) and per set of
@@ -354,7 +358,7 @@ use the `route` argument for diagnostics:
   routes: ['/checkout'],
   loader: async ({ locale, route }) => {
     console.debug(`loading ${locale} translations for ${route}`);
-    const response = await fetch(`/api/translations/${locale}/checkout`);
+    const response = await fetch(`${API_ORIGIN}/api/translations/${locale}/checkout`);
     return await response.json();
   },
 }
@@ -446,7 +450,7 @@ the loader as `params`, and the loader runs again whenever the params change:
   namespace: 'article',
   routes: [/^\/article\/(?<articleId>[^/]+)/],
   loader: async ({ locale, params }) => {
-    const response = await fetch(`/api/articles/${params.articleId}/i18n/${locale}`);
+    const response = await fetch(`${API_ORIGIN}/api/articles/${params.articleId}/i18n/${locale}`);
     return await response.json();
   },
 }
@@ -637,7 +641,7 @@ const config = {
       locale: 'en',
       namespace: 'dynamic',
       loader: async () => {
-        const res = await fetch('/api/translations/en/dynamic');
+        const res = await fetch(`${API_ORIGIN}/api/translations/en/dynamic`);
         return await res.json();
       },
     },
@@ -1166,7 +1170,7 @@ the registry:
 
 | The config's `schema` | Keys and payloads are typed by |
 |---|---|
-| absent, or typed `any` (a plain `Config.T` annotation) | the registry — plain strings when nothing is registered |
+| absent, or typed `any` (a `Config.T` annotation that names no schema) | the registry — plain strings when nothing is registered |
 | a closed schema (`{} as X`, `Config.T<Params, Output, X>`, `X \| undefined`) | `X`: a stated schema always wins |
 | a schema whose keys are not a closed set (`{}`, `Record<string, …>`) | nothing — keys are plain strings |
 
@@ -2246,9 +2250,11 @@ a server `load`, in the universal one, whose event has no `cookies` (hence
 `cookies?.`). It runs on every navigation and every preload, so it must only
 read the event. A value it returns that no configured locale matches is
 skipped, and one that throws is logged once and skipped. With a server `load`,
-it never runs in the browser: a navigation to a prerendered page takes the
-locale `preferredLocale` gave that page at build time, and otherwise keeps the
-tab's.
+it runs in the browser only on a root error page SvelteKit renders without the
+server's data, such as an unknown URL a static host answers with its fallback
+page, and there too the event has no `cookies`. A navigation to a prerendered
+page takes the locale `preferredLocale` gave that page at build time, and
+otherwise keeps the tab's.
 
 The server's answer rules. `i18n.setLocale('cs')` in the browser switches the
 tab, and the switch stands across navigations until the server answers
@@ -2406,7 +2412,7 @@ something the wiring does not do.
 // src/lib/translations/index.js
 import parser from '@sveltekit-i18n/parser-curly';
 
-/** @type {import('@sveltekit-i18n/base').Config.T} */
+/** @type {import('@sveltekit-i18n/parser-curly').Config} */
 export const config = {
   parser: parser({ onReport: null }),
   loaders: [/* ... */],
@@ -3119,6 +3125,18 @@ const withGreeting = (i18n: I18n) => Object.assign(i18n, {
 
 // Typed as I18n & { greet: (name: string) => string }:
 export const i18n = new I18n({ ...config, extensions: [withGreeting] });
+```
+
+**The pipe folds a tuple.** A config kept in a variable widens its
+`extensions` to an array, whose order and length the type no longer knows,
+and the result is then typed as the bare instance while the call still returns
+the last extension's output. Hand the extensions over in the call, as above,
+or keep the config `as const`:
+
+```typescript
+export const config = { ...base, extensions: [withGreeting] } as const;
+
+new I18n(config).greet('World'); // typed
 ```
 
 **Keeping the surface an extension was handed.** The extension above spells its
