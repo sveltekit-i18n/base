@@ -328,8 +328,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   load re-runs on a navigation only for what it read) and sends the tables on
   a page render only, the locale and the route on a data request, and marks a
   page render whose locale `preferredLocale` gave (`preferred: true`), never a
-  data request; `preferredLocale` never runs in the browser when a server
-  `load` exists. The server
+  data request; when a server `load` exists, `preferredLocale` runs in the
+  browser only on a root error page SvelteKit renders without its data (the
+  universal event says nothing of whether one exists). The server
   builds an instance per pass; the browser keeps one per tab, and only the
   pass that builds it activates — every later pass is a warm load of one
   target, since it may be a preload. `use()` activates at commit, comparing the
