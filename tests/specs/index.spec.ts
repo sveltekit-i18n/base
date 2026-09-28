@@ -1471,6 +1471,83 @@ describe('i18n instance', () => {
 
     expect(instance.translations.en).toEqual({ 'a.first': 'First', 'a.second': 'Second', 'a.only2': '2' });
   });
+  describe('what a loader delivered for params, across a reconfiguration', () => {
+    const product = /^\/p\/(?<id>\d+)$/;
+    let fail = false;
+    const titles = async ({ params }: Loader.Props) => ({ [`title${params.id}`]: 'T' });
+    const reviews = async ({ params }: Loader.Props) => {
+      if (fail) throw new Error('reviews');
+
+      return { [`reviews${params.id}`]: 'R' };
+    };
+    const other = async () => ({ other: 'O' });
+    // The loaders a reconfiguration reads are the ones the app already had, as
+    // `{ ...config, … }` hands them over.
+    const config = (reviewsRoutes: Loader.Route[]) => ({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'product', locale: 'en', routes: [product], loader: titles },
+        { namespace: 'product', locale: 'en', routes: reviewsRoutes, loader: reviews },
+        { namespace: 'product', locale: 'en', routes: ['/other'], loader: other },
+      ],
+    });
+    const cases = [
+      // Identical content: neither loader is identifiable by its id.
+      ['share their content', [product], [product]],
+      // Each identifiable, under an id the new routes change.
+      ['change their routes', [product, '/old'], [product, '/new']],
+    ] as const;
+
+    beforeEach(() => {
+      fail = false;
+    });
+
+    it.each(cases)('is replaced by new params when the loaders %s', async (_, before, after) => {
+      const instance = new i18n(config([...before]));
+
+      await instance.loadTranslations('en', '/p/1');
+      await instance.loadConfig(config([...after]));
+      await instance.setRoute('/p/2');
+
+      expect(instance.translations.en).toEqual({ 'product.title2': 'T', 'product.reviews2': 'R' });
+      expect(instance.snapshot({ records: true }).seeds).toBeUndefined();
+
+      await instance.setRoute('/p/3');
+
+      expect(instance.rawTranslations.en).toEqual({ product: { title3: 'T', reviews3: 'R' } });
+    });
+    it.each(cases)('stays shown through a warm load of other params when the loaders %s', async (_, before, after) => {
+      const instance = new i18n(config([...before]));
+
+      await instance.loadTranslations('en', '/p/1');
+      await instance.loadConfig(config([...after]));
+      await instance.loadTranslations('en', '/p/2', { activate: false });
+      await instance.loadTranslations('en', '/other', { activate: false });
+
+      expect(instance.translations.en).toEqual({ 'product.title1': 'T', 'product.reviews1': 'R', 'product.other': 'O' });
+    });
+    it('stays shown when its loader fails for the same params', async () => {
+      const instance = new i18n(config([product, '/old']));
+
+      await instance.loadTranslations('en', '/p/1');
+      await instance.loadConfig(config([product, '/new']));
+      fail = true;
+      await instance.loadTranslations('en', '/p/1');
+
+      expect(instance.translations.en).toEqual({ 'product.title1': 'T', 'product.reviews1': 'R' });
+    });
+    it('is replaced by new params across two reconfigurations', async () => {
+      const instance = new i18n(config([product, '/a']));
+
+      await instance.loadTranslations('en', '/p/1');
+      await instance.loadConfig(config([product, '/b']));
+      await instance.loadConfig(config([product, '/c']));
+      await instance.setRoute('/p/2');
+
+      expect(instance.rawTranslations.en).toEqual({ product: { title2: 'T', reviews2: 'R' } });
+    });
+  });
   it('keeps a sibling loader\'s part and data supplied without a loader when a loader\'s params change', async () => {
     const instance = new i18n({
       parser,
