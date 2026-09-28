@@ -46,7 +46,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `npm install` / `npm ci` | install (respects `package-lock.json`) |
 | `npm run dev` | `svelte-package` build in watch mode |
 | `npm run build` | `svelte-package` build to `dist/` |
-| `npm test` | vitest suite (runs `typecheck` first) |
+| `npm test` | vitest suite (runs `build` and `typecheck` first) |
 | `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
 | `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs |
 | `npm run lint` | `eslint --fix .` (also the pre-commit hook, via `simple-git-hooks`) |
@@ -300,11 +300,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   (`I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>`), not an
   intersection. The loader locales, `initLocale`, `fallbackLocale` and
   `translations` keys a config spells narrow the inputs (`setLocale`,
-  `loadTranslations`, `invalidate`, `l`, assigning `locale`) and the reads
-  (`locale`, `locales`) alike; the translation tables stay `string`-keyed. The
-  union stays OPEN (`L | (string & {})`) — a completion hint, never a
-  constraint, since a locale can arrive from a URL, a cookie or an
-  `Accept-Language` header — and that openness is what keeps a narrowed
+  `loadTranslations`, `loadNamespace`, `invalidate`, `l`, assigning `locale`)
+  and the reads (`locale`, `locales`) alike; the translation tables stay
+  `string`-keyed. The union stays OPEN (`L | (string & {})`) — a completion
+  hint, never a constraint, since a locale can arrive from a URL, a cookie or
+  an `Accept-Language` header — and that openness is what keeps a narrowed
   instance assignable to and from a plain `I18n`. One dynamic source degrades
   the whole union to `string`: a half-known set would complete some locales
   while silently hiding the rest.
@@ -527,7 +527,7 @@ chat (§3).
   `console`. Respect the configured level; a custom logger may omit a level —
   don't assume every method exists.
 - **Reuse before reimplementing** — `sanitizeLocales`, `toDotNotation`,
-  `checkProps`, `hasOwn`, etc. already exist. Grep before adding a helper; bend
+  `resolveLoaders`, `mergeTranslations`, `hasOwn`, etc. already exist. Grep before adding a helper; bend
   an existing one rather than forking.
 - **Abstraction beats duplication.** When code repeats the same (or
   near-same) logical structure, that repetition is a candidate for

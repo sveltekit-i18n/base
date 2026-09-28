@@ -34,7 +34,9 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 
 Svelte 5 or newer, and one of Node 22+, Bun 1.2+ or Deno 2+. The package is
 ESM-only and imports no `node:` module, so every runtime that runs your
-SvelteKit build runs it.
+SvelteKit build runs it. The [`/kit`](#sveltekit) subpath needs SvelteKit 2;
+the SvelteKit behaviour the docs describe is checked against 2.70 and the 3.0
+prerelease.
 
 ## Installation
 
@@ -171,8 +173,10 @@ import i18n from '@sveltekit-i18n/base';
 
 const customParser = () => ({
   parse: (value, params) => {
-    // Your custom interpolation logic
-    return value.replace(/\{(\w+)\}/g, (_, key) => params[0]?.[key] ?? key);
+    // Your custom interpolation logic; `parse` must not throw on a non-string value
+    return typeof value === 'string'
+      ? value.replace(/\{(\w+)\}/g, (_, key) => params[0]?.[key] ?? key)
+      : value;
   },
 });
 
@@ -236,6 +240,19 @@ A loader that throws is logged, and the rest of the load lands without its data;
 
 Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
 
+### `basePath`
+
+The path the app is served under — SvelteKit's `kit.paths.base`. Every route handed in loses it on the way in, on a segment boundary only (under `/repo`, `/repo/about` is `/about`), so loader `routes` name the app's own paths. Set both from one environment variable:
+
+```javascript
+// svelte.config.js: kit: { paths: { base: process.env.PUBLIC_BASE_PATH ?? '' } }
+import { PUBLIC_BASE_PATH } from '$env/static/public';
+
+basePath: PUBLIC_BASE_PATH
+```
+
+See [`basePath`](./docs/README.md#basepath).
+
 ### `translations`
 
 Synchronous translations, available immediately. They seed the tables: the loaders of a namespace they name still run and merge into it. Hand a server's state over with [`hydrate()`](./docs/README.md#hydrateenvelope) instead:
@@ -256,6 +273,8 @@ Initialize with a specific locale immediately:
 initLocale: 'en'
 ```
 
+With [`defineI18n()`](#sveltekit) it loads nothing: it is a negotiation candidate. Leave it out of a config whose instance you [`hydrate()`](./docs/README.md#hydrateenvelope) by hand — its load starts in the constructor, before the hand-off can be applied.
+
 ### `fallbackLocale`
 
 Fallback when translation is missing:
@@ -273,6 +292,10 @@ Default return value when translation key is not found:
 ```javascript
 fallbackValue: '...' // Default: returns the key itself
 ```
+
+### `sanitizeLocales`
+
+How locale identifiers are normalized before they key anything: `true` (default) resolves them to their ISO form through `Intl` (`'en-us'` is `'en-US'`), `false` keeps them as authored, and a function normalizes them your way. See [`sanitizeLocales`](./docs/README.md#sanitizelocales).
 
 ### `preprocess`
 
@@ -300,7 +323,7 @@ type TranslationSchema = {
 const i18n = new I18n({ ...config, schema: {} as TranslationSchema });
 ```
 
-Hand-write it for a small set of messages, or point the slot at a generated artifact. A schema whose keys are not a closed set is ignored, and keys stay plain strings. See [`schema`](./docs/README.md#schema) for the full rules.
+Hand-write it for a small set of messages, or point the slot at a generated artifact — [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate package, generates one. A schema whose keys are not a closed set is ignored, and keys stay plain strings. See [`schema`](./docs/README.md#schema) for the full rules.
 
 ### `cache`
 
@@ -309,10 +332,10 @@ Time in milliseconds the loaded translations stay fresh for. By default, loaded 
 Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 
 ```javascript
-cache: 3600000 // Translations older than 1 hour refetch on the next load
+cache: 3600000 // Translations older than 1 hour refetch on the next activating load
 ```
 
-Set to `0` to treat translations as always stale (refetch on every load trigger). You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
+Expiry is evaluated by the next activating load trigger (`setLocale`, `setRoute`, `loadTranslations`); a warm load — `loadTranslations(…, { activate: false })` or `loadNamespace()` — fills the tables without evaluating it. Set to `0` to treat translations as always stale (refetch on every activating load trigger). A loader with `cache: false` is outside the window. You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
 
 ### `extensions`
 
@@ -423,11 +446,12 @@ Full API documentation: [docs/README.md](./docs/README.md)
 
 ```typescript
 import { I18n, type Config } from '@sveltekit-i18n/base';
-import parser from '@sveltekit-i18n/parser-curly';
+import parser, { type Parser } from '@sveltekit-i18n/parser-curly';
 
 // The parser's params – the rest parameters of `t`/`l`. Annotate only when the
-// config lives on its own; `new I18n({ ... })` infers them.
-type Params = [payload?: Record<string, unknown>];
+// config lives on its own; `new I18n({ ... })` infers them. Take the tuple from
+// the parser rather than spelling it by hand.
+type Params = Parser.Params;
 
 const config: Config.T<Params> = {
   parser: parser({ onReport: null }),
@@ -435,7 +459,7 @@ const config: Config.T<Params> = {
 };
 ```
 
-Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `invalidate`, `l`, `locale`, `locales`):
+Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `loadNamespace`, `invalidate`, `l`, `locale`, `locales`):
 
 ```typescript
 const i18n = new I18n({ parser: parser({ onReport: null }), initLocale: 'en', fallbackLocale: 'de' });
@@ -454,6 +478,7 @@ The locales survive only when the config reaches the constructor as a literal �
 - [@sveltekit-i18n/parser-mf2](https://github.com/sveltekit-i18n/parsers/tree/master/parser-mf2) – [Unicode MessageFormat 2](https://unicode.org/reports/tr35/tr35-messageFormat.html) parser
 - [@sveltekit-i18n/parser-i18next](https://github.com/sveltekit-i18n/parsers/tree/master/parser-i18next) – [i18next](https://www.i18next.com) interpolation and formatting syntax parser
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
+- [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) – Generates the [`schema`](#schema) type from your translation files
 
 ## Contributing
 
