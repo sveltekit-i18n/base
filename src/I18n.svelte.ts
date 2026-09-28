@@ -123,7 +123,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // What each source last put into a namespace, so a loader whose params
   // changed can replace its own part and leave its siblings' in place. Kept
   // apart from the records: invalidation drops those, not what is displayed,
-  // and a reconfiguration hands them on to the loaders with the same id.
+  // and a reconfiguration hands them on to the same loaders of the new config.
   #deliveries = new Map<Loader.Resolved, Delivery>();
 
   #externalTranslations: Translations.SerializedTranslations = {};
@@ -754,22 +754,42 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /**
    * Gives each delivery of the previous config to the loader of the new one
-   * with the same id, so its params can still replace it. What no loader can
-   * take over is kept as data supplied without a loader, so a namespace rebuilt
-   * later keeps it rather than losing it.
+   * with the same id, or else to the one loader that runs the same function
+   * for the same locale and namespace when no other delivery came from that
+   * function there: a `{ ...config, … }` hands its loaders over as they were,
+   * whatever became of their routes. Its params can then still replace it.
+   * What no loader can take over is kept as data supplied without a loader, so
+   * a namespace rebuilt later keeps it rather than losing it.
    */
   #handOnDeliveries(loaders: Loader.Resolved[]): void {
-    const takers = new Map(loaders.flatMap((loader) => (loader.id === null ? [] : [[loader.id, loader] as const])));
+    const byId = new Map(loaders.flatMap((loader) => (loader.id === null ? [] : [[loader.id, loader] as const])));
 
     const deliveries = Array.from(this.#deliveries.values());
 
-    const orphaned = deliveries.filter(({ loader }) => loader.id === null || !takers.has(loader.id));
+    const byIdTaken = new Map(deliveries.flatMap((delivery) => {
+      const taker = delivery.loader.id === null ? undefined : byId.get(delivery.loader.id);
 
-    this.#deliveries = new Map(deliveries.flatMap((delivery) => {
-      const taker = delivery.loader.id === null ? undefined : takers.get(delivery.loader.id);
-
-      return taker ? [[taker, { ...delivery, loader: taker }]] : [];
+      return taker ? [[delivery, taker] as const] : [];
     }));
+
+    const free = loaders.filter((loader) => !Array.from(byIdTaken.values()).includes(loader));
+
+    const rest = deliveries.filter((delivery) => !byIdTaken.has(delivery));
+
+    const runsAs = (a: Loader.Resolved) => (b: Loader.Resolved) => a.loader === b.loader && a.locale === b.locale && a.namespace === b.namespace;
+
+    const byFunction = rest.flatMap((delivery) => {
+      const [only, ...more] = free.filter(runsAs(delivery.loader));
+      const alone = rest.filter((other) => runsAs(delivery.loader)(other.loader)).length === 1;
+
+      return only && !more.length && alone ? [[delivery, only] as const] : [];
+    });
+
+    const takers = new Map([...byIdTaken, ...byFunction]);
+
+    const orphaned = deliveries.filter((delivery) => !takers.has(delivery));
+
+    this.#deliveries = new Map(Array.from(takers, ([delivery, taker]) => [taker, { ...delivery, loader: taker }]));
 
     this.#keepExternal(serialize(orphaned.map(({ loader, data }) => ({ ...loader, data }))));
   }
