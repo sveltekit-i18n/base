@@ -52,10 +52,11 @@ const config = {
 };
 ```
 
-What the factory takes is the parser's business, not the core's. Both official
-parsers require `onReport` to be stated — `null` included — so that silence
-about parser diagnostics is a decision rather than an omission; the samples in
-this document state `null` because they have nowhere to route a report.
+What the factory takes is the parser's business, not the core's. Every official
+parser — curly, icu, mf2 and i18next — requires `onReport` to be stated, `null`
+included, so that silence about parser diagnostics is a decision rather than an
+omission; the samples in this document state `null` because they have nowhere
+to route a report.
 
 **See:** [Parsers documentation](https://github.com/sveltekit-i18n/parsers)
 
@@ -471,7 +472,7 @@ the loader as `params`, and the loader runs again whenever the params change:
   the data of the params the current route asks for. The latest data to arrive
   for other params is kept aside, one set per loader, as a router keeps one
   preload: the trigger that asks for those params applies it instead of
-  fetching it again. It counts towards its locale's [`cache`](#cache-optional)
+  fetching it again. It counts towards its locale's [`cache`](#cache)
   window, and `invalidate()` drops it — even while a trigger is about to apply
   it, which then fetches it again. A loader the current route does not select
   is asked for no params: data a load of another route delivers for it lands
@@ -918,6 +919,13 @@ const config = {
 
 **⚠️ Note:** Translations will load immediately on instance creation. Make sure loaders are ready.
 
+With [`defineI18n()`](#sveltekit) it loads nothing: the wiring strips it from
+the instances it builds and tries it as a [negotiation candidate](#which-locale)
+instead. Leave it out of a config whose instance you
+[`hydrate()`](#hydrateenvelope) by hand — its load starts in the constructor,
+before the hand-off can be applied (see the
+[SSR recipe](#3-build-the-instance-the-app-renders-with)).
+
 ---
 
 ### `fallbackLocale`
@@ -948,6 +956,12 @@ i18n.t('new.feature')  // → "New Feature" (from 'en')
 // Translation missing in both: returns fallbackValue or key
 i18n.t('nonexistent')  // → "nonexistent"
 ```
+
+A request for a locale no loader and no [`translations`](#translations) serve
+activates `fallbackLocale` instead: `loadTranslations('de')` on a config serving
+only `en` and `cs`, with `fallbackLocale: 'en'`, makes [`locale`](#locale)
+`'en'`. Without a `fallbackLocale`, such a request changes nothing once the
+instance knows a locale (see [`setLocale()`](#setlocalelocale)).
 
 **⚠️ Performance Impact:** Both current locale and fallback locale translations are loaded, doubling network/memory usage. Use only if necessary.
 
@@ -1145,7 +1159,9 @@ extension, not by the schema. An extension typed by an `Extension.Operator`
 keeps them (see [Extensions and the constructor's type](#extensions-and-the-constructors-type)).
 
 No generator ships in this package: the schema is a type you hand-write for a
-small project, or a generated artifact for a large one (see
+small project, or a generated artifact for a large one —
+[@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate
+package, generates one (see
 [Message parameter extraction](#message-parameter-extraction) for the
 build-time contract a generator reads messages through). The types the slot is
 resolved through are exported from the package root as the `Schema` namespace —
@@ -1165,9 +1181,11 @@ output.
 How long loaded translations stay fresh. Once a locale's translations are
 older than this window, the **next activating load trigger**
 (`loadTranslations`, `setLocale`, `setRoute`) runs its loaders again; nothing
-refetches on its own in the background, and a `loadTranslations()` call with
-[`{ activate: false }`](#loadtranslationslocale-route-options) does not evaluate the
-window.
+refetches on its own in the background. A warm load — a `loadTranslations()`
+call with [`{ activate: false }`](#loadtranslationslocale-route-options),
+[`loadNamespace()`](#loadnamespacenamespace-locale), or the `load` of a
+[SvelteKit](#sveltekit) navigation after the first, whose commit evaluates it
+instead — fills the tables without evaluating the window.
 
 **Default (never expires):**
 
@@ -1197,7 +1215,7 @@ navigation instead of serving the first fetch forever.
 
 ```javascript
 const config = {
-  cache: 0,  // Refetch on every load trigger
+  cache: 0,  // Refetch on every activating load trigger
 };
 ```
 
@@ -1585,8 +1603,12 @@ never poll this flag.
 gate the first render:
 
 ```svelte
+<script>
+  let { children } = $props();
+</script>
+
 {#if i18n.initialized}
-  <slot />
+  {@render children()}
 {/if}
 ```
 
@@ -1805,7 +1827,13 @@ i18n.addTranslations({
 
 ### `snapshot(options?)`
 
-**Type:** `(options?: { records?: boolean }) => Record<string, any> | Snapshot.Envelope`
+**Type:**
+
+```typescript
+(options?: { records?: false }) => Record<string, any>
+(options: { records: true }) => Snapshot.Envelope
+(options?: { records?: boolean }) => Record<string, any> | Snapshot.Envelope
+```
 
 Serializes what the instance currently holds for the **active locale** and the
 **`fallbackLocale`**, whichever routes loaded it — the server half of the
@@ -1915,20 +1943,13 @@ hand-off](#server-side-rendering):
   load has run.
 
 ```javascript
-// +layout.js — the client starts from the server's state
-import { I18n } from '@sveltekit-i18n/base';
-import { config } from '$lib/translations';
-
-export const load = async ({ data, url }) => {
-  const i18n = new I18n(config);
-
-  i18n.hydrate(data.i18n);
-
-  await i18n.loadTranslations(i18n.locale, url.pathname);
-
-  return { i18n };
-};
+// Once, right after the instance is built
+i18n.hydrate(data.i18n);
 ```
+
+In a SvelteKit `load` that runs on every navigation, build the instance and
+hydrate it once per tab — the
+[SSR recipe](#3-build-the-instance-the-app-renders-with) shows the pattern.
 
 The envelope is **applied on top of** the config: a config that carries its own
 `translations` keeps them.
@@ -2466,7 +2487,7 @@ the `DotNotation` type they are described with.
 
 ### `toDotNotation(input, preserveArrays?)`
 
-**Type:** `<I>(input: I, preserveArrays?: boolean) => DotNotation.Output<I>`
+**Type:** `<I>(input: I, preserveArrays?: boolean, parentKey?: string) => DotNotation.Output<I>`
 
 The flattening behind [`preprocess`](#preprocess). A custom `preprocess`
 function *replaces* the built-in flattening, so call this when you want to
@@ -2485,7 +2506,8 @@ const config = {
 ```
 
 Pass `true` as the second argument to keep arrays intact – the
-[`'preserveArrays'`](#preprocess) behavior.
+[`'preserveArrays'`](#preprocess) behavior. A `parentKey` prefixes every key of
+the top level: `toDotNotation({ a: 1 }, false, 'ns')` is `{ 'ns.a': 1 }`.
 
 ---
 
@@ -2820,7 +2842,7 @@ The library provides:
 - ✅ Typed methods and reactive properties (`t`/`l` output inferred from the parser)
 - ✅ Generic types for custom parser integration
 - ✅ Typed translation keys and payloads, from a [`schema`](#schema) you supply
-- ❌ Generating that schema from your translation files — the slot ships, not the generator
+- ❌ Generating that schema from your translation files — the slot ships, not the generator ([@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) is a separate package)
 
 ### Parser params and output inference
 
@@ -2868,14 +2890,14 @@ const i18n = new I18n({
   initLocale: 'en',
   fallbackLocale: 'de',
   translations: { cs: { greeting: 'Ahoj' } },
-  loaders: [{ locale: 'sk', key: 'common', loader: async () => ({}) }],
+  loaders: [{ locale: 'sk', namespace: 'common', loader: async () => ({}) }],
 });
 
 i18n.locale;  // 'en' | 'de' | 'cs' | 'sk' | (string & {}) | undefined
 ```
 
 The union narrows **inputs** — `setLocale()`, `loadTranslations()`,
-`invalidate()`, the first argument of `l()`, and assignment to
+`loadNamespace()`, `invalidate()`, the first argument of `l()`, and assignment to
 [`locale`](#locale) — and the **reads** [`locale`](#locale) and
 [`locales`](#locales). The [translation tables](#translations--rawtranslations)
 are not narrowed: they stay plain `string`-keyed records.
@@ -2930,7 +2952,7 @@ const locales: string[] = ['cs', 'sk'];
 const config = {
   parser: parser({ onReport: null }),
   initLocale: 'en',
-  loaders: locales.map((locale) => ({ locale, key: 'common', loader: async () => ({}) })),
+  loaders: locales.map((locale) => ({ locale, namespace: 'common', loader: async () => ({}) })),
 } as const;
 
 // Config.LocalesFromConfig<typeof config> is `string`, not `'en'`
@@ -3176,6 +3198,18 @@ the browser they are the objects themselves, not proxies, and changing them in
 place re-renders nothing. Write with
 [`addTranslations()`](#addtranslationstranslations), as before.
 
+**The loading calls read what they write untracked.**
+[`setLocale()`](#setlocalelocale), [`setRoute()`](#setrouteroute),
+[`loadTranslations()`](#loadtranslationslocale-route-options),
+[`loadNamespace()`](#loadnamespacenamespace-locale),
+[`loadConfig()`](#loadconfigconfig),
+[`addTranslations()`](#addtranslationstranslations) and
+[`hydrate()`](#hydrateenvelope) read the state they write untracked, so an
+`$effect` may call them without re-running whenever a later call, a load or an
+undo changes that state. An effect that relied on re-running because such a
+call read the requested locale, the route or the config no longer does — read
+what it follows in the effect itself.
+
 ### Type changes
 
 - **`Loader.Props` gains `namespace` and `params`**, both required. A loader
@@ -3187,6 +3221,17 @@ place re-renders nothing. Write with
   first and reads the resolved `locale` and `namespace`. Naming both `key` and
   `namespace` is a type error. It is now a union, so an `interface` can no
   longer extend it — use a type alias with `&`.
+- **`Loader.LoaderModule` gains `cache`**, typed `false` — see
+  [`cache`](#cache-optional).
+- **The instance type gains members and parameters:**
+  [`loadTranslations()`](#loadtranslationslocale-route-options) takes an
+  `options` parameter (`{ activate?: boolean }`),
+  [`invalidate()`](#invalidatelocale-namespace) a second parameter
+  (`namespace`), and [`loadNamespace()`](#loadnamespacenamespace-locale) and
+  [`hydrate()`](#hydrateenvelope) are new members.
+  [`snapshot()`](#snapshotoptions) is overloaded: `{ records: true }` returns
+  `Snapshot.Envelope`, no argument the data alone. A hand-written object typed
+  as the instance implements them.
 - New types: `Loader.Params`, `Loader.Resolved`, the `Snapshot` namespace,
   `Config.T['basePath']`, `Schema.FromInstance`, and the `Kit` namespace from
   `@sveltekit-i18n/base/kit`.

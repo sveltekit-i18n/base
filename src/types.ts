@@ -103,7 +103,7 @@ export namespace Config {
      */
     translations?: Translations.T;
     /**
-     * If you set this property, translations will be initialized immediately using this locale.
+     * If you set this property, translations will be initialized immediately using this locale. `defineI18n()` from `/kit` loads nothing for it: there it is a negotiation candidate. Leave it out of a config whose instance you `hydrate()` by hand – its load starts in the constructor, before the hand-off can be applied.
      */
     initLocale?: InitLocale;
     /**
@@ -156,8 +156,9 @@ export namespace Config {
      * `export const schema = {} as TranslationSchema`. A schema whose keys are not a
      * closed set (an open index signature, or no keys at all) is ignored and
      * keys stay plain strings. Read at construction time only: a later
-     * `loadConfig()` cannot retype the instance, and `config.extensions`
-     * erases the instance's type parameters entirely.
+     * `loadConfig()` cannot retype the instance, and an extension typed by a
+     * fixed return type erases the instance's type parameters, while one
+     * typed by an `Extension.Operator` (`Extension.Generic`) keeps them.
      *
      * @example
      * import { schema } from './generated/i18n-schema.js';
@@ -182,11 +183,11 @@ export namespace Config {
      */
     basePath?: string;
     /**
-     * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next load trigger runs its loaders again. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS.
+     * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next activating load trigger (`setLocale()`, `setRoute()`, `loadTranslations()`) runs its loaders again; a warm load – `loadTranslations(…, { activate: false })` or `loadNamespace()` – fills the tables without evaluating the window. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS. A loader with `cache: false` is outside the window.
      *
      * @default Number.POSITIVE_INFINITY
      *
-     * @tip Set to `0` to treat translations as always stale (refetch on every load trigger).
+     * @tip Set to `0` to treat translations as always stale (refetch on every activating load trigger).
      */
     cache?: number;
     /**
@@ -487,7 +488,7 @@ export namespace Parser {
    * with anything yields the other kind. `'date'` covers both date and time
    * formatting and means `Date | number`. `'function'` is a rich-text callback,
    * the shape ICU tags require. `'boolean'` is here for parsers that can prove
-   * it – neither official parser can, since both compare stringified values.
+   * it – no official parser can, since each compares stringified values.
    */
   export type ParamKind = 'unknown' | 'string' | 'number' | 'boolean' | 'date' | 'function';
 
@@ -508,7 +509,7 @@ export namespace Parser {
     kind?: ParamKind | readonly ParamKind[];
     /**
      * Values the message names explicitly – a hint for authoring tools, never
-     * an exhaustive set. Both official parsers fall back to a default branch
+     * an exhaustive set. Every official parser falls back to a default branch
      * for anything unlisted, so this must not be used to close a union. Omit it
      * where the listed values are not values at all (numeric thresholds, plural
      * categories) or mean the opposite (an inequality's operands).
@@ -529,7 +530,7 @@ export namespace Parser {
     when?: readonly { param: string; branch: string }[];
   };
 
-  /** Diagnostic context for an extractor. Neither official parser needs it to extract. */
+  /** Diagnostic context for an extractor. No official parser needs it to extract. */
   export type ExtractContext = {
     key?: Key;
     locale?: Locale;
