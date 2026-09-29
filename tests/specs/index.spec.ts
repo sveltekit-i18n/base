@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, maskOutputKeys, maskTranslations, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -7024,6 +7024,153 @@ describe('i18n seeded translations', () => {
     expect(loader).not.toHaveBeenCalled();
     expect(instance.translations.en).toEqual({ 'extra.a': 'static-a' });
   });
+
+  describe('arriving after a delivery', () => {
+    const first = (data: Record<string, unknown>, routes?: Loader.Route[]) => ({ id: 'first', namespace: 'extra', locale: 'en', ...(routes && { routes }), loader: vi.fn(async ({ params }: Loader.Props) => (params.id ? { ...data, a: `loaded-a${params.id}` } : data)) });
+    const params = { id: 'params', namespace: 'extra', locale: 'en', routes: [/^\/p\/(?<id>\d+)/], loader: async ({ params }: Loader.Props) => ({ [`p${params.id}`]: 'x' }) };
+    const second = () => ({ id: 'second', namespace: 'extra', locale: 'en', routes: ['/b'], cache: false as const, loader: vi.fn(async () => ({ b: 'loaded-b' })) });
+
+    it('stays over it when a sibling loader delivers again', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: 'loaded-a' }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { extra: { a: 'seeded-a' } } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.rawTranslations.en).toEqual({ extra: { a: 'seeded-a', b: 'loaded-b' } });
+      expect(instance.t('extra.a')).toBe('seeded-a');
+    });
+
+    it('stays over it when a sibling loader delivers for new params', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: 'loaded-a' }), params] });
+
+      await instance.loadTranslations('en', '/p/1');
+      instance.addTranslations({ en: { extra: { a: 'seeded-a' } } });
+      await instance.setRoute('/p/2');
+
+      expect(instance.rawTranslations.en).toEqual({ extra: { a: 'seeded-a', p2: 'x' } });
+    });
+
+    it('stays over it when a plain hand-off carries it', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: 'loaded-a' }), params] });
+
+      await instance.loadTranslations('en', '/p/1');
+      instance.hydrate({ translations: { en: { extra: { a: 'handed-a' } } } });
+      await instance.setRoute('/p/2');
+
+      expect(instance.rawTranslations.en).toEqual({ extra: { a: 'handed-a', p2: 'x' } });
+    });
+
+    it('stays over it once a reconfiguration drops its loader', async () => {
+      const loaders = [first({ a: 'loaded-a' }, ['/a']), second()];
+      const instance = new i18n({ parser: valueParser, log, loaders });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { extra: { a: 'seeded-a' } } });
+      await instance.loadConfig({ parser: valueParser, log, loaders: [loaders[1]] });
+      await instance.loadTranslations('en', '/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.t('extra.a')).toBe('seeded-a');
+    });
+
+    it('lies under what its loader delivers again, and keeps no key that delivery dropped', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ only: 'x' }, [/^\/a\/(?<id>\d+)/]), second()] });
+
+      await instance.loadTranslations('en', '/a/1');
+      instance.addTranslations({ en: { extra: { a: 'seeded-a', c: 'seeded-c' } } });
+      await instance.setRoute('/a/2');
+
+      expect(instance.rawTranslations.en).toEqual({ extra: { a: 'loaded-a2', only: 'x', c: 'seeded-c' } });
+    });
+
+    it('keeps a branch its leaf replaced from coming back through a later seed', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ k: { a: 'loaded-a' } }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { extra: { k: 'seeded' } } });
+      instance.addTranslations({ en: { extra: { k: { b: 'seeded-b' } } } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.rawTranslations.en).toEqual({ extra: { k: { b: 'seeded-b' }, b: 'loaded-b' } });
+    });
+
+    it('leaves a dotted seed key beside the delivery, as the tables show it', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: 'loaded-a', n: { m: 'loaded-m' } }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { 'extra.a.b': 'seeded-b', 'extra.n': 'seeded-n' } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.t('extra.a')).toBe('loaded-a');
+      expect(instance.t('extra.a.b')).toBe('seeded-b');
+      expect(instance.t('extra.n.m')).toBe('loaded-m');
+    });
+
+    it.each([undefined, 'preserveArrays', null])('stays over it when spelled with dots, where `preprocess: %s` merges both spellings', async (preprocess) => {
+      const instance = new i18n({ parser: valueParser, log, preprocess: preprocess as any, loaders: [first({ a: 'loaded-a', n: { m: 'loaded-m' } }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { 'extra.a': 'seeded-a' } });
+      instance.addTranslations({ en: { extra: { 'n.m': 'seeded-m' } } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.t('extra.a')).toBe('seeded-a');
+      expect(instance.t('extra.n.m')).toBe('seeded-m');
+      // The loader's spelling it shadows goes from the raw table too.
+      expect(instance.rawTranslations.en).toEqual({ 'extra.a': 'seeded-a', extra: { 'n.m': 'seeded-m', n: {}, b: 'loaded-b' } });
+    });
+
+    it('leaves the items of a delivered list a dotted seed does not name', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: ['x', 'y'] }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { 'extra.a': 'seeded-a', 'extra.b.0': 'seeded-b' } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.translations.en).toEqual({ 'extra.a': 'seeded-a', 'extra.a.0': 'x', 'extra.a.1': 'y', 'extra.b.0': 'seeded-b', 'extra.b': 'loaded-b' });
+    });
+
+    it('leaves the other spelling of a key alone where `preprocess` keeps them apart', async () => {
+      const instance = new i18n({ parser: valueParser, log, preprocess: 'none', loaders: [first({ a: 'loaded-a' }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { 'extra.a': 'seeded-a' } });
+      await instance.setRoute('/b');
+      await instance.loadTranslations('en', '/b');
+
+      expect(instance.rawTranslations.en).toEqual({ 'extra.a': 'seeded-a', extra: { a: 'loaded-a', b: 'loaded-b' } });
+    });
+
+    it('lies under what its loader fetches again after an invalidation', async () => {
+      const instance = new i18n({ parser: valueParser, log, loaders: [first({ a: 'loaded-a' }, ['/a']), second()] });
+
+      await instance.loadTranslations('en', '/a');
+      instance.addTranslations({ en: { extra: { a: 'seeded-a' } } });
+      instance.invalidate('en');
+      await instance.loadTranslations('en', '/a');
+
+      expect(instance.t('extra.a')).toBe('loaded-a');
+    });
+  });
+
+  it('lies under a delivery that arrives after it, whatever a sibling delivers later', async () => {
+    const loaders = [
+      { namespace: 'extra', locale: 'en', loader: async () => ({ a: 'loaded-a' }) },
+      { namespace: 'extra', locale: 'en', routes: ['/b'], cache: false as const, loader: async () => ({ b: 'loaded-b' }) },
+    ];
+    const instance = new i18n({ parser: valueParser, log, translations: { en: { extra: { a: 'seeded-a', c: 'seeded-c' } } }, loaders });
+
+    await instance.loadTranslations('en', '/b');
+    await instance.loadTranslations('en', '/b');
+
+    expect(instance.rawTranslations.en).toEqual({ extra: { a: 'loaded-a', b: 'loaded-b', c: 'seeded-c' } });
+  });
 });
 
 describe('i18n snapshot', () => {
@@ -8412,6 +8559,51 @@ describe('type inference', () => {
 });
 
 describe('utils', () => {
+  it('`maskOutputKeys` drops the leaves whose dot-notated key is taken', () => {
+    const keys = new Set(['ns.a', 'ns.b.c', 'ns.d', 'ns.e.f']);
+
+    expect(maskOutputKeys({ a: 'x', 'b.c': 'y', d: { g: 'z' }, e: 'w', h: ['v'] }, keys, 'ns')).toEqual({ d: { g: 'z' }, e: 'w', h: ['v'] });
+
+    const list = ['v', 'w'];
+    const items = [{ title: 'v' }];
+
+    expect(maskOutputKeys({ d: list }, keys, 'ns').d).toBe(list);
+    expect(maskOutputKeys({ i: items, a: 'x' }, keys, 'ns')).toEqual({ i: items });
+    expect(maskOutputKeys({ i: items, a: 'x' }, keys, 'ns').i).toBe(items);
+    expect(maskOutputKeys({ i: [{ title: 'v', body: 'b' }, 'w'] }, new Set(['ns.i.0.title']), 'ns')).toEqual({ i: [{ body: 'b' }, 'w'] });
+
+    // eslint-disable-next-line no-sparse-arrays
+    const sparse = [{ b: 'x' }, , { c: 'z', d: 'w' }];
+    const named = Object.assign([{ c: 'z', d: 'w' }], { foo: 'F' });
+
+    expect(maskOutputKeys({ a: sparse }, new Set(['ns.a.2.d']), 'ns')).toEqual({ a: { 0: { b: 'x' }, 2: { c: 'z' } } });
+    expect(maskOutputKeys({ a: named }, new Set(['ns.a.0.d']), 'ns')).toEqual({ a: { 0: { c: 'z' }, foo: 'F' } });
+
+    const odd = [Number.NaN];
+
+    expect(maskOutputKeys({ n: odd, a: 'x' }, keys, 'ns').n).toBe(odd);
+    expect(maskOutputKeys({ d: list }, keys, 'ns', true)).toEqual({});
+    expect(maskOutputKeys({ d: list }, new Set(['ns.d.0']), 'ns')).toEqual({ d: { 1: 'w' } });
+    expect(maskOutputKeys('x', new Set(['ns']), 'ns')).toBeUndefined();
+
+    const masked = maskOutputKeys(JSON.parse('{"__proto__": {"a": "x", "b": "y"}}'), new Set(['ns.__proto__.a']), 'ns');
+
+    expect(Object.getPrototypeOf(masked)).toBe(Object.prototype);
+    expect(read(masked, '__proto__')).toEqual({ b: 'y' });
+  });
+
+  it('`maskTranslations` keeps what merging the source over the target leaves showing', () => {
+    expect(maskTranslations({ a: 'x', b: { c: 'y', d: 'z' }, e: 'w', f: { g: 'v' } }, { a: 's', b: { c: 's' }, e: { h: 's' }, f: 's' })).toEqual({ b: { d: 'z' } });
+    expect(maskTranslations({ a: ['x'] }, { a: ['s'] })).toEqual({});
+    expect(maskTranslations({ a: 'x' }, 's')).toBeUndefined();
+    expect(maskTranslations('x', { a: 's' })).toBeUndefined();
+
+    const masked = maskTranslations(JSON.parse('{"__proto__": {"a": "x", "b": "y"}}'), JSON.parse('{"__proto__": {"a": "s"}}'));
+
+    expect(Object.getPrototypeOf(masked)).toBe(Object.prototype);
+    expect(read(masked, '__proto__')).toEqual({ b: 'y' });
+  });
+
   it('publishes the reusable helpers, and only those', () => {
     expect(publicUtils.toDotNotation).toBe(toDotNotation);
     expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);

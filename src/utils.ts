@@ -644,6 +644,48 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
   }), target);
 };
 
+// What of `target` still shows once `source` is merged over it: the branches
+// both hold as objects keep what `source` leaves out, and anything else it
+// sets is gone. `undefined` when `source` replaces the whole of `target`.
+export const maskTranslations = (target: any, source: any): any => {
+  if (!isMergeable(target) || !isMergeable(source)) return undefined;
+
+  return Object.keys(target).reduce((acc, key) => {
+    if (!hasOwn(source, key)) return { ...acc, [key]: read(target, key) };
+
+    const masked = maskTranslations(read(target, key), read(source, key));
+
+    return masked === undefined ? acc : { ...acc, [key]: masked };
+  }, {});
+};
+
+// What of `target`, dot-notated under `prefix`, still shows once `keys` are
+// dot-notated beside it: a leaf whose key is among them is gone. A key spelled
+// with dots and a nested branch meet only there, after `preprocess`. Unless
+// `preserveArrays`, an array is walked as `toDotNotation` walks it, and one
+// that lost an item keeps the others under their indexes. What lost nothing is
+// returned as it is, and an array that lost no item and holds nothing but its
+// items stays one.
+export const maskOutputKeys = (target: any, keys: ReadonlySet<string>, prefix: string, preserveArrays = false): any => {
+  const walked = Array.isArray(target) ? !preserveArrays : isMergeable(target);
+
+  if (!walked) return keys.has(prefix) ? undefined : target;
+
+  const entries = Object.keys(target).flatMap((key) => {
+    const masked = maskOutputKeys(read(target, key), keys, `${prefix}.${key}`, preserveArrays);
+
+    return masked === undefined ? [] : [[key, masked] as const];
+  });
+
+  if (entries.length === Object.keys(target).length) {
+    if (entries.every(([key, value]) => Object.is(value, read(target, key)))) return target;
+
+    if (Array.isArray(target) && entries.every(([key], index) => key === `${index}`)) return entries.map(([, value]) => value);
+  }
+
+  return entries.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+};
+
 const isPlainObject = (value: any): boolean => {
   if (!value || typeof value !== 'object') return false;
 

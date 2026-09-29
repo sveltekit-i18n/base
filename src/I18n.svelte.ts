@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 
-import { capturesParams, fetchTranslation, hasOwn, loaderName, mergeFetched, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
+import { capturesParams, fetchTranslation, hasOwn, loaderName, maskOutputKeys, maskTranslations, mergeFetched, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
 import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -876,6 +876,28 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   #addSanitized(sanitized: Translations.SerializedTranslations): void {
     this.#mergeTranslations(sanitized);
     this.#keepExternal(sanitized);
+
+    const { preprocess } = this.#config ?? {};
+
+    // Seeded over what a loader delivered before, so a rebuild of the
+    // namespace, which lays the seeds under every delivery, keeps it on top
+    // until that loader delivers again.
+    this.#deliveries.forEach((delivery, loader) => {
+      const own = Object.entries(read(sanitized, loader.locale) ?? {}).filter(([key]) => isNamespaceKey(key, loader.namespace));
+
+      if (!own.length) return;
+
+      const nested = read(read(sanitized, loader.locale), loader.namespace);
+      const masked = nested === undefined ? delivery.data : maskTranslations(delivery.data, nested) ?? {};
+
+      // Dot notation, as `#preprocess` applies it, merges both spellings of a
+      // key into one.
+      const dotted = typeof preprocess !== 'function' && preprocess !== 'none'
+        ? maskOutputKeys(masked, new Set(Object.keys(toDotNotation(Object.fromEntries(own), preprocess === 'preserveArrays') ?? {})), loader.namespace, preprocess === 'preserveArrays') ?? {}
+        : masked;
+
+      this.#deliveries.set(loader, { ...delivery, data: dotted });
+    });
   }
 
   /**
