@@ -399,7 +399,7 @@ log: {
 - `locales` – available locales
 - `loading` – `true` while any activating load is in flight; a `{ activate: false }` load counts only once an activating trigger joins it
 - `initialized` – locale and route set, translations present
-- `translations` / `rawTranslations` – the (pre/post-preprocess) tables
+- `translations` / `rawTranslations` – the tables after and before preprocessing
 
 ### Methods
 

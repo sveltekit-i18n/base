@@ -143,7 +143,11 @@ config-time `logger.error` reports such namespaces, but the loader still runs):
 - A value is **replaced** where the same translation is declared twice (or one
   loader's object meets another's string). Within one load the loader
   declared later in `loaders` wins; across loads the data delivered last does.
-  The collision is reported through the [logger](#loglevel).
+  The collision is reported through the [logger](#loglevel) when both values
+  are merged in one pass — one load delivering both, the namespace rebuilt
+  because one of its loaders delivered again, or a reconfiguration keeping, as
+  seed data, what the loaders it dropped delivered — not when a later load
+  simply overrides an earlier one.
 
 **Each loader is recorded on its own.** A loader that has run does not count
 for its siblings, so a namespace can be split into `routes`-scoped chunks —
@@ -1551,9 +1555,11 @@ through `$derived` — each binding then stays in sync with the instance:
 
 `ParserOutput` is inferred from the configured parser's `parse` return type and
 defaults to `string` (see [TypeScript](#typescript)). The `| string` is the
-miss: an empty key, no active locale or a config carrying no parser yet returns
-a plain string without the parser ever being called, so a parser declaring a
-rich output is handed both. For a parser returning a string — every parser this
+miss: an empty key or no active locale returns `''`, and a missing translation
+the key itself, without the parser ever being called, so a parser declaring a
+rich output is handed both. Two paths hand back data unchecked: a configured
+[`fallbackValue`](#fallbackvalue), and the stored value while the config
+carries no parser yet. For a parser returning a string — every parser this
 project ships — the union collapses and the type is `string`.
 
 That is the un-narrowed signature: a [`schema`](#schema) narrows `key` to its
@@ -2949,8 +2955,9 @@ return a plain string — `''` when the key or the locale is missing, and the ke
 itself when the translation is missing and no
 [`fallbackValue`](#fallbackvalue) is configured. The signature says so rather
 than asserting the parser's output through those paths, so a consumer of a rich
-output has to narrow before using it. A `fallbackValue` of the right shape covers the miss
-that has one; the others stay strings whatever the config says.
+output has to narrow before using it. Two paths hand back data unchecked: a
+configured `fallbackValue` (one of the right shape covers the miss), and the
+stored value while the config carries no parser yet.
 
 ### Locale completion
 

@@ -724,9 +724,11 @@ export namespace Translations {
 
   /**
    * What `t`/`l` yield. The parser's output on the paths that reach the parser,
-   * and a plain string on the ones that cannot: an empty key, no locale, or a
-   * config carrying no parser. `O` is `string` for every parser that returns
-   * one, which collapses the union everywhere it is not needed.
+   * and a plain string on the misses: `''` for an empty key or no locale, the
+   * key itself for a missing translation. Two paths hand back data unchecked:
+   * a configured `fallbackValue`, and the stored value while the config
+   * carries no parser. `O` is `string` for every parser that returns one,
+   * which collapses the union everywhere it is not needed.
    */
   export type Translated<O> = O | string;
 
