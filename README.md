@@ -122,8 +122,8 @@ export { load } from '$lib/i18n';
 The server picks the visitor's locale from the `Accept-Language` header (or
 from a cookie, with `preferredLocale`), loads it per request and hands it to
 the browser, so nothing loads twice and no visitor sees another's locale. See
-[SvelteKit](./docs/README.md#sveltekit) for the details and
-[Server-Side Rendering](./docs/README.md#server-side-rendering) for wiring it
+[SvelteKit](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#sveltekit) for the details and
+[Server-Side Rendering](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#server-side-rendering) for wiring it
 by hand.
 
 ### 4. Use in components
@@ -232,11 +232,11 @@ A named capture group in a `RegExp` route is a load parameter: its match reaches
 }
 ```
 
-`API_ORIGIN` stands for an origin such as `https://api.example.com`: a loader runs on the server too, where `fetch` takes only an absolute URL. See [route params](./docs/README.md#route-params) for the rules.
+`API_ORIGIN` stands for an origin such as `https://api.example.com`: a loader runs on the server too, where `fetch` takes only an absolute URL. See [route params](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#route-params) for the rules.
 
-A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](./docs/README.md#cache-optional).
+A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#cache-optional).
 
-A loader that throws is logged, and the rest of the load lands without its data; it runs again on the next load trigger. SvelteKit's `redirect()` and an `error()` below 500 (told by their shape: an own `status` with a `location` or a `body`, on a value that is not an `Error`) are logged too, but they also reject the load, so a SvelteKit `load` awaiting the call hands them to SvelteKit; the rejected call is undone — what it replaced goes back — unless a later call that has not failed came in the meantime. See [the loader](./docs/README.md#loader-required).
+A loader that throws is logged, and the rest of the load lands without its data; it runs again on the next load trigger. SvelteKit's `redirect()` and an `error()` below 500 (told by their shape: an own `status` with a `location` or a `body`, on a value that is not an `Error`) are logged too, but they also reject the load, so a SvelteKit `load` awaiting the call hands them to SvelteKit; the rejected call is undone — what it replaced goes back — unless a later call that has not failed came in the meantime. See [the loader](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#loader-required).
 
 Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config `as const` is fine.
 
@@ -251,11 +251,11 @@ import { PUBLIC_BASE_PATH } from '$env/static/public';
 basePath: PUBLIC_BASE_PATH
 ```
 
-See [`basePath`](./docs/README.md#basepath).
+See [`basePath`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#basepath).
 
 ### `translations`
 
-Synchronous translations, available immediately. They seed the tables: the loaders of a namespace they name still run and merge into it. Hand a server's state over with [`hydrate()`](./docs/README.md#hydrateenvelope) instead:
+Synchronous translations, available immediately. They seed the tables: the loaders of a namespace they name still run and merge into it. Hand a server's state over with [`hydrate()`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#hydrateenvelope) instead:
 
 ```javascript
 translations: {
@@ -273,7 +273,7 @@ Initialize with a specific locale immediately:
 initLocale: 'en'
 ```
 
-With [`defineI18n()`](#sveltekit) it loads nothing: it is a negotiation candidate. Leave it out of a config whose instance you [`hydrate()`](./docs/README.md#hydrateenvelope) by hand — its load starts in the constructor, before the hand-off can be applied.
+With [`defineI18n()`](#sveltekit) it loads nothing: it is a negotiation candidate. Leave it out of a config whose instance you [`hydrate()`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#hydrateenvelope) by hand — its load starts in the constructor, before the hand-off can be applied.
 
 ### `fallbackLocale`
 
@@ -295,7 +295,7 @@ fallbackValue: '...' // Default: returns the key itself
 
 ### `sanitizeLocales`
 
-How locale identifiers are normalized before they key anything: `true` (default) resolves them to their ISO form through `Intl` (`'en-us'` is `'en-US'`), `false` keeps them as authored, and a function normalizes them your way. See [`sanitizeLocales`](./docs/README.md#sanitizelocales).
+How locale identifiers are normalized before they key anything: `true` (default) resolves them to their ISO form through `Intl` (`'en-us'` is `'en-US'`), `false` keeps them as authored, and a function normalizes them your way. See [`sanitizeLocales`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#sanitizelocales).
 
 ### `preprocess`
 
@@ -334,11 +334,11 @@ Or state it per instance — only its type is read, so the value can stay empty 
 const i18n = new I18n({ ...config, schema: {} as TranslationSchema });
 ```
 
-Hand-write it for a small set of messages, or generate it — [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate package, generates one. A schema whose keys are not a closed set (`schema: {}`) types nothing and keeps the registry out, so keys stay plain strings. A library never registers. The registry needs base 3.1 or newer. See [`schema`](./docs/README.md#schema) for the full rules.
+Hand-write it for a small set of messages, or generate it — [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen), a separate package, generates one. A schema whose keys are not a closed set (`schema: {}`) types nothing and keeps the registry out, so keys stay plain strings. A library never registers. The registry needs base 3.1 or newer. See [`schema`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#schema) for the full rules.
 
 ### `cache`
 
-Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — each loader (but one with [`cache: false`](./docs/README.md#cache-optional)) runs once per locale and [route params](./docs/README.md#route-params) (a loader's `routes` decide whether a load trigger considers it, and the params their named groups capture decide when it runs again).
+Time in milliseconds the loaded translations stay fresh for. By default, loaded translations never expire — each loader (but one with [`cache: false`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#cache-optional)) runs once per locale and [route params](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#route-params) (a loader's `routes` decide whether a load trigger considers it, and the params their named groups capture decide when it runs again).
 
 Set a finite value when your loaders fetch from a source that can change at runtime (e.g. a CMS):
 
@@ -443,12 +443,12 @@ export const { handle, load, use, get } = defineI18n(config, { preferredLocale }
 - `use(() => data)` – called once in the root `+layout.svelte`; provides the instance, follows every navigation and keeps `<html lang>` and `<html dir>` in sync
 - `get()` – the instance, in any component below the root layout
 
-Full API documentation: [docs/README.md](./docs/README.md)
+Full API documentation: [docs/README.md](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md)
 
 ## Documentation
 
 - 🌐 [sveltekit-i18n.github.io](https://sveltekit-i18n.github.io) – The documentation site, with a live playground
-- 📖 [Full API Documentation](./docs/README.md) – Complete reference
+- 📖 [Full API Documentation](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md) – Complete reference
 - 📚 [Main Library Docs](https://github.com/sveltekit-i18n/lib/tree/master/docs/INDEX.md) – Guides, tutorials, and best practices
 - 🎨 [Parsers](https://github.com/sveltekit-i18n/parsers) – Available parsers and how to create your own
 - 💡 [Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples) – Real-world usage examples
@@ -479,7 +479,7 @@ i18n.setLocale('en'); // 'en' | 'de' autocomplete here
 i18n.setLocale('sv'); // still accepted — the union is a hint, not a constraint
 ```
 
-The locales survive only when the config reaches the constructor as a literal — inline, as above, or a separate object with `as const`. An annotated or separately widened config, and any config with one dynamic locale source (`loaders: locales.map(...)`), leaves them plain `string`. See [TypeScript](./docs/README.md#typescript) for both.
+The locales survive only when the config reaches the constructor as a literal — inline, as above, or a separate object with `as const`. An annotated or separately widened config, and any config with one dynamic locale source (`loaders: locales.map(...)`), leaves them plain `string`. See [TypeScript](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#typescript) for both.
 
 ## Related Packages
 
