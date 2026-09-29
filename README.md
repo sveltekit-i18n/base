@@ -267,13 +267,13 @@ translations: {
 
 ### `initLocale`
 
-Initialize with a specific locale immediately:
+The initial locale, used when nothing else decides:
 
 ```javascript
 initLocale: 'en'
 ```
 
-With [`defineI18n()`](#sveltekit) it loads nothing: it is a negotiation candidate. Leave it out of a config whose instance you [`hydrate()`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#hydrateenvelope) by hand — its load starts in the constructor, before the hand-off can be applied.
+With [`defineI18n()`](#sveltekit) it is the locale a visitor gets when nothing they prefer is served, and it loads only when negotiation picks it ([Which locale](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#which-locale)). With `new I18n(config)` the constructor loads it right away, so leave it out of a config whose instance you [`hydrate()`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#hydrateenvelope) by hand — its load starts before the hand-off can be applied.
 
 ### `fallbackLocale`
 

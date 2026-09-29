@@ -108,7 +108,9 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     if (chosen !== undefined) return { locale: chosen, preferred: true };
 
     return {
-      locale: [ranges, ...defaults].reduce<string | undefined>((found, candidate) => found ?? matchLocale(candidate, available), undefined),
+      // Last, the first locale served: a config that serves one never renders
+      // a page without a locale.
+      locale: [ranges, ...defaults].reduce<string | undefined>((found, candidate) => found ?? matchLocale(candidate, available), undefined) ?? available[0],
       preferred: false,
     };
   };

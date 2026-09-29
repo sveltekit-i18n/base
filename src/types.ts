@@ -103,7 +103,7 @@ export namespace Config {
      */
     translations?: Translations.T;
     /**
-     * If you set this property, translations will be initialized immediately using this locale. `defineI18n()` from `/kit` loads nothing for it: there it is a negotiation candidate. Leave it out of a config whose instance you `hydrate()` by hand – its load starts in the constructor, before the hand-off can be applied.
+     * The initial locale. With `defineI18n()` from `/kit`, the locale a visitor gets when neither `preferredLocale` nor what the visitor's browser asks for (`Accept-Language`, or `navigator.languages` without a server `load`) names a locale the config serves; it loads only when negotiation picks it, and without it, or when it matches no locale served, `fallbackLocale` and then the first locale served take that role. With `new I18n(config)`, the constructor loads it right away – leave it out of a config whose instance you `hydrate()` by hand, since its load starts before the hand-off can be applied.
      */
     initLocale?: InitLocale;
     /**

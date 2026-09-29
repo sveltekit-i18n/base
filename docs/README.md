@@ -909,7 +909,7 @@ const config = {
 
 **Type:** `string` (optional)
 
-Initialize translations immediately with this locale.
+The initial locale: the one an instance starts in when nothing else decides.
 
 **Example:**
 
@@ -920,16 +920,17 @@ const config = {
 };
 ```
 
-**Use Cases:**
-- Server-side rendering with known locale
-- Default language for your app
-- Preloading before user interaction
+**With [`defineI18n()`](#sveltekit)** the visitor decides first. `initLocale`
+is the locale a visitor gets when neither `preferredLocale` nor what the
+visitor's browser asks for names a locale the config serves (see
+[Which locale](#which-locale)), and it loads only when that
+negotiation picks it: the wiring strips it from the instances it builds, so
+nothing preloads it. Without it, or when it matches no locale the config
+serves, [`fallbackLocale`](#fallbacklocale) takes that role, and then the first
+locale the config serves.
 
-**⚠️ Note:** Translations will load immediately on instance creation. Make sure loaders are ready.
-
-With [`defineI18n()`](#sveltekit) it loads nothing: the wiring strips it from
-the instances it builds and tries it as a [negotiation candidate](#which-locale)
-instead. Leave it out of a config whose instance you
+**With `new I18n(config)`** nothing else decides, so the constructor loads it
+right away. Leave it out of a config whose instance you
 [`hydrate()`](#hydrateenvelope) by hand — its load starts in the constructor,
 before the hand-off can be applied (see the
 [SSR recipe](#3-build-the-instance-the-app-renders-with)).
@@ -2209,8 +2210,8 @@ export { load } from '$lib/i18n';
 ```
 
 - **`handle`** replaces `%lang%` with the negotiated locale, or with an empty
-  string when nothing matches, and `%dir%` with its
-  [direction](#textdirectionlocale), `ltr` when nothing matches – every one
+  string when the config serves no locale, and `%dir%` with its
+  [direction](#textdirectionlocale), `ltr` without a locale – every one
   of them in the `<html>` start tag, and nowhere else: the rest of the page
   carries the app's content, `<svelte:head>` included, where a placeholder
   ships as it is written. Without the hook, both ship literally. Anything
@@ -2253,12 +2254,21 @@ candidate that matches, [`en-GB` falling back to `en`](#matchlocalerequested-ava
 2. the `Accept-Language` header; in an app without a server `load`, the
    browser's `navigator.languages`;
 3. [`initLocale`](#initlocale);
-4. [`fallbackLocale`](#fallbacklocale).
+4. [`fallbackLocale`](#fallbacklocale);
+5. the first locale the config serves: the loaders' locales in the order the
+   config lists them, then the keys of `translations`.
 
 `initLocale` and `fallbackLocale` are [sanitized](#sanitizelocales) as the
 config's locales are, and so is what `preferredLocale` returns when
 `sanitizeLocales` is a function; header ranges are matched as sent, apart from
-case. When nothing matches, the page renders with no active locale.
+case. The defaults (3–5) do not read the header, so a range the visitor
+refused (`q=0`) does not keep one of them out. A config that serves at least
+one locale therefore always settles on one; only a config that serves none
+renders the page with no active locale. Set `initLocale` to choose the locale
+a visitor gets when nothing they prefer is served, rather than leaving it to
+the order of the loaders — whose first locale is taken whatever routes its
+loaders cover. A `*` range in the header is a preference of its own: it takes
+the first locale served before `initLocale` is tried.
 `initLocale` is a candidate here, not a load: the instances `/kit` builds leave
 it out, since the negotiated locale is loaded instead.
 
@@ -2364,12 +2374,14 @@ costs too much: `data-sveltekit-preload-data="false"`.
   once, in the locale of that pass; `i18n.t()` in the template follows a
   switch.
 - **An app without a server `load` renders its SSR pass with no request
-  headers**, so the server and the browser can negotiate differently, and
+  headers**, in the locale `preferredLocale` gives or else the default, so the
+  server and the browser can negotiate differently, and
   `handle` still fills `%lang%` and `%dir%` from `Accept-Language`, so
   `<html lang>` can name another locale than the page renders. Put the locale in the URL, or add
   the server `load`.
 - **A prerendered page has no visitor.** It renders the locale
-  `preferredLocale` finds in the URL, or else `initLocale`/`fallbackLocale`. A
+  `preferredLocale` finds in the URL, or else the default (`initLocale`,
+  `fallbackLocale`, the first locale served). A
   client navigation to one takes the locale `preferredLocale` gave at build
   time, and otherwise keeps the tab's, so a cookie-first `preferredLocale` that
   falls back to the URL follows the URL there. A query string (`?lang=`) does

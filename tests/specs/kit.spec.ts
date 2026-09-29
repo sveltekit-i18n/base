@@ -106,7 +106,8 @@ describe('/kit', () => {
     it('fills %lang% from Accept-Language, then from preferredLocale', async () => {
       expect(await html(setup(), serverEvent('/', { lang: 'cs,en;q=0.5' }))).toBe('<html lang="cs">');
       expect(await html(setup({}, { preferredLocale: (event) => event.cookies?.get('lang') }), serverEvent('/', { cookie: 'en' }))).toBe('<html lang="en">');
-      expect(await html(setup(), serverEvent('/', { lang: 'fr' }))).toBe('<html lang="">');
+      expect(await html(setup(), serverEvent('/', { lang: 'fr' }))).toBe('<html lang="en">');
+      expect(await html(setup({ loaders: [] }), serverEvent('/', { lang: 'fr' }))).toBe('<html lang="">');
     });
 
     it('fills %dir% from the same negotiation', async () => {
@@ -115,7 +116,7 @@ describe('/kit', () => {
 
       expect(await html(arabic, serverEvent('/', { lang: 'ar-EG,en;q=0.5' }), template)).toBe('<html lang="ar" dir="rtl">');
       expect(await html(setup(), serverEvent('/', { lang: 'cs' }), template)).toBe('<html lang="cs" dir="ltr">');
-      expect(await html(setup(), serverEvent('/', { lang: 'fr' }), template)).toBe('<html lang="" dir="ltr">');
+      expect(await html(setup({ loaders: [] }), serverEvent('/', { lang: 'fr' }), template)).toBe('<html lang="" dir="ltr">');
       expect(await html(arabic, serverEvent('/', { lang: 'ar' }), '<html dir="%dir%">')).toBe('<html dir="rtl">');
     });
 
@@ -196,6 +197,7 @@ describe('/kit', () => {
       };
 
       expect(await unmarked({}, {}, serverEvent('/', { lang: 'cs' }))).toBe('cs');
+      expect(await unmarked({ preferredLocale: () => 'fr' })).toBe('en');
       expect(await unmarked({ preferredLocale: () => undefined }, { initLocale: 'en' })).toBe('en');
       expect(await unmarked({ preferredLocale: () => null }, { fallbackLocale: 'en' })).toBe('en');
       expect(await unmarked({ preferredLocale: () => 'de' }, {}, serverEvent('/', { lang: 'cs' }))).toBe('cs');
@@ -316,8 +318,23 @@ describe('/kit', () => {
       expect((await load(serverEvent('/', { lang: 'en', cookie: 'cs-Latn-CZ', isDataRequest: true }))).i18n.locale).toBe('cs');
     });
 
-    it('sets the route alone when nothing matches', async () => {
+    it('falls back to the first locale the config serves, the loaders\' before the translations\'', async () => {
       const { load, calls } = setup();
+
+      expect((await load(serverEvent('/about', { lang: 'fr' }))).i18n.locale).toBe('en');
+      expect(calls).toEqual(['en:common:/about', 'en:about:/about']);
+
+      const seeded = setup({
+        translations: { de: { 'common.greeting': 'Hallo' } },
+        loaders: [{ locale: 'cs', namespace: 'common', loader: async () => ({ greeting: 'Ahoj' }) }],
+      });
+
+      expect((await seeded.load(serverEvent('/', { lang: 'fr', isDataRequest: true }))).i18n.locale).toBe('cs');
+      expect((await setup({ loaders: [], translations: { de: {} } }).load(serverEvent('/', { lang: 'fr', isDataRequest: true }))).i18n.locale).toBe('de');
+    });
+
+    it('sets the route alone when the config serves no locale', async () => {
+      const { load, calls } = setup({ loaders: [] });
       const page = await load(serverEvent('/about', { lang: 'fr' }));
 
       expect(page.i18n.locale).toBe(undefined);
@@ -407,9 +424,12 @@ describe('/kit', () => {
 
     it('does not consult the runtime\'s navigator on the server', async () => {
       // Node and Deno define navigator.languages.
+      const languages = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['cs']);
       const { load } = setup();
 
-      expect((await load(universalEvent('/', null))).i18n.locale).toBe(undefined);
+      expect((await load(universalEvent('/', null))).i18n.locale).toBe('en');
+      expect(languages).not.toHaveBeenCalled();
+      languages.mockRestore();
     });
   });
 
@@ -1021,6 +1041,8 @@ describe('/kit', () => {
       const plain = setup();
 
       expect((await plain.load(universalEvent('/', null))).i18n.locale).toBe('en');
+      languages.mockReturnValue(['fr']);
+      expect((await setup().load(universalEvent('/', null))).i18n.locale).toBe('en');
       languages.mockClear();
       await plain.load(universalEvent('/', page('/', 'cs')));
       expect(languages).not.toHaveBeenCalled();
