@@ -454,6 +454,32 @@ green suite only proves what it tests. Every change goes through this cycle:
 
 The user decides when a PR merges; the cycle decides when it is ready to ask.
 
+### Releases
+
+**Releases are planned across the family, never one package at a time.** A
+publish cannot be undone, and `sveltekit-i18n` pins `base` and `parser-curly`
+exactly, so a dependency released after it forces another release of it.
+
+- **Plan before any publish, patches included.** For every package of the
+  family (`base`, the parsers, the extensions, `typegen`, `sveltekit-i18n`),
+  list what `master` holds since its last tag and every fix planned or in
+  flight that touches it, and decide for each: release now, or defer. Show
+  that table in chat; nothing is published until the user approves it.
+- **Leaves first.** `base`, then the parsers, the extensions and `typegen`,
+  then `sveltekit-i18n` last. A package is not published while a package it
+  depends on holds an unreleased change or a planned fix it needs, unless the
+  user deferred that fix by name.
+- **What npm shows is the version it shows.** Before each publish, go through
+  what the tarball carries (`npm pack --dry-run`) — the README, which is the
+  npm page, and every other document in it — and the docs those send readers
+  to. Each statement describes the version being published, and each link
+  resolves: no dead page or anchor, and no page describing another version.
+  A mismatch is fixed before the publish, never in the next release.
+- **Close the loop.** After a publish, confirm the version on npm
+  (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, the
+  examples and the site, the lockfiles of the other repositories — as part of
+  the same plan.
+
 ## 5. Commit on approval
 
 **Local changes are the default. Committing is the user's call.**
