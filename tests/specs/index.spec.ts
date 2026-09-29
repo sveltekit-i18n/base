@@ -1474,7 +1474,8 @@ describe('i18n instance', () => {
   describe('what a loader delivered for params, across a reconfiguration', () => {
     const product = /^\/p\/(?<id>\d+)$/;
     let fail = false;
-    const titles = async ({ params }: Loader.Props) => ({ [`title${params.id}`]: 'T' });
+    let retired = false;
+    const titles = async ({ params }: Loader.Props) => ({ [`title${params.id}`]: 'T', ...(retired ? {} : { [`retired${params.id}`]: 'X' }) });
     const reviews = async ({ params }: Loader.Props) => {
       if (fail) throw new Error('reviews');
 
@@ -1501,6 +1502,7 @@ describe('i18n instance', () => {
 
     beforeEach(() => {
       fail = false;
+      retired = true;
     });
 
     it.each(cases)('is replaced by new params when the loaders %s', async (_, before, after) => {
@@ -1516,6 +1518,19 @@ describe('i18n instance', () => {
       await instance.setRoute('/p/3');
 
       expect(instance.rawTranslations.en).toEqual({ product: { title3: 'T', reviews3: 'R' } });
+    });
+    it.each(cases)('is replaced by a refetch of the same params when the loaders %s', async (_, before, after) => {
+      const instance = new i18n(config([...before]));
+
+      retired = false;
+      await instance.loadTranslations('en', '/p/1');
+      await instance.loadConfig(config([...after]));
+
+      retired = true;
+      instance.invalidate('en');
+      await instance.setRoute('/p/1');
+
+      expect(instance.rawTranslations.en).toEqual({ product: { title1: 'T', reviews1: 'R' } });
     });
     it.each(cases)('stays shown through a warm load of other params when the loaders %s', async (_, before, after) => {
       const instance = new i18n(config([...before]));
@@ -5324,6 +5339,139 @@ describe('i18n cache and invalidation', () => {
     },
   });
 
+  describe('a refetch for the same params', () => {
+    const source = () => {
+      let data: Record<string, string> = { kept: 'Kept', dropped: 'Dropped' };
+
+      return {
+        set: (next: Record<string, string>) => { data = next; },
+        loader: async () => data,
+      };
+    };
+
+    it('drops a key its source no longer returns once it lands, keeping seeds and siblings', async () => {
+      const live = source();
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        fallbackLocale: 'cs',
+        translations: { en: { common: { seeded: 'Seeded' } } },
+        loaders: [
+          { namespace: 'common', locale: 'en', loader: live.loader },
+          { namespace: 'common', locale: 'en', loader: async () => ({ sibling: 'Sibling' }) },
+          { namespace: 'common', locale: 'cs', loader: async () => ({ dropped: 'Vypuštěno' }) },
+        ],
+      });
+
+      await instance.loadTranslations('en');
+
+      live.set({ kept: 'Kept 2' });
+      instance.invalidate('en');
+
+      expect(instance.t('common.dropped')).toBe('Dropped');
+
+      await instance.loadTranslations('en');
+
+      expect(instance.rawTranslations.en).toEqual({ common: { seeded: 'Seeded', kept: 'Kept 2', sibling: 'Sibling' } });
+      expect(instance.translations.en).toEqual({ 'common.seeded': 'Seeded', 'common.kept': 'Kept 2', 'common.sibling': 'Sibling' });
+
+      await instance.loadTranslations('cs', undefined, { activate: false });
+      await instance.loadTranslations('en');
+
+      expect(instance.t('common.dropped')).toBe('Vypuštěno');
+    });
+
+    it('drops it after the `cache` window expired', async () => {
+      vi.useFakeTimers();
+      try {
+        const live = source();
+        const instance = new i18n({ parser, log, cache: 1000, loaders: [{ namespace: 'common', locale: 'en', loader: live.loader }] });
+
+        await instance.loadTranslations('en');
+
+        live.set({ kept: 'Kept 2' });
+        vi.advanceTimersByTime(1000);
+        await instance.loadTranslations('en');
+
+        expect(instance.translations.en).toEqual({ 'common.kept': 'Kept 2' });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('lets the data delivered last win over a sibling declared later', async () => {
+      let value = 'A';
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [
+          { namespace: 'ns', locale: 'en', routes: ['/'], loader: async () => ({ x: value }) },
+          { namespace: 'ns', locale: 'en', routes: ['/b'], loader: async () => ({ x: 'B' }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/');
+      await instance.setRoute('/b');
+
+      expect(instance.t('ns.x')).toBe('B');
+
+      value = 'A2';
+      instance.invalidate('en');
+      await instance.setRoute('/');
+
+      expect(instance.t('ns.x')).toBe('A2');
+    });
+
+    it.each([
+      ['fetched', false],
+      ['preloaded', true],
+    ])('lets the loader declared later win within one load when its data was %s', async (_, preloaded) => {
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        loaders: [
+          { namespace: 'ns', locale: 'en', routes: ['/c/2'], loader: async () => ({ x: 'A' }) },
+          { namespace: 'ns', locale: 'en', routes: [/^\/(b|c)\/(?<id>\d+)$/], loader: async ({ params }) => ({ x: `B${params?.id}` }) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/b/1');
+
+      if (preloaded) await instance.loadTranslations('en', '/b/2', { activate: false });
+
+      await instance.setRoute('/c/2');
+
+      expect(instance.t('ns.x')).toBe('B2');
+    });
+
+    it.each([
+      ['after `invalidate()`', undefined],
+      ['of a loader with `cache: false`', false as const],
+    ])('keeps what the server seeded into a handed-off namespace %s', async (_, cache) => {
+      let data: Record<string, string> = { a: 'A' };
+      const config = () => ({
+        parser: valueParser,
+        log,
+        loaders: [{ id: 'common', namespace: 'common', locale: 'en', cache, loader: async () => data }],
+      });
+
+      const server = new i18n(config());
+
+      server.addTranslations({ en: { common: { seeded: 'Seeded' } } });
+      await server.loadTranslations('en', '/');
+
+      const client = new i18n(config());
+
+      client.hydrate(server.snapshot({ records: true }));
+
+      data = { a: 'A2' };
+      client.invalidate('en');
+      await client.setRoute('/other');
+
+      expect(client.rawTranslations.en).toEqual({ common: { seeded: 'Seeded', a: 'A2' } });
+    });
+  });
+
   it('loaded translations never expire by default', async () => {
     vi.useFakeTimers();
     try {
@@ -6431,6 +6579,18 @@ describe('i18n loaders with `cache: false`', () => {
     expect(instance.t('live.title')).toBe('v2');
   });
 
+  it('drops a key its source no longer returns', async () => {
+    let data: Record<string, string> = { kept: 'Kept', dropped: 'Dropped' };
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'live', locale: 'en', cache: false as const, loader: async () => data }] });
+
+    await instance.loadTranslations('en', '/');
+
+    data = { kept: 'Kept 2' };
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.translations.en).toEqual({ 'live.kept': 'Kept 2' });
+  });
+
   it('joins a load in flight like any other loader', async () => {
     const calls: Calls = {};
     const instance = new i18n({ parser: valueParser, log, loaders: setup(calls) });
@@ -7386,7 +7546,7 @@ describe('i18n hydrate', () => {
     expect(client.translations.en).toEqual({ 'article.title': 'Article 7' });
   });
 
-  it('carries the seeds of parameterized namespaces only', async () => {
+  it('carries the seeds of recorded and parameterized namespaces only', async () => {
     const server = new i18n({
       parser: valueParser,
       log,
@@ -7399,7 +7559,7 @@ describe('i18n hydrate', () => {
 
     const envelope = server.snapshot({ records: true });
 
-    expect(envelope.seeds).toEqual({ en: { article: { fromConfig: 'x' } } });
+    expect(envelope.seeds).toEqual({ en: { article: { fromConfig: 'x' }, common: { seeded: 'c' } } });
 
     server.invalidate('en');
 
@@ -7407,7 +7567,6 @@ describe('i18n hydrate', () => {
 
     const flat = new i18n({ parser: valueParser, log, loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'b' }) }] });
 
-    await flat.loadTranslations('en', '/');
     flat.addTranslations({ en: { common: { seeded: 'c' } } });
 
     expect(flat.snapshot({ records: true })).not.toHaveProperty('seeds');

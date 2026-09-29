@@ -703,10 +703,11 @@ export namespace Snapshot {
      */
     records?: LoadRecord[];
     /**
-     * What was seeded into the namespace of a loader whose routes capture
-     * params – repeated where `translations` carries the namespace, and
-     * carried where the payload leaves it out, so that it outlives the
-     * delivery new params replace. Read with `records` only.
+     * What was seeded into the namespace of a recorded loader or of one whose
+     * routes capture params – repeated where `translations` carries the
+     * namespace, and carried where the payload leaves it out, so that it
+     * outlives the delivery the loader's next fetch replaces. Read with
+     * `records` only.
      */
     seeds?: Translations.SerializedTranslations;
     /** The active locale. */

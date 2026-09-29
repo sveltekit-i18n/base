@@ -1282,12 +1282,13 @@ Locale's translations older than `cache`? → drop its loaded state
    ↓
 Loaders not marked as loaded run again
    ↓
-Fresh data merges over the stale keys; freshness is stamped per locale
+Each loader's fresh data replaces what it delivered before; freshness is stamped per locale
 ```
 
-**Expiry refreshes, it never removes.** A refetch merges leaf by leaf into what
-is already displayed, so a message the source dropped since the first load stays
-until the instance is recreated. The same holds for
+**Expiry refreshes, it never removes by itself.** What is displayed stays until
+the refetch lands. Then each loader's fresh data replaces what that loader
+delivered before, so a message its source dropped goes too, while seeded data
+and the part of a loader that did not run again stay. The same holds for
 [`invalidate()`](#invalidatelocale-namespace) — both drop the bookkeeping that would
 prevent a refetch, neither clears the tables.
 
@@ -1861,7 +1862,7 @@ Seeds translations synchronously (static tables known ahead of time), like
 [`translations`](#translations). Payload is preprocessed per
 `config.preprocess` and merged into the tables, and it records nothing: every
 loader of a namespace it names still runs and merges into it, and a loader
-whose [route params](#route-params) change replaces only its own part. It
+that delivers again replaces only its own part. It
 starts no [`cache`](#cache) window. Locale keys are normalized
 ([`sanitizeLocales`](#sanitizelocales)) before they are merged. To hand a
 server's state over, use [`hydrate()`](#hydrateenvelope).
@@ -1981,15 +1982,18 @@ hand-off](#server-side-rendering):
 - the **data** is displayed at once;
 - a loader named by the **records** does not run again for the same [route
   params](#route-params), while its siblings on other routes still run when
-  their route matches; new params replace its data as they would after a load.
+  their route matches; its next fetch — for new params, after
+  [`invalidate()`](#invalidatelocale-namespace) or expiry — replaces its data
+  as it would after a load.
   One with [`cache: false`](#cache-optional) is held back only for the pass the
   envelope arrived with;
 - what the server seeded — with
   [`addTranslations()`](#addtranslationstranslations), say — into the
-  namespace of a loader whose routes capture params travels apart as `seeds`:
-  it is displayed even where the payload leaves the namespace out, and it
-  outlives the data new params replace. Like any seed, it lies under what a
-  loader delivers into that namespace on the client;
+  namespace of a recorded loader, or of one whose routes capture params,
+  travels apart as `seeds`: it is displayed even where the payload leaves the
+  namespace out, and it outlives the data the loader's next fetch replaces.
+  Like any seed, it lies under what a loader delivers into that namespace on
+  the client;
 - data no record names is displayed, but keeps no loader from running — a
   loader the records do not cover loads again rather than going missing;
 - the **active locale** and the **route** are restored, so the instance is
@@ -2037,9 +2041,8 @@ Marks loaded translations stale — for one locale, or for all of them when
 called without a locale, and for one namespace, or for all of them when called
 without one. The call itself starts **no** load and the currently displayed
 translations stay in place; loaders run again on the next load trigger and
-their fresh data merges over the old — a key the source has dropped stays until
-the loader's [params](#route-params) change or the instance is recreated (see
-[`cache`](#cache)).
+each loader's fresh data replaces what it delivered before, so a key its source
+has dropped goes once the refetch lands (see [`cache`](#cache)).
 
 ```javascript
 // A CMS webhook / admin action told us the English content changed:
