@@ -185,7 +185,13 @@ translation state, loading, caching, route matching, and preprocessing — but
   after expiry, `invalidate()` or as a `cache: false` loader — REPLACES what it
   delivered before: the namespace is rebuilt from `#externalTranslations` and
   each loader's last delivery (`#deliveries`), so no key its source dropped
-  survives and a sibling keeps its part. Last request wins for params too: every ACTIVATING
+  survives and a sibling keeps its part. A seed masks what a loader delivered
+  before it in that loader's `#deliveries` entry — what its merge overwrites
+  (`maskTranslations`) and, wherever `#preprocess` dot-notates, what shares a
+  dot-notated key with it however either is spelled (`maskOutputKeys`, which
+  takes the shadowed leaf from `rawTranslations` too) — so a
+  rebuild, which lays the seeds under every delivery, keeps it on top until
+  that loader delivers again. Last request wins for params too: every ACTIVATING
   trigger records the params it wants per matching loader (`#wanted`), and
   none (`null`) of every other loader,
   even one that joins a load or fetches nothing, and a delivery for other

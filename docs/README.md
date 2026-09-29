@@ -1875,7 +1875,15 @@ server's state over, use [`hydrate()`](#hydrateenvelope).
 
 Merging goes branch by branch, so a payload for a namespace that already holds
 data adds to it instead of replacing it; a leaf declared twice takes the
-incoming value.
+incoming value, and keeps it over what a loader delivered before: a sibling
+loader delivering again leaves it in place, and only that loader's next
+delivery replaces it. That holds across spellings where dot notation merges
+them (every `preprocess` but `'none'` and a function): a seeded `'lang.en'`
+stays over a delivered `{ lang: { en } }`, and the delivered leaf it shadows
+goes from `rawTranslations` too. A seed nested as the loader nests it that
+changes a key's shape (a string where a loader delivered a branch or a list,
+or the reverse) replaces the delivered value whole, as it does in
+`rawTranslations`; one spelled with dots takes out only the keys it names.
 
 ```javascript
 i18n.addTranslations({
