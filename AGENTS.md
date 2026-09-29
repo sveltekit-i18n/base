@@ -181,10 +181,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   namespaces' loaders without params. A seed (`config.translations`,
   `addTranslations()`) records nothing and starts no `cache` window: it lands
   in `#externalTranslations`, and its namespace's loaders still run and merge
-  into it. When a loader's params change, its new data REPLACES what it
-  delivered before — the namespace is rebuilt from `#externalTranslations` and
-  each loader's last delivery (`#deliveries`), so no stale key survives and a
-  sibling keeps its part. Last request wins for params too: every ACTIVATING
+  into it. A loader that delivers again — for new params, or for the same ones
+  after expiry, `invalidate()` or as a `cache: false` loader — REPLACES what it
+  delivered before: the namespace is rebuilt from `#externalTranslations` and
+  each loader's last delivery (`#deliveries`), so no key its source dropped
+  survives and a sibling keeps its part. Last request wins for params too: every ACTIVATING
   trigger records the params it wants per matching loader (`#wanted`), and
   none (`null`) of every other loader,
   even one that joins a load or fetches nothing, and a delivery for other
@@ -246,10 +247,10 @@ translation state, loading, caching, route matching, and preprocessing — but
   `hydrate()` resolves each id to a loader of its own config and stores the
   record under that reference, so the records keep one kind of key; the
   record of a `cache: false` loader also hands it off. A hydrated loader's
-  namespace becomes its delivery, so new params replace it, while `seeds`
-  carries what was seeded into the namespace of any loader that captures
-  params, which the client displays and keeps as a seed, so it outlives the
-  delivery and survives the namespace being left out; data no record names is
+  namespace becomes its delivery, so its next fetch replaces it, while `seeds`
+  carries what was seeded into the namespace of any recorded loader or any
+  loader that captures params, which the client displays and keeps as a seed,
+  so it outlives the delivery and survives the namespace being left out; data no record names is
   displayed but records no namespace, so whatever the envelope does not cover
   loads again instead of going missing. An envelope without `records` is a
   plain hand-off, the only writer of `#namespaceRecords`: it

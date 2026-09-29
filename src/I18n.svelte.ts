@@ -560,9 +560,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * records name each loader, so a namespace fed by several loaders is handed
    * over too, and so is one a loader delivered for route params while its
    * record says so — not a namespace with both, whose data the client could
-   * not split between them. What was seeded into the namespace of a loader
-   * whose routes capture params travels apart as `seeds`, so it outlives new
-   * params there, and reaches the client where the namespace is left out.
+   * not split between them. What was seeded into the namespace of a recorded
+   * loader, or of one whose routes capture params, travels apart as `seeds`,
+   * so it outlives the loader's next fetch there, and reaches the client
+   * where the namespace is left out.
    */
   snapshot = ((options?: { records?: boolean }) => {
     const withRecords = options?.records === true;
@@ -643,12 +644,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       return [signature ? { id, signature } : { id }];
     });
 
-    // Where params can change, the client takes a recorded namespace whole as
-    // its loader's delivery and loads one left out itself, so what was seeded
-    // into it travels apart: the seed has to outlive the delivery new params
-    // replace there as it does here.
+    // The client takes a recorded namespace whole as its loader's delivery,
+    // and loads one left out where params can change itself, so what was
+    // seeded into either travels apart: the seed has to outlive the delivery
+    // the next fetch replaces there as it does here.
+    const recorded = new Set(records.map(({ id }) => id));
+
     const seeds = omitProtoKeys(this.#externalOf(loaders.filter(
-      ({ locale, routes }) => omitted.has(locale) && locale !== '__proto__' && capturesParams(routes),
+      ({ id, locale, routes }) => omitted.has(locale) && locale !== '__proto__' && (capturesParams(routes) || (id !== null && recorded.has(id))),
     ))) as Translations.SerializedTranslations;
 
     return {
@@ -789,43 +792,50 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     const orphaned = deliveries.filter((delivery) => !takers.has(delivery));
 
-    this.#deliveries = new Map(Array.from(takers, ([delivery, taker]) => [taker, { ...delivery, loader: taker }]));
+    this.#deliveries = new Map(deliveries.flatMap((delivery) => {
+      const taker = takers.get(delivery);
+
+      return taker ? [[taker, { ...delivery, loader: taker }] as const] : [];
+    }));
 
     this.#keepExternal(serialize(orphaned.map(({ loader, data }) => ({ ...loader, data }))));
   }
 
   /**
-   * Applies what loaders delivered and records them as loaded. A loader whose
-   * params changed replaces the part of its namespace it delivered before:
-   * the namespace is rebuilt from the data supplied without a loader and from
-   * what each of its loaders last delivered, so no key of the previous params
-   * survives and a sibling's part stays in place. The preprocessed table of a
+   * Applies what loaders delivered and records them as loaded. A loader that
+   * delivered before, for the same params or for others, replaces the part of
+   * its namespace it delivered then: the namespace is rebuilt from the data
+   * supplied without a loader and from what each of its loaders last
+   * delivered, so no key its source dropped survives and a sibling's part
+   * stays in place. The preprocessed table of a
    * locale that lost data is derived again from the raw one, since a custom
    * `preprocess` may have renamed the keys that would have to go. Both tables
    * are computed before anything is written, so a `preprocess` that throws
    * records no loader and the next trigger fetches it again.
    */
-  #applyDeliveries(deliveries: Delivery[]): void {
-    const replaced = deliveries
-      .filter(({ loader, signature }) => {
-        const previous = this.#deliveries.get(loader);
+  #applyDeliveries(applied: Delivery[]): void {
+    const { loaders = [] } = this.#config ?? {};
 
-        return previous !== undefined && previous.signature !== signature;
-      })
+    // One load, however its deliveries were gathered: a preload claimed with
+    // it comes first, yet the loader declared later still wins.
+    const deliveries = [...applied].sort((a, b) => loaders.indexOf(a.loader) - loaders.indexOf(b.loader));
+
+    const replaced = deliveries
+      .filter(({ loader }) => this.#deliveries.has(loader))
       .map(({ loader }) => loader);
 
-    const delivered = new Map(deliveries.map((delivery) => [delivery.loader, delivery]));
+    const delivered = new Set(deliveries.map(({ loader }) => loader));
 
     const isReplaced = ({ locale, namespace }: Loader.Resolved) => replaced.some(
       (loader) => loader.locale === locale && loader.namespace === namespace,
     );
 
-    const { loaders = [] } = this.#config ?? {};
-
-    const rebuilt = loaders
-      .filter(isReplaced)
-      .map((loader) => delivered.get(loader) ?? this.#deliveries.get(loader))
-      .filter((delivery): delivery is Delivery => delivery !== undefined);
+    // In the order they were delivered, so across loads the data delivered
+    // last wins, as it does where nothing is rebuilt.
+    const rebuilt = [
+      ...Array.from(this.#deliveries.values()).filter(({ loader }) => isReplaced(loader) && !delivered.has(loader)),
+      ...deliveries.filter(({ loader }) => isReplaced(loader)),
+    ];
 
     const raw = replaced.reduce<Translations.SerializedTranslations>((acc, { locale, namespace }) => ({
       ...acc,
@@ -903,7 +913,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * that change later replace it; the rest is kept as data supplied without a
    * loader and, like a seed, records no namespace — the hand-off says which loaders it
    * covers, and anything else loads again rather than going missing. `seeds`
-   * is what was seeded where params can change, displayed and kept as a seed
+   * is what was seeded into those namespaces, displayed and kept as a seed
    * so that it outlives a delivery. A record naming no loader of this config
    * is dropped, and its loader runs again.
    */
@@ -949,6 +959,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
   /** Records `delivery` as its loader's; what was parked for its params is older. */
   #record(delivery: Delivery): void {
+    // Deleted first, so the map keeps the order the deliveries arrived in.
+    this.#deliveries.delete(delivery.loader);
     this.#deliveries.set(delivery.loader, delivery);
     this.#loaderRecords.set(delivery.loader, delivery.signature);
 
