@@ -11,6 +11,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 - [Utilities](#utilities)
 - [The parser contract](#the-parser-contract)
 - [TypeScript](#typescript)
+- [Upgrading from 3.1](#upgrading-from-31)
 - [Upgrading from 3.0](#upgrading-from-30)
 - [See Also](#see-also)
 
@@ -3214,6 +3215,22 @@ letting the constructor's inference stand.
 
 For type-safe translation keys, supply a [`schema`](#schema); the wider
 TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+
+---
+
+## Upgrading from 3.1
+
+A 3.1 config loads in 3.2 as it is. One behaviour of `/kit` changes:
+
+**A pass always has a locale when the config serves one.** In 3.1, when neither
+`preferredLocale`, what the visitor's browser asks for, `initLocale` nor
+`fallbackLocale` named a locale the config serves, the pass had none: nothing
+loaded, every `t()` returned `''` and `%lang%` was empty. In 3.2 negotiation
+ends with the first locale the config serves — the loaders' locales in config
+order, then the `translations` keys (see [Which locale](#which-locale)). Set
+[`initLocale`](#initlocale) to choose the locale such a visitor gets, rather
+than leave it to the order of the loaders. Only a config that serves no locale
+still renders without one.
 
 ---
 
