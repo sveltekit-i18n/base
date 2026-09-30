@@ -8911,6 +8911,62 @@ describe('utils', () => {
     expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
     expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
   });
+  it('`resolveLoaders` steps through at most twice as many array items per descriptor for 4,000 descriptors as for 1,000', () => {
+    // An array spread steps through every item of the array it copies, so a
+    // list copied per descriptor steps through a number quadratic in its length.
+    const iterator = Object.getPrototypeOf([][Symbol.iterator]());
+    const { next } = iterator;
+    const steps = (fn: () => unknown) => {
+      let stepped = 0;
+
+      iterator.next = function (this: unknown) {
+        stepped += 1;
+
+        return next.call(this);
+      };
+
+      try {
+        fn();
+      } finally {
+        iterator.next = next;
+      }
+
+      return stepped;
+    };
+    const loader = async () => ({});
+    const descriptors = (count: number) => Array.from({ length: count }, (_, i) => ({ locale: 'en', namespace: `ns${i}`, loader }));
+    const [few, many] = [descriptors(1000), descriptors(4000)];
+    let resolvedLoaders: Loader.Resolved[] = [];
+
+    // The control: the engine steps through a spread with the patched `next`.
+    expect(steps(() => [...['a', 'b', 'c']])).toBe(4);
+    // Linear, as many per descriptor either way; quadratic, four times as many.
+    expect(steps(() => { resolvedLoaders = resolveLoaders(many); }) / 4000).toBeLessThanOrEqual(2 * (steps(() => resolveLoaders(few)) / 1000));
+    expect(resolvedLoaders).toHaveLength(4000);
+  });
+  it('`resolveLoaders` describes a descriptor\'s routes once per call, however many locales it lists', () => {
+    let described = 0;
+
+    class Counted extends RegExp {
+      override toString() {
+        described += 1;
+
+        return super.toString();
+      }
+    }
+
+    const loader = async () => ({});
+    const routes: Array<string | RegExp> = ['/', new Counted('^/home$')];
+    const loaders = [{ locale: ['en', 'cs', 'de'], namespace: 'home', routes, loader }];
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/']])));
+    expect(described).toBe(1);
+
+    routes.push('/about');
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/', 's:/about']])));
+    expect(described).toBe(2);
+  });
 });
 
 describe('routePrefix', () => {
