@@ -6,7 +6,7 @@ import { serverHalf } from '#kit-server';
 import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
 import type { Config } from '../types.js';
-import { configLocales, matchLocale, sanitizerFactory, textDirection } from '../utils.js';
+import { configLocales, matchLocale, resolveLoaders, sanitizerFactory, textDirection } from '../utils.js';
 import type { Negotiated } from './internal.js';
 import type { Kit } from './types.js';
 
@@ -20,6 +20,9 @@ const KEY = Symbol.for('@sveltekit-i18n/base/kit');
  * started.
  */
 type Pass = { i18n: I18n; surface: unknown; locale: string | undefined; route: string; seen: string | undefined };
+
+/** What the config's loaders and tables settle for the wiring, read once. */
+type Configured = { locales: string[]; handOver: boolean };
 
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
@@ -44,29 +47,33 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const sanitize = sanitizerFactory(config.sanitizeLocales);
   const sanitized = (locale: string | null | undefined): string | undefined => (locale ? sanitize(locale)[0] : undefined);
 
-  let configured: string[] | undefined;
+  let configured: Configured | undefined;
   // `initLocale` and `fallbackLocale`, spelled as the config's locales are and
   // so sanitized alike.
   let defaults: Array<string | undefined> = [];
 
   // Resolved on first use, never at import, and once: resolving the loaders
   // and sanitizing reports what is wrong with them.
-  const locales = (): string[] => {
+  const resolved = (): Configured => {
     if (configured) return configured;
 
     if (config.log) setLogger(loggerFactory(config.log));
 
     try {
-      configured = configLocales(config);
+      const loaders = resolveLoaders(config.loaders, config.sanitizeLocales);
+
+      configured = { locales: configLocales(config, loaders), handOver: !loaders.some(({ cache }) => cache === false) };
     } catch {
       // The instance reports a malformed config itself.
-      configured = [];
+      configured = { locales: [], handOver: false };
     }
 
     defaults = [sanitized(config.initLocale), sanitized(config.fallbackLocale)];
 
     return configured;
   };
+
+  const locales = (): string[] => resolved().locales;
 
   let reported = false;
 
@@ -115,7 +122,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     };
   };
 
-  const server = serverHalf({ create, negotiate, locales, basePath: config.basePath });
+  const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, handOver: () => resolved().handOver });
 
   // Browser only: the tab's instance, the server's answer at the last commit,
   // and the locale that commit is switching to with the one it switches from,
@@ -133,8 +140,11 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const universalLoad = async (event: Kit.UniversalLoadEvent): Promise<Record<string, any>> => {
     const route = event.url.pathname;
     const payload = event.data?.i18n as Kit.Payload | undefined;
+    // A page render's own instance: the server branch loaded it for this very
+    // payload, which SvelteKit hands over as it was returned.
+    const rendered = BROWSER ? undefined : server.take(payload);
     const fresh = !BROWSER || !tab.i18n;
-    const i18n = fresh ? create() : tab.i18n!;
+    const i18n = rendered ?? (fresh ? create() : tab.i18n!);
     const surface = fresh ? pipe(i18n) : tab.surface;
     const seen = heading(i18n);
 
@@ -151,7 +161,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     if (BROWSER) Object.assign(tab, { i18n, surface });
 
     if (fresh) {
-      if (payload?.translations) i18n.hydrate({ ...payload, translations: payload.translations });
+      if (!rendered && payload?.translations) i18n.hydrate({ ...payload, translations: payload.translations });
 
       // No preload runs before the first navigation completes, so the pass
       // that builds the instance may activate it.

@@ -11,9 +11,17 @@ export type Shared = {
   /** The locales the config serves. */
   locales: () => string[];
   basePath: string | undefined;
+  /**
+   * Whether the universal branch of a page render may take over the instance
+   * the server branch loaded: not while a loader has `cache: false`, which only
+   * a hand-off holds back for the rest of the render.
+   */
+  handOver: () => boolean;
 };
 
 export type ServerHalf = {
   handle: Kit.T['handle'];
   load: (event: Kit.ServerLoadEvent) => Promise<{ i18n: Kit.Payload }>;
+  /** The instance a page render loaded for `payload`, handed out once. */
+  take: (payload: Kit.Payload | undefined) => I18n | undefined;
 };
