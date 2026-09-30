@@ -7610,6 +7610,33 @@ describe('i18n snapshot', () => {
     expect(server.snapshot()).toEqual({ en: { common: { a: 'x', n: {} } } });
   });
 
+  it('hands a namespace holding NaN off with its record, and warns of nothing', async () => {
+    const warnSpy = vi.fn();
+    const instance = new i18n({
+      parser: valueParser,
+      log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ title: 'T', n: Number.NaN }) },
+        { namespace: 'home', locale: 'en', loader: async () => ({ a: 'A' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(Object.keys(instance.snapshot().en)).toEqual(['common', 'home']);
+    expect(instance.snapshot({ records: true }).records).toHaveLength(2);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the record of a namespace whose flat key holds NaN beside a `__proto__` key elsewhere', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ title: 'T' }) }] });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { 'common.n': Number.NaN, other: JSON.parse('{"__proto__": "x", "k": "v"}') } });
+
+    expect(instance.snapshot({ records: true }).records).toEqual([{ id: '["en","common"]' }]);
+  });
+
   it('records no loader whose data lost a literal `__proto__` key, so the client loads it again', async () => {
     const calls: string[] = [];
     const loaders = [

@@ -724,7 +724,7 @@ export const omitProtoKeys = (value: any): any => {
   if (Array.isArray(value)) {
     const items = value.map(omitProtoKeys);
 
-    return items.some((item, i) => item !== value[i]) ? items : value;
+    return items.some((item, i) => !Object.is(item, value[i])) ? items : value;
   }
 
   if (!isPlainObject(value)) return value;
@@ -732,7 +732,7 @@ export const omitProtoKeys = (value: any): any => {
   const keys = Object.keys(value);
   const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, omitProtoKeys(value[key])] as const);
 
-  if (entries.length === keys.length && entries.every(([key, item]) => item === value[key])) return value;
+  if (entries.length === keys.length && entries.every(([key, item]) => Object.is(item, value[key]))) return value;
 
   return entries.reduce((acc, [key, item]) => ({ ...acc, [key]: item }), {});
 };
