@@ -349,7 +349,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   data request; when a server `load` exists, `preferredLocale` runs in the
   browser only on a root error page SvelteKit renders without its data (the
   universal event says nothing of whether one exists). The server
-  builds an instance per pass; the browser keeps one per tab, and only the
+  builds an instance per page render, and the universal branch of that render
+  takes it over: `take` finds it by the payload object the server branch
+  returned, which SvelteKit hands to the universal load of the same request,
+  and hands it out once. That branch still loads, so a loader that failed soft
+  is retried, and hydrates nothing. A config with a `cache: false` loader,
+  whose hold-back only a hand-off gives, and a pass without that object (no
+  server load, a copied payload) build their own instance, from the snapshot
+  when there is one. The browser keeps one per tab, and only the
   pass that builds it activates — every later pass is a warm load of one
   target, since it may be a preload. `use()` activates at commit, comparing the
   server's answer with the last commit's (the per-result `tab` memory), so a
