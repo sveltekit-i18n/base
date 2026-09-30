@@ -539,17 +539,34 @@ const describeRoute = (route: Loader.Route): string => {
 
 // The content itself rather than a hash of it: equality stays exact, and the
 // string repeats what a serialized payload already carries, so it compresses
-// with it.
-const loaderId = ({ locale, namespace, routes }: Omit<Loader.Resolved, 'id' | 'loader'>): string => JSON.stringify(
-  routes ? [locale, namespace, routes.map(describeRoute)] : [locale, namespace],
+// with it. The pairs of one descriptor share its `routes`, so each list is
+// described once per resolution rather than once per pair.
+const loaderId = (
+  { locale, namespace, routes }: Omit<Loader.Resolved, 'id' | 'loader'>,
+  describe: (routes: readonly Loader.Route[]) => string[],
+): string => JSON.stringify(
+  routes ? [locale, namespace, describe(routes)] : [locale, namespace],
 );
 
 // A name shared by two loaders would hand one's records to the other, so
 // neither keeps it.
 const withIds = (loaders: Array<Omit<Loader.Resolved, 'id'>>): Loader.Resolved[] => {
+  const described = new Map<readonly Loader.Route[], string[]>();
+  const describe = (routes: readonly Loader.Route[]): string[] => {
+    const known = described.get(routes);
+
+    if (known !== undefined) return known;
+
+    const description = routes.map(describeRoute);
+
+    described.set(routes, description);
+
+    return description;
+  };
+
   const ids = loaders.map((loader) => {
     try {
-      return loaderId(loader);
+      return loaderId(loader, describe);
     } catch (error) {
       logError('Cannot derive an id for a loader.', error);
 
@@ -583,7 +600,9 @@ export const resolveLoaders = (
 ): Loader.Resolved[] => {
   const sanitize = sanitizerFactory(sanitizeLocales);
 
-  return withIds(input.reduce<Array<Omit<Loader.Resolved, 'id'>>>((acc, descriptor) => {
+  const resolved: Array<Omit<Loader.Resolved, 'id'>> = [];
+
+  input.forEach((descriptor) => {
     try {
       const { namespace, key, locale, loader, routes, cache } = descriptor;
 
@@ -602,25 +621,24 @@ export const resolveLoaders = (
       if (!namespaces.length || !locales.length) {
         logger.warn('Skipping a loader that names no locale or no namespace.');
 
-        return acc;
+        return;
       }
 
-      return [
-        ...acc,
-        ...locales.flatMap((pairLocale) => namespaces.map((pairNamespace) => ({
+      locales.forEach((pairLocale) => namespaces.forEach((pairNamespace) => {
+        resolved.push({
           namespace: pairNamespace,
           locale: pairLocale,
           loader,
           routes,
           ...(cache === false ? { cache } : {}),
-        }))),
-      ];
+        });
+      }));
     } catch (error) {
       logError('Skipping a loader that cannot be read.', error);
-
-      return acc;
     }
-  }, []));
+  });
+
+  return withIds(resolved);
 };
 
 const isMergeable = (value: any): boolean => !!value && typeof value === 'object' && !Array.isArray(value);
