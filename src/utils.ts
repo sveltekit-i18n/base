@@ -674,13 +674,13 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
 export const maskTranslations = (target: any, source: any): any => {
   if (!isMergeable(target) || !isMergeable(source)) return undefined;
 
-  return Object.keys(target).reduce((acc, key) => {
-    if (!hasOwn(source, key)) return { ...acc, [key]: read(target, key) };
+  return Object.fromEntries(Object.keys(target).flatMap((key) => {
+    if (!hasOwn(source, key)) return [[key, read(target, key)]];
 
     const masked = maskTranslations(read(target, key), read(source, key));
 
-    return masked === undefined ? acc : { ...acc, [key]: masked };
-  }, {});
+    return masked === undefined ? [] : [[key, masked]];
+  }));
 };
 
 // What of `target`, dot-notated under `prefix`, still shows once `keys` are
@@ -707,7 +707,7 @@ export const maskOutputKeys = (target: any, keys: ReadonlySet<string>, prefix: s
     if (Array.isArray(target) && entries.every(([key], index) => key === `${index}`)) return entries.map(([, value]) => value);
   }
 
-  return entries.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+  return Object.fromEntries(entries);
 };
 
 const isPlainObject = (value: any): boolean => {
@@ -718,11 +718,13 @@ const isPlainObject = (value: any): boolean => {
   return proto === Object.prototype || proto === null;
 };
 
-// devalue, which SvelteKit serializes load data with, refuses an object with
-// an own '__proto__' key. Branches without one are returned as they are.
-export const omitProtoKeys = (value: any): any => {
+const holdsProtoKey = (value: any): boolean => (Array.isArray(value)
+  ? value.some(holdsProtoKey)
+  : isPlainObject(value) && Object.keys(value).some((key) => key === '__proto__' || holdsProtoKey(value[key])));
+
+const withoutProtoKeys = (value: any): any => {
   if (Array.isArray(value)) {
-    const items = value.map(omitProtoKeys);
+    const items = value.map(withoutProtoKeys);
 
     return items.some((item, i) => !Object.is(item, value[i])) ? items : value;
   }
@@ -730,12 +732,18 @@ export const omitProtoKeys = (value: any): any => {
   if (!isPlainObject(value)) return value;
 
   const keys = Object.keys(value);
-  const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, omitProtoKeys(value[key])] as const);
+  const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, withoutProtoKeys(value[key])] as const);
 
   if (entries.length === keys.length && entries.every(([key, item]) => Object.is(item, value[key]))) return value;
 
-  return entries.reduce((acc, [key, item]) => ({ ...acc, [key]: item }), {});
+  return Object.fromEntries(entries);
 };
+
+// devalue, which SvelteKit serializes load data with, refuses an object with
+// an own '__proto__' key. Branches without one are returned as they are. A
+// snapshot runs this over every table, so a scan that copies nothing decides
+// first whether there is anything to leave out.
+export const omitProtoKeys = (value: any): any => (holdsProtoKey(value) ? withoutProtoKeys(value) : value);
 
 const reportLoaderConflict = (path: string) => {
   logger.warn(`Conflicting translations for '${path}'. Keeping the value of the last loader.`);
