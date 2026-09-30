@@ -14,18 +14,26 @@ type NamespaceRecords = Translations.LocaleIndexed<Loader.Key[]>;
 type Tables = { raw: Translations.SerializedTranslations; translations: Translations.SerializedTranslations };
 
 /**
- * An activating call: what it replaced — the requested locale, the route and
- * the params its matching loaders were wanted for — to put back should it
- * fail, and whether it did.
+ * What the next trigger asks the loaders for: the params `signatures` names,
+ * and none (`null`) of every other loader of `config`, the config it was asked
+ * under. Any params before a trigger asked under the current config.
  */
-/** The params signature a loader is wanted for; `null` while the route does not select it. */
-type Wanted = string | null;
+type Wanted = { config: object | undefined; signatures: ReadonlyMap<Loader.Resolved, string> };
 
+const unasked: Wanted = { config: undefined, signatures: new Map() };
+
+const noLoaders: readonly Loader.Resolved[] = [];
+
+/**
+ * An activating call: what it replaced — the requested locale, the route and
+ * what the loaders were wanted for — to put back should it fail, and whether
+ * it did.
+ */
 type Call = {
   replaced: {
     requestedLocale: Config.Locale | undefined;
     route: string | undefined;
-    wanted: Map<Loader.Resolved, Wanted | undefined>;
+    wanted?: Wanted;
   };
   failed: boolean;
   /** The control flow its load threw, which an undo back to it does not run again. */
@@ -133,7 +141,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // earlier one's back, and `null` for a loader its route does not select.
   // Loads settle out of order, and a delivery for params the route no longer
   // asks for must not replace what it displays; a warm load asks for nothing.
-  #wanted = new Map<Loader.Resolved, Wanted>();
+  // Replaced whole, never changed in place, so a call keeps what it replaced
+  // by reference.
+  #wanted: Wanted = unasked;
+
+  // What `#localeLoaders` found for each locale, under the config it read.
+  #byLocale: { config: object | undefined; loaders: Map<Config.Locale, Loader.Resolved[]> } = { config: undefined, loaders: new Map() };
 
   // The latest delivery of each loader for params nothing wanted yet — a warm
   // load of another route's params, typically a preload — so the trigger that
@@ -225,8 +238,29 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // Loader locales are sanitized once, when the config resolves them, and
     // table locales once, when their data arrives; a custom `sanitizeLocales`
     // need not be idempotent.
-    return servedLocales(this.#config.loaders ?? [], this.#translations);
+    return this.#served();
   });
+
+  // Svelte memoizes a server `$derived` only when it is created during a
+  // render, which an instance is not, so `locales` is not memoized there.
+  #loaderLocales: { loaders: readonly Loader.Resolved[]; locales: Config.Locale[] } = { loaders: noLoaders, locales: [] };
+
+  /**
+   * The locales the config and the tables serve, as a fresh array. The
+   * loaders' are read once per loader list, the tables' on every call: a
+   * navigation to new params replaces the tables, so a memo keyed by them
+   * would miss on each one, adding a lookup and an entry per navigation,
+   * held until a later collection.
+   */
+  #served(): Config.Locale[] {
+    if (!this.#config) return [];
+
+    const { loaders = noLoaders } = this.#config;
+
+    if (this.#loaderLocales.loaders !== loaders) this.#loaderLocales = { loaders, locales: servedLocales(loaders, {}) };
+
+    return unique([...this.#loaderLocales.locales, ...Object.keys(this.#translations)]);
+  }
 
   initialized: boolean = $derived(
     this.#locale !== undefined && this.#route !== undefined && Object.keys(this.#translations).length > 0,
@@ -306,7 +340,6 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // A reconfiguration can swap loaders or cache policy — bookkeeping from
     // the previous config must not suppress the new loaders.
     this.invalidate();
-    this.#wanted.clear();
     this.#handOnDeliveries(loaders);
 
     if (translations) this.addTranslations(translations);
@@ -1099,7 +1132,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (!inputLocale && !fallbackLocale) return undefined;
 
-    const all = this.locales;
+    const all = this.#served();
 
     // Nothing to match against yet; sanitizing here would only emit a
     // non-standard warning for a lookup that cannot succeed anyway.
@@ -1124,7 +1157,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * known, any request is kept: a config loaded later may serve it.
    */
   #unserved(locale: Config.Locale): boolean {
-    if (!this.locales.length || this.#resolveLocale(locale) !== undefined) return false;
+    if (!this.#served().length || this.#resolveLocale(locale) !== undefined) return false;
 
     logger.debug(`Ignoring '${locale}' locale — nothing serves it.`);
 
@@ -1195,16 +1228,30 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     });
   }
 
+  /** The loaders of `sanitizedLocale` and of the fallback locale, in `loaders` order. */
+  #localeLoaders(sanitizedLocale: Config.Locale): Loader.Resolved[] {
+    const config = this.#config;
+
+    if (this.#byLocale.config !== config) this.#byLocale = { config, loaders: new Map() };
+
+    const known = this.#byLocale.loaders.get(sanitizedLocale);
+
+    if (known) return known;
+
+    const { loaders = [], fallbackLocale } = config ?? {};
+    const selected = loaders.filter(({ locale }) => locale === sanitizedLocale || locale === fallbackLocale);
+
+    this.#byLocale.loaders.set(sanitizedLocale, selected);
+
+    return selected;
+  }
+
   /**
    * The loaders of `sanitizedLocale` (and the fallback locale) whose routes
    * match `route`, with the params the route yields for each.
    */
   #matchLoaders(sanitizedLocale: Config.Locale, route: string): LoadRequest[] {
-    const { loaders = [], fallbackLocale } = this.#config ?? {};
-
-    return loaders.flatMap((loader) => {
-      if (loader.locale !== sanitizedLocale && loader.locale !== fallbackLocale) return [];
-
+    return this.#localeLoaders(sanitizedLocale).flatMap((loader) => {
       const params = routeParams(loader.routes, route);
 
       return params ? [{ loader, params, signature: paramsSignature(params) }] : [];
@@ -1218,12 +1265,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * delivered last serves; only a loader with no record is asked, for none.
    */
   #matchNamespace(sanitizedLocale: Config.Locale, namespace: Loader.Key, route: string): LoadRequest[] {
-    const { loaders = [], fallbackLocale } = this.#config ?? {};
-
-    return loaders.flatMap((loader) => {
+    return this.#localeLoaders(sanitizedLocale).flatMap((loader) => {
       if (loader.namespace !== namespace) return [];
-
-      if (loader.locale !== sanitizedLocale && loader.locale !== fallbackLocale) return [];
 
       const params = routeParams(loader.routes, route);
 
@@ -1267,19 +1310,21 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * none of every other loader: a loader of a locale the request left must not
    * keep params its route asked for. Returns what it replaced.
    */
-  #want(matching: LoadRequest[]): Map<Loader.Resolved, Wanted | undefined> {
-    const { loaders = [] } = this.#config ?? {};
+  #want(matching: LoadRequest[]): Wanted {
+    const replaced = this.#wanted;
 
-    const wants = new Map<Loader.Resolved, Wanted>([
-      ...loaders.map((loader) => [loader, null] as const),
-      ...matching.map(({ loader, signature }) => [loader, signature] as const),
-    ]);
-
-    const replaced = new Map(Array.from(wants.keys(), (loader) => [loader, this.#wanted.get(loader)]));
-
-    wants.forEach((signature, loader) => this.#wanted.set(loader, signature));
+    this.#wanted = { config: this.#config, signatures: new Map(matching.map(({ loader, signature }) => [loader, signature])) };
 
     return replaced;
+  }
+
+  /** The params the next trigger asks `loader` for: `null` for none, `undefined` for any. */
+  #wantedOf(loader: Loader.Resolved): string | null | undefined {
+    const { config, signatures } = this.#wanted;
+
+    if (config === undefined || config !== this.#config) return undefined;
+
+    return signatures.get(loader) ?? null;
   }
 
   /**
@@ -1288,7 +1333,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * it fail.
    */
   #ask(): Call {
-    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route, wanted: new Map() }, failed: false, threw: [], resumed: false };
+    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route }, failed: false, threw: [], resumed: false };
 
     this.#calls = [...this.#calls, call];
 
@@ -1355,10 +1400,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     if (requestedLocale !== undefined) this.#requestedLocale = requestedLocale;
     if (route !== undefined) this.#route = route;
 
-    wanted.forEach((signature, loader) => {
-      if (signature === undefined) this.#wanted.delete(loader);
-      else this.#wanted.set(loader, signature);
-    });
+    if (wanted) this.#wanted = wanted;
   }
 
   /**
@@ -1490,9 +1532,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * navigation to it would wait on itself.
    */
   #inflightKey(locale: Config.Locale, route: string, matching: LoadRequest[]): string {
-    const { loaders = [] } = this.#config ?? {};
+    const candidates = this.#localeLoaders(locale);
 
-    return JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [loaders.indexOf(loader), signature])]);
+    return JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [candidates.indexOf(loader), signature])]);
   }
 
   /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
@@ -1547,7 +1589,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * before a trigger asked.
    */
   #isWanted({ loader, signature }: { loader: Loader.Resolved; signature: string }): boolean {
-    const wanted = this.#wanted.get(loader);
+    const wanted = this.#wantedOf(loader);
 
     if (wanted === undefined) return true;
 
@@ -1564,7 +1606,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    */
   #applyWanted(deliveries: Delivery[]): void {
     const wanted = deliveries.filter(({ loader, signature }) => {
-      const wanted = this.#wanted.get(loader);
+      const wanted = this.#wantedOf(loader);
 
       if (typeof wanted === 'string') return wanted === signature;
 

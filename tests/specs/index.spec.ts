@@ -14,6 +14,32 @@ const TRANSLATIONS = getTranslations();
 
 const { initLocale = '', loaders = [], parser, log } = CONFIG;
 
+// Counts the descriptors read off a resolved loader list, wherever the core
+// visits them from, for the loader inputs a test registers; any other list is
+// the one `resolveLoaders` built.
+const visits = vi.hoisted(() => ({ inputs: new WeakSet<object>(), reads: 0 }));
+
+vi.mock('../../src/utils.js', async (importOriginal) => {
+  const utils = await importOriginal<typeof import('../../src/utils.js')>();
+
+  return {
+    ...utils,
+    resolveLoaders: (...args: Parameters<typeof utils.resolveLoaders>) => {
+      const list = utils.resolveLoaders(...args);
+
+      return args[0] && visits.inputs.has(args[0])
+        ? new Proxy(list, {
+          get: (target, key, receiver) => {
+            if (typeof key === 'string' && /^\d+$/.test(key)) visits.reads += 1;
+
+            return Reflect.get(target, key, receiver);
+          },
+        })
+        : list;
+    },
+  };
+});
+
 // Unlike the shared no-op `parser`, this one returns the loaded value, so a spec
 // can assert on actual translation output.
 const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
@@ -1067,6 +1093,70 @@ describe('i18n instance', () => {
       await instance.setRoute('/item/2');
 
       expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
+    });
+    it('reads none of the other locales\' loaders on a navigation', async () => {
+      const navigate = async (count: number) => {
+        const locales = Array.from({ length: count }, (_, index) => `l${index}`);
+        const input = Array.from({ length: 20 }, (_, index) => ({
+          locale: locales,
+          namespace: `n${index}`,
+          ...(index % 2 ? { routes: [new RegExp(`^/r${index}/(?<id>\\d+)$`)] } : {}),
+          loader: async ({ params }: Loader.Props) => ({ id: params.id ?? '' }),
+        }));
+
+        visits.inputs.add(input);
+        visits.reads = 0;
+
+        const instance = new i18n({ parser, log, sanitizeLocales: false, loaders: input });
+
+        await instance.loadTranslations('l0', '/r1/0');
+
+        // The count sees the descriptors the config load and the first load read.
+        expect(visits.reads).toBeGreaterThan(0);
+
+        visits.reads = 0;
+
+        // New params on every step, so every step replaces the tables.
+        for (let step = 1; step <= 50; step += 1) await instance.setRoute(`/r${(step % 10) * 2 + 1}/${step}`);
+
+        expect([instance.locale, instance.locales.length]).toEqual(['l0', count]);
+
+        return visits.reads;
+      };
+
+      expect(await navigate(50)).toBe(await navigate(1));
+    });
+
+    it('enters no table set a navigation replaces into a weak collection', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [{ locale: 'en', namespace: 'item', routes: [/^\/item\/(?<id>\d+)$/], loader: async ({ params }: Loader.Props) => ({ id: params.id ?? '' }) }],
+      });
+
+      await instance.loadTranslations('en', '/item/0');
+
+      // A navigation to new params replaces the table set, so a memo keyed by
+      // it misses on each one: an entry per navigation would only add a
+      // lookup, and memory held until a later collection.
+      const navigate = async () => {
+        // The WeakSet spy first: spying registers the spy in a WeakMap.
+        const added = vi.spyOn(WeakSet.prototype, 'add');
+        const set = vi.spyOn(WeakMap.prototype, 'set');
+
+        try {
+          for (let id = 1; id <= 100; id += 1) await instance.setRoute(`/item/${id}`);
+
+          const { locales } = instance;
+
+          return { entered: [set.mock.calls.length, added.mock.calls.length], locales };
+        } finally {
+          set.mockRestore();
+          added.mockRestore();
+        }
+      };
+
+      expect([await navigate(), instance.translations.en]).toEqual([{ entered: [0, 0], locales: ['en'] }, { 'item.id': '100' }]);
     });
 
     it('drops an older load for other params once the route returned to the params it holds', async () => {
@@ -5338,6 +5428,34 @@ describe('i18n loadNamespace', () => {
     await instance.loadNamespace('editor');
 
     expect(calls.editor).toBeUndefined();
+  });
+
+  it('does not hand a route trigger the control flow of a namespace load that selected other loaders', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const redirect: unknown = { status: 303, location: '/login' };
+    let runs = 0;
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { locale: 'en', namespace: 'x', routes: ['/a'], loader: async () => { runs += 1; if (runs > 1) await gate; return { a: 'A' }; } },
+        { locale: 'en', namespace: 'x', routes: ['/other'], loader: async () => { await gate; throw redirect; } },
+        { locale: 'en', namespace: 'y', routes: ['/a'], loader: async () => ({ d: 'D' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/a');
+    instance.invalidate('en', 'x');
+
+    const warm = instance.loadNamespace('x');
+    const navigation = instance.setRoute('/a');
+
+    release();
+
+    await expect(warm).rejects.toMatchObject({ status: 303 });
+    await expect(navigation).resolves.toBeUndefined();
+    expect(instance.locale).toBe('en');
   });
 });
 
