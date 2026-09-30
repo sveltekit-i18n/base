@@ -479,6 +479,9 @@ export const routePrefix = (pathname: string, routeId: string | null): string | 
   return at === undefined ? undefined : raw.slice(0, at).map((segment) => `/${segment}`).join('');
 };
 
+/** Whether `config.preprocess` is the built-in dot notation. */
+export const dotNotates = (preprocess: Config.T['preprocess']): boolean => typeof preprocess !== 'function' && preprocess !== 'none';
+
 export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
   if (preserveArrays && Array.isArray(input)) {
     return input.map((v) => toDotNotation(v, preserveArrays));
@@ -486,8 +489,9 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
 
   if (input && typeof input === 'object') {
     // Mutated in place (rebuilding per key is quadratic) into a null-prototype
-    // object, then spread once on the way out — a literal '__proto__' key stays
-    // an own property instead of reaching the prototype setter.
+    // object, then given `Object.prototype` once the last key is written — a
+    // spread would copy every key, and a literal '__proto__' key stays an own
+    // property either way instead of reaching the prototype setter.
     const output: any = Object.create(null);
     let hasEntries = false;
 
@@ -508,7 +512,7 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
     walk(input, parentKey);
 
     if (hasEntries) {
-      return { ...output };
+      return Object.setPrototypeOf(output, Object.prototype);
     }
 
     return null;
@@ -657,15 +661,16 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
   }
 
   // Mutated in place (rebuilding per key is quadratic) into a null-prototype
-  // copy of `target`, then spread once on the way out — a literal '__proto__'
-  // key stays an own property instead of reaching the prototype setter.
+  // copy of `target`, then given `Object.prototype` once the last key is
+  // written — a literal '__proto__' key stays an own property instead of
+  // reaching the prototype setter.
   const output: any = Object.assign(Object.create(null), target);
 
   keys.forEach((key) => {
     output[key] = hasOwn(output, key) ? mergeTranslations(read(output, key), read(source, key), `${path}.${key}`, onConflict) : read(source, key);
   });
 
-  return { ...output };
+  return Object.setPrototypeOf(output, Object.prototype);
 };
 
 // What of `target` still shows once `source` is merged over it: the branches

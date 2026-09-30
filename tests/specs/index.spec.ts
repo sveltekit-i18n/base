@@ -748,6 +748,56 @@ describe('i18n instance', () => {
     expect(Object.keys(instance.translations.en)).toHaveLength(10000);
     expect(instance.translations.en['common.key9999']).toBe('9999');
   });
+  it.each<[string, Config.T['preprocess']]>([
+    ['unset', undefined],
+    ['preserveArrays', 'preserveArrays'],
+    ['none', 'none'],
+    ['custom', (input: any) => Object.assign(Object.create(null), toDotNotation(input))],
+  ])('adding and hydrating a locale\'s first data gives both tables a plain prototype (`preprocess` %s)', async (_, preprocess) => {
+    const returned: unknown[] = [];
+    const tracked = typeof preprocess === 'function'
+      ? (input: any) => {
+        const output = preprocess(input);
+
+        returned.push(output);
+
+        return output;
+      }
+      : preprocess;
+    const plain = (instance: I18n) => {
+      expect(Object.getPrototypeOf(instance.translations.en)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf(instance.rawTranslations.en)).toBe(Object.prototype);
+      expect(returned).not.toContain(instance.translations.en);
+    };
+
+    const seeded = new i18n({ parser, log, preprocess: tracked });
+    const first = { common: { a: 'A' } };
+
+    seeded.addTranslations({ en: first });
+    plain(seeded);
+    expect(seeded.translations.en).not.toBe(first);
+
+    seeded.addTranslations({ en: { common: { b: 'B' } } });
+    plain(seeded);
+    expect(Object.keys(seeded.translations.en)).toHaveLength(preprocess === 'none' ? 1 : 2);
+
+    const config = () => ({
+      parser,
+      log,
+      preprocess: tracked,
+      loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'A', b: { c: 'C' } }) }],
+    });
+    const server = new i18n(config());
+
+    await server.loadTranslations('en');
+    plain(server);
+
+    const client = new i18n(config());
+
+    client.hydrate(server.snapshot({ records: true }));
+    plain(client);
+    expect(client.translations.en).toEqual(server.translations.en);
+  });
   it('seeds over a wide namespace a loader delivered in bounded time, in either spelling of a key', async () => {
     const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`g.key${i}`, `${i}`]));
     const instance = new i18n({
@@ -8925,10 +8975,16 @@ describe('utils', () => {
   it('`toDotNotation` keeps a literal `__proto__` key an own property', () => {
     // JSON.parse creates real own '__proto__' keys (object literals would not).
     const output: any = toDotNotation(JSON.parse('{"__proto__": {"polluted": "yes"}, "plain": "ok"}'));
+    const flat: any = toDotNotation(JSON.parse('{"__proto__": "own"}'));
 
     expect(({} as any).polluted).toBe(undefined); // Object.prototype untouched
     expect(output['__proto__.polluted']).toBe('yes');
     expect(output.plain).toBe('ok');
+    expect(Object.getPrototypeOf(output)).toBe(Object.prototype);
+
+    expect(Object.getOwnPropertyDescriptor(flat, '__proto__')?.value).toBe('own');
+    expect(Object.getPrototypeOf(flat)).toBe(Object.prototype);
+    expect(({} as any).own).toBe(undefined);
   });
   it('matches a `g`-flagged route pattern on every navigation', () => {
     // `test` advances `lastIndex` on a global/sticky pattern, so a route object
