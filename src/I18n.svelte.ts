@@ -841,9 +841,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * supplied without a loader and from what each of its loaders last
    * delivered, so no key its source dropped survives and a sibling's part
    * stays in place. The preprocessed table of a
-   * locale that lost data is derived again from the raw one, since a custom
-   * `preprocess` may have renamed the keys that would have to go. Both tables
-   * are computed before anything is written, so a `preprocess` that throws
+   * locale that lost data is derived whole from the merged raw one, never
+   * merged, since a custom `preprocess` may have renamed the keys that would
+   * have to go and that table is what `preprocess` makes of the raw one. Both
+   * tables are computed before anything is written, so a `preprocess` that throws
    * records no loader and the next trigger fetches it again.
    */
   #applyDeliveries(applied: Delivery[]): void {
@@ -875,13 +876,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       [locale]: Object.fromEntries(Object.entries(read(acc, locale) ?? {}).filter(([key]) => !isNamespaceKey(key, namespace))),
     }), this.#rawTranslations);
 
-    const seeded = this.#merged({ raw, translations: this.#translations }, this.#externalOf(replaced));
+    const derived = unique(replaced.map(({ locale }) => locale));
+    const seeded = this.#merged({ raw, translations: this.#translations }, this.#externalOf(replaced), derived);
     const merged = this.#merged(seeded, serialize([
       ...deliveries.filter(({ loader }) => !isReplaced(loader)),
       ...rebuilt,
-    ].map(({ loader, data }) => ({ ...loader, data }))));
+    ].map(({ loader, data }) => ({ ...loader, data }))), derived);
 
-    const translations = unique(replaced.map(({ locale }) => locale)).reduce(
+    const translations = derived.reduce(
       (acc, locale) => ({ ...acc, [locale]: this.#preprocess(read(merged.raw, locale)) }),
       merged.translations,
     );
@@ -1065,9 +1067,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * Both tables with data keyed by sanitized locales merged in. Pure, so a
    * caller that writes only once both are computed keeps them consistent when
-   * a `preprocess` throws.
+   * a `preprocess` throws. `derived` names the locales whose preprocessed
+   * table the caller derives from the merged raw table itself; theirs keeps
+   * its place and is left as it was.
    */
-  #merged(tables: Tables, sanitized: Translations.SerializedTranslations): Tables {
+  #merged(tables: Tables, sanitized: Translations.SerializedTranslations, derived: readonly Config.Locale[] = []): Tables {
     logger.debug('Adding translations...');
 
     const translationLocales = Object.keys(sanitized);
@@ -1083,7 +1087,9 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       translations: translationLocales.reduce(
         (acc, locale) => ({
           ...acc,
-          [locale]: mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
+          [locale]: derived.includes(locale)
+            ? read(acc, locale) ?? {}
+            : mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
         }),
         tables.translations,
       ),
