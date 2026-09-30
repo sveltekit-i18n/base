@@ -638,10 +638,22 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
     return source;
   }
 
-  return Object.keys(source).reduce((acc, key) => ({
-    ...acc,
-    [key]: hasOwn(acc, key) ? mergeTranslations(read(acc, key), read(source, key), `${path}.${key}`, onConflict) : read(source, key),
-  }), target);
+  const keys = Object.keys(source);
+
+  if (!keys.length) {
+    return target;
+  }
+
+  // Mutated in place (rebuilding per key is quadratic) into a null-prototype
+  // copy of `target`, then spread once on the way out — a literal '__proto__'
+  // key stays an own property instead of reaching the prototype setter.
+  const output: any = Object.assign(Object.create(null), target);
+
+  keys.forEach((key) => {
+    output[key] = hasOwn(output, key) ? mergeTranslations(read(output, key), read(source, key), `${path}.${key}`, onConflict) : read(source, key);
+  });
+
+  return { ...output };
 };
 
 // What of `target` still shows once `source` is merged over it: the branches
