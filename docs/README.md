@@ -2222,9 +2222,12 @@ export { load } from '$lib/i18n';
   event from the universal one. The server branch negotiates, loads the locale
   for the route into a fresh instance and returns its
   [snapshot](#snapshotoptions); on a client navigation, it returns only the
-  negotiated locale and the route. The universal branch builds the instance,
-  [hydrates](#hydrateenvelope) the snapshot and returns the instance as
-  `data.i18n`, next to the other fields of the server's data. With
+  negotiated locale and the route. On a page render, the universal branch
+  takes over the instance the server branch loaded in the same request, so
+  nothing is hydrated twice; in the browser, or when a loader has
+  `cache: false`, it builds the instance and [hydrates](#hydrateenvelope) the
+  snapshot. Either way it returns the instance as `data.i18n`, next to the
+  other fields of the server's data. With
   [`extensions`](#extensions), `data.i18n` is what they make of the instance,
   while the wiring keeps driving the instance itself.
 - **`use(() => data)`** belongs in the root layout's script, called once with a
@@ -2353,13 +2356,15 @@ export const load = async (event) => ({ ...(await i18nLoad(event)), theme: 'dark
 Keep the spread: the universal branch returns the server's data along with the
 instance, and a wrapper that picks fields drops the rest. A server wrapper must
 call the i18n `load` before it returns — it reads `url`, which is what makes
-SvelteKit run the layout again on the next navigation.
+SvelteKit run the layout again on the next navigation. Pass `data.i18n` on as
+the object it is: a wrapper that copies it costs the page render a second
+instance.
 
 ### Where it runs
 
 | Pass | Server `load` | Universal `load` | Effect |
 |---|---|---|---|
-| Page render (SSR) | negotiates, loads, returns the snapshot | a fresh instance from the snapshot | — |
+| Page render (SSR) | negotiates, loads, returns the snapshot | the instance the server branch loaded (a fresh one from the snapshot when a loader has `cache: false`) | — |
 | Hydration | — | the tab's instance, from the same snapshot, active before the first render | `use()` provides it |
 | Navigation | negotiates, returns the locale and the route | warms the target locale for the new route | `use()` switches and sets the route at commit |
 | Preload | the same | the same | none: a preload shows nothing |

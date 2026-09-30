@@ -771,12 +771,16 @@ export const servedLocales = (loaders: readonly Loader.Resolved[], tables: Trans
 ]);
 
 /**
- * The locales a config serves, sanitized as an instance built from it
- * sanitizes them. Resolving the loaders logs what is wrong with them, so a
- * caller runs this once per config.
+ * The locales a config serves, from its loaders as `resolveLoaders` resolved
+ * them, sanitized as an instance built from it sanitizes them. Resolving the
+ * loaders logs what is wrong with them, so a caller resolves them once per
+ * config.
  */
-export const configLocales = ({ loaders, translations, sanitizeLocales: strategy }: Pick<Config.T, 'loaders' | 'translations' | 'sanitizeLocales'>): Config.Locale[] => servedLocales(
-  resolveLoaders(loaders, strategy),
+export const configLocales = (
+  { translations, sanitizeLocales: strategy }: Pick<Config.T, 'translations' | 'sanitizeLocales'>,
+  loaders: readonly Loader.Resolved[],
+): Config.Locale[] => servedLocales(
+  loaders,
   translations ? sanitizeTranslationLocales(translations, sanitizerFactory(strategy)) : {},
 );
 

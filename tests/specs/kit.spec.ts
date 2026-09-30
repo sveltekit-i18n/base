@@ -94,12 +94,26 @@ describe('/kit', () => {
 
     expect(() => half.handle({} as any)).toThrow('run on the server only');
     expect(() => half.load({} as any)).toThrow('run on the server only');
+    expect(() => half.take({} as any)).toThrow('run on the server only');
   });
 
   it('throws a named error from use() without the pass of load', () => {
     const { use } = setup();
 
     expect(() => use(() => ({}))).toThrow('`use()` found no data from `load`');
+  });
+
+  it('skips a loader it cannot read, as the instance does', async () => {
+    const { load, errors } = setup({
+      loaders: [
+        { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ greeting: 'common cs' }) },
+        { locale: 'cs', namespace: 'page', loader: () => Promise.resolve({}), get cache() { throw new Error('unreadable'); } },
+      ],
+    });
+    const { i18n } = await load(universalEvent('/', null));
+
+    expect(i18n.t('common.greeting')).toBe('common cs');
+    expect(errors).toContain('[i18n]: Skipping a loader that cannot be read.');
   });
 
   describe.skipIf(BROWSER)('server half', () => {
@@ -391,16 +405,104 @@ describe('/kit', () => {
       expect(configured.warnings).toEqual(['[i18n]: \'/repo/x\' precedes the route SvelteKit matched. If it is kit.paths.base, set basePath: \'/repo/x\'.']);
     });
 
-    it('builds a fresh instance on every SSR pass of the universal branch', async () => {
-      const { load, calls } = setup();
+    const counting = () => {
+      const count = { preprocessed: 0 };
+
+      return { count, preprocess: (input: any) => { count.preprocessed += 1; return input; } };
+    };
+
+    it('renders a page from the instance its server branch loaded, preprocessing once', async () => {
+      const { count, preprocess } = counting();
+      const { load, calls } = setup({ preprocess });
       const serverData = await load(serverEvent('/about'));
+      const loaded = count.preprocessed;
+      const data = await load(universalEvent('/about', { ...serverData, user: 'x' }));
+
+      expect(loaded).toBeGreaterThan(0);
+      expect(count.preprocessed).toBe(loaded);
+      expect(data.i18n.translations.cs).toEqual({ common: { greeting: 'common cs' }, about: { greeting: 'about cs' } });
+      expect(data.i18n.snapshot({ records: true })).toEqual(serverData.i18n);
+      expect(calls).toEqual(['cs:common:/about', 'cs:about:/about']);
+    });
+
+    it('hands the server branch\'s instance to one pass only', async () => {
+      const { count, preprocess } = counting();
+      const { load, calls } = setup({ preprocess });
+      const serverData = await load(serverEvent('/about'));
+      const loaded = count.preprocessed;
       const a = await load(universalEvent('/about', serverData));
+
+      expect(count.preprocessed).toBe(loaded);
+      expect(a.i18n.snapshot({ records: true })).toEqual(serverData.i18n);
+
       const b = await load(universalEvent('/about', serverData));
 
       expect(a.i18n).not.toBe(b.i18n);
-      expect(a.i18n.t('about.greeting')).toBe('about cs');
-      // The hand-off, not the loaders.
+      // The second pass hydrates the snapshot and loads nothing.
+      expect(count.preprocessed).toBeGreaterThan(loaded);
+      expect(b.i18n.translations.cs).toEqual(a.i18n.translations.cs);
       expect(calls).toHaveLength(2);
+    });
+
+    it('builds a fresh instance for a payload the server branch did not return', async () => {
+      const { count, preprocess } = counting();
+      const { load, calls } = setup({ preprocess });
+      const serverData = await load(serverEvent('/about'));
+      const loaded = count.preprocessed;
+      const data = await load(universalEvent('/about', wire(serverData)));
+
+      expect(count.preprocessed).toBeGreaterThan(loaded);
+      expect(data.i18n.translations.cs).toEqual({ common: { greeting: 'common cs' }, about: { greeting: 'about cs' } });
+      expect(calls).toHaveLength(2);
+    });
+
+    it('renders each request from its own instance', async () => {
+      const { count, preprocess } = counting();
+      const { load } = setup({ preprocess });
+      const [cs, en] = await Promise.all([load(serverEvent('/', { lang: 'cs' })), load(serverEvent('/', { lang: 'en' }))]);
+      const loaded = count.preprocessed;
+      const second = await load(universalEvent('/', en));
+      const first = await load(universalEvent('/', cs));
+
+      expect(count.preprocessed).toBe(loaded);
+      expect([first.i18n.locale, second.i18n.locale]).toEqual(['cs', 'en']);
+      expect(first.i18n.translations.cs.common.greeting).toBe('common cs');
+      expect(second.i18n.translations.en.common.greeting).toBe('common en');
+    });
+
+    it('holds a loader with cache: false back for the rest of the render', async () => {
+      let fetched = 0;
+      const { load } = setup({
+        loaders: [
+          { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ greeting: 'common cs' }) },
+          { locale: 'cs', namespace: 'live', cache: false, loader: () => Promise.resolve({ value: `live ${fetched += 1}` }) },
+        ],
+      });
+      const serverData = await load(serverEvent('/'));
+      const { i18n } = await load(universalEvent('/', serverData));
+
+      // A child +page.js, through `(await parent()).i18n`.
+      await i18n.loadNamespace('live');
+      await i18n.loadTranslations('cs', '/');
+
+      expect(fetched).toBe(1);
+      expect(i18n.t('live.value')).toBe('live 1');
+    });
+
+    it('retries in the render a loader that failed soft in the server branch', async () => {
+      let attempts = 0;
+      const { load } = setup({
+        log: { level: 'error', logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+        loaders: [
+          { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ greeting: 'common cs' }) },
+          { locale: 'cs', namespace: 'flaky', loader: () => (attempts += 1) === 1 ? Promise.reject(new Error('down')) : Promise.resolve({ value: 'back' }) },
+        ],
+      });
+      const serverData = await load(serverEvent('/'));
+      const { i18n } = await load(universalEvent('/', serverData));
+
+      expect(attempts).toBe(2);
+      expect(i18n.t('flaky.value')).toBe('back');
     });
 
     it('returns the server\'s other data along with the instance, typed', async () => {

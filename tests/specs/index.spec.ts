@@ -2163,7 +2163,7 @@ describe('i18n sanitizeLocales config', () => {
     ['translations only', { translations: { en: { greeting: 'Hello' } } }],
     ['no locale at all', { initLocale: 'en', fallbackLocale: 'cs' }],
   ] as [string, Config.T][])('derives the locales of a config as the instance does, with %s', (_, config) => {
-    expect(configLocales(config)).toEqual(new i18n({ ...config, parser, log }).locales);
+    expect(configLocales(config, resolveLoaders(config.loaders, config.sanitizeLocales))).toEqual(new i18n({ ...config, parser, log }).locales);
   });
 });
 

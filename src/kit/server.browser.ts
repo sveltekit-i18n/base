@@ -6,4 +6,4 @@ const serverOnly = (): never => {
 
 // What `#kit-server` resolves to under the `browser` condition: the browser
 // bundle carries this instead of the server half.
-export const serverHalf: typeof ServerHalf = () => ({ handle: serverOnly, load: serverOnly });
+export const serverHalf: typeof ServerHalf = () => ({ handle: serverOnly, load: serverOnly, take: serverOnly });
