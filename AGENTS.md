@@ -459,6 +459,13 @@ green suite only proves what it tests. Every change goes through this cycle:
    single PR contains.
 
 The user decides when a PR merges; the cycle decides when it is ready to ask.
+A PR is offered for merge only once the whole cycle has run on its final
+head: every step that applies is done, the last review round covered the last
+fix and confirmed nothing, and CI is green. The offer lists each step with its
+outcome — the design check, each review round and what it found, the
+real-host run (or why it does not apply), CI — so the user never has to ask
+whether a review ran. A step not run is named as not run, and the PR is not
+called ready until it has.
 
 ### Releases
 
