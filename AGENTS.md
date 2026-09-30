@@ -623,12 +623,17 @@ chat (§3).
   no multiple blank lines. Let `npm run lint` handle it.
 - Prefer the **functional, immutable** style for shared state (computed-key
   spread `{ ...acc, [k]: v }`, `reduce`). That spread form has `DefineProperty`
-  semantics — it can't pollute `Object.prototype`. On a **measured hot path** a
+  semantics — it can't pollute `Object.prototype`. A level built from a list of
+  entries (`filter`, `map`, `flatMap`) is finished with `Object.fromEntries`,
+  which defines each key the same way in one pass, where a spread per key
+  copies every key so far and is quadratic in the level's width (see
+  `maskTranslations`, `omitProtoKeys`). On a **measured hot path** a
   function-local accumulator may be built by mutation instead, but only into a
   null-prototype object (`Object.create(null)`), and it must be finished with a
   single spread before it escapes to consumers — that restores a normal
   prototype while keeping the same pollution safety (see `toDotNotation`).
-  Long-lived internal state may be written in place only when it is
+  That accumulator stays the form for a level written in place, where a key's
+  value depends on what is already there (`mergeTranslations`). Long-lived internal state may be written in place only when it is
   null-prototype and never exposed (see `#namespaceRecords` in §11) — never a plain
   object indexed by consumer input. The locale-indexed folds in `serialize` and
   `#applyDeliveries` keep the spread form deliberately, even though it is

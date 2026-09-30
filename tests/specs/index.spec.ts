@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, maskOutputKeys, maskTranslations, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, maskOutputKeys, maskTranslations, matchLocale, omitProtoKeys, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -43,6 +43,36 @@ vi.mock('../../src/utils.js', async (importOriginal) => {
 // Unlike the shared no-op `parser`, this one returns the loaded value, so a spec
 // can assert on actual translation output.
 const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : text) };
+
+// The widths of the levels `fn` builds with `Object.fromEntries`, which
+// defines each key of a level once, in one pass.
+const levelsBuilt = (fn: () => unknown): number[] => {
+  const fromEntries = vi.spyOn(Object, 'fromEntries');
+
+  try {
+    fn();
+
+    return fromEntries.mock.calls.map(([entries]) => Array.from(entries).length);
+  } finally {
+    fromEntries.mockRestore();
+  }
+};
+
+// How many times `fn` filters the key list of a level holding `key`: leaving
+// `__proto__` keys out walks every level that way, a scan for one never does.
+const levelsWalked = (fn: () => unknown, key: string): number => {
+  const filter = vi.spyOn(Array.prototype, 'filter');
+  let lists: unknown[];
+
+  try {
+    fn();
+  } finally {
+    lists = [...filter.mock.contexts];
+    filter.mockRestore();
+  }
+
+  return lists.filter((list) => Array.isArray(list) && list.includes(key)).length;
+};
 
 // The public descriptor type is a union over the two namespace spellings, so
 // reading one takes the same resolution the core applies at the config boundary.
@@ -773,6 +803,34 @@ describe('i18n instance', () => {
     expect(performance.now() - start).toBeLessThan(1000);
     expect(Object.keys(instance.translations.en)).toHaveLength(10000);
     expect(instance.translations.en['common.key9999']).toBe('9999');
+  });
+  it('seeds over a wide namespace a loader delivered, building its level once per mask, in either spelling of a key', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`g.key${i}`, `${i}`]));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => data },
+        { namespace: 'common', locale: 'en', cache: false, loader: async () => ({ extra: 'E' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    const wide = (fn: () => unknown) => levelsBuilt(fn).filter((width) => width >= 1000);
+
+    // The delivery's level is built once per mask: the merge's mask leaves out
+    // the seed's spelling of a key, the dot notation's every spelling.
+    expect(wide(() => instance.addTranslations({ en: { common: { 'g.key0': 'flat' } } }))).toEqual([9999]);
+    expect(wide(() => instance.addTranslations({ en: { common: { g: { key1: 'nested' } } } }))).toEqual([9999, 9998]);
+
+    // The `cache: false` loader delivers again, so the namespace is rebuilt from the masked deliveries.
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.translations.en['common.extra']).toBe('E');
+    expect(instance.translations.en['common.g.key0']).toBe('flat');
+    expect(instance.translations.en['common.g.key1']).toBe('nested');
+    expect(instance.translations.en['common.g.key9999']).toBe('9999');
   });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
@@ -7382,6 +7440,9 @@ describe('i18n seeded translations', () => {
 });
 
 describe('i18n snapshot', () => {
+  const hasOwnProtoKey = (value: any): boolean => !!value && typeof value === 'object'
+    && (Object.hasOwn(value, '__proto__') || Object.values(value).some(hasOwnProtoKey));
+
   const countingLoaders = (calls: Record<string, number>) => [
     { namespace: 'common', locale: 'en', loader: async () => { calls.common = (calls.common ?? 0) + 1; return { greeting: 'Hello' }; } },
     { namespace: 'home', locale: 'en', routes: ['/'], loader: async () => { calls.home = (calls.home ?? 0) + 1; return { title: 'Home' }; } },
@@ -7598,9 +7659,6 @@ describe('i18n snapshot', () => {
   });
 
   it('leaves out a literal `__proto__` key, which the serializers of load data refuse', async () => {
-    const hasOwnProtoKey = (value: any): boolean => !!value && typeof value === 'object'
-      && (Object.hasOwn(value, '__proto__') || Object.values(value).some(hasOwnProtoKey));
-
     const instance = new i18n({
       parser: valueParser,
       log,
@@ -7617,6 +7675,106 @@ describe('i18n snapshot', () => {
 
     expect(hasOwnProtoKey(translations)).toBe(false);
     expect(translations).toEqual({ en: { home: { list: [{ ok: '1' }], title: 'Home' } } });
+  });
+
+  it('leaves out a `__proto__` key holding a string, null, a number, an array or an object, down to 6 levels and among 64 entries, under either prototype, from the data and the seeds, as a walk of every level does', async () => {
+    // Each shape places `inner` once among siblings — strings, empty objects
+    // and arrays, objects and arrays without the key — before and after it.
+    const shapes = [
+      (inner: string) => `{"k": ${inner}}`,
+      (inner: string) => `{"a": "s", "b": {}, "c": [], "d": {"e": "f"}, "g": ["h", {}], "k": ${inner}, "m": {"n": ["o"]}, "p": [], "q": "r"}`,
+      (inner: string) => `[${inner}]`,
+      (inner: string) => `[${inner}, "a", {}, [], {"b": "c"}, ["d"]]`,
+      (inner: string) => `["a", {"b": "c"}, [], ${inner}, {}, ["d", {"e": "f"}], "g"]`,
+      (inner: string) => `["a", {}, [], {"b": ["c"]}, [{"d": "e"}], ${inner}]`,
+    ];
+    // An array of 64 items and an object of 64 keys, `inner` the first, the
+    // eighth, the 41st or the last of them.
+    const siblings = ['"s"', '{}', '[]', '{"b": "c"}', '["d"]', '{"e": ["f", {}]}'];
+    const entries = (at: number, inner: string) => Array.from({ length: 64 }, (_, i) => (i === at ? inner : siblings[i % siblings.length]));
+    const wide = [0, 7, 40, 63].flatMap((at) => [
+      (inner: string) => `[${entries(at, inner).join(', ')}]`,
+      (inner: string) => `{${entries(at, inner).map((entry, i) => `"k${i}": ${entry}`).join(', ')}}`,
+    ]);
+    // The key holds a string, empty or not, null, a number, an array or an
+    // object.
+    const values = ['"x"', '""', 'null', '0', '["a"]', '{"c": "d"}'];
+    const carriers = ['{"KEY": "x"}', ...values.map((value) => `{"KEY": ${value}, "ok": "1"}`), '{"a": {}, "b": [], "KEY": {"c": "d"}, "z": "1"}'];
+    const nest = (path: number[], carrier: string) => path.reduceRight((inner, shape) => shapes[shape](inner), carrier);
+    const paths = (length: number): number[][] => (length ? paths(length - 1).flatMap((path) => shapes.map((_, shape) => [...path, shape])) : [[]]);
+    const shallow = [
+      ...[0, 1].flatMap((length) => paths(length).flatMap((path) => carriers.map((carrier) => nest(path, carrier)))),
+      ...paths(2).map((path) => nest(path, carriers[1])),
+      ...wide.map((shape) => shape(carriers[1])),
+    ];
+    // Chains of 3 to 6 levels put the carrier up to 6 levels down, in plain
+    // and in null-prototype objects alike: a scan that stops short of 6
+    // levels, or reads one of the prototypes only down to fewer, misses a key.
+    const chains = (length: number) => [[0], [4], [1, 5]].map((cycle) => nest(Array.from({ length }, (_, i) => cycle[i % cycle.length]), carriers[1]));
+    // JSON.parse creates real own '__proto__' keys; a null-prototype object
+    // holds one the same way.
+    const nullPrototypes = (_key: string, value: unknown) => (value && typeof value === 'object' && !Array.isArray(value) ? Object.assign(Object.create(null), value) : value);
+    // Every shape once with the key and once without it.
+    const cases = [
+      ...shallow.flatMap((template) => [{ template, nullPrototype: false }, { template, nullPrototype: true }]),
+      ...paths(3).map((path) => ({ template: nest(path, carriers[1]), nullPrototype: false })),
+      ...[4, 5, 6].flatMap(chains).map((template) => ({ template, nullPrototype: false })),
+      ...[3, 4, 5, 6].flatMap(chains).map((template) => ({ template, nullPrototype: true })),
+    ].flatMap(({ template, nullPrototype }) => ['__proto__', 'clean'].map((key) => ({ json: template.replace('KEY', key), nullPrototype })));
+    const withoutProtoKey = (value: any): any => {
+      if (Array.isArray(value)) return value.map(withoutProtoKey);
+      if (!value || typeof value !== 'object') return value;
+
+      return Object.fromEntries(Object.keys(value).filter((key) => key !== '__proto__').map((key) => [key, withoutProtoKey(value[key])]));
+    };
+    // Own keys alike at every level, whatever the prototype.
+    const equal = (actual: any, expected: any): boolean => (actual && expected && typeof actual === 'object' && typeof expected === 'object'
+      ? Array.isArray(actual) === Array.isArray(expected) && Object.keys(actual).length === Object.keys(expected).length
+        && Object.keys(expected).every((key) => Object.hasOwn(actual, key) && equal(actual[key], expected[key]))
+      : Object.is(actual, expected));
+    const serializable = (value: unknown) => {
+      try {
+        devalue.stringify(value);
+
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const mismatches: string[] = [];
+
+    for (const { json, nullPrototype } of cases) {
+      const parse = () => (nullPrototype ? JSON.parse(json, nullPrototypes) : JSON.parse(json));
+      // `seeded` is left out of the data, as its loader captures params and
+      // never delivered, and travels as `seeds`; the rest of the envelope
+      // is checked for the key alone.
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [
+          { namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) },
+          { namespace: 'seeded', locale: 'en', routes: [/^\/a\/(?<id>\d+)$/], loader: async () => ({}) },
+        ],
+      });
+
+      await instance.loadTranslations('en', '/');
+      instance.addTranslations({ en: { ns: parse(), seeded: parse() } });
+
+      const expected = withoutProtoKey(JSON.parse(json));
+      const translations = { en: { nav: { home: 'Home' }, ns: expected } };
+      const envelope = instance.snapshot({ records: true });
+      const outputs = [
+        { name: 'plain', output: instance.snapshot(), whole: translations },
+        { name: 'envelope', output: envelope, whole: { ...envelope, translations, seeds: { en: { seeded: expected } } } },
+      ];
+
+      for (const { name, output, whole } of outputs) {
+        if (!equal(output, whole) || hasOwnProtoKey(output) || !serializable(output)) mismatches.push(`${name}${nullPrototype ? ', null prototypes' : ''}: ${json}`);
+      }
+    }
+
+    expect(cases).toHaveLength(874);
+    expect(mismatches).toEqual([]);
   });
 
   it('leaves a namespace that lost a literal `__proto__` key out of the plain snapshot, so the client loads it whole', async () => {
@@ -7678,6 +7836,37 @@ describe('i18n snapshot', () => {
     instance.addTranslations({ en: { 'common.n': Number.NaN, other: JSON.parse('{"__proto__": "x", "k": "v"}') } });
 
     expect(instance.snapshot({ records: true }).records).toEqual([{ id: '["en","common"]' }]);
+  });
+
+  it('leaves a `__proto__` key out of a wide level, building it once', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`key${i}`, `${i}`]));
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) }] });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { common: JSON.parse(JSON.stringify(data).replace('{', '{"__proto__": "x", ')) } });
+
+    let snapshot: any;
+
+    // The level is built once, from its 10,000 other keys.
+    expect(levelsBuilt(() => { snapshot = instance.snapshot(); }).filter((width) => width >= 1000)).toEqual([10000]);
+    expect(Object.keys(snapshot.en.common)).toHaveLength(10000);
+    expect(Object.hasOwn(snapshot.en.common, '__proto__')).toBe(false);
+  });
+
+  it('walks no level of a table without a `__proto__` key, and every level of one with it', async () => {
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ menu: { home: 'Home', about: 'About' }, list: ['a', 'b'] }) }] });
+
+    await instance.loadTranslations('en', '/');
+
+    // A scan that copies nothing finds no `__proto__` key, so nothing is walked to leave one out.
+    expect(levelsWalked(() => instance.snapshot(), 'home')).toBe(0);
+    expect(levelsWalked(() => instance.snapshot({ records: true }), 'home')).toBe(0);
+
+    instance.addTranslations({ en: { common: JSON.parse('{"__proto__": "x"}') } });
+
+    // One such key walks the table, its clean levels included, once.
+    expect(levelsWalked(() => instance.snapshot(), 'home')).toBe(1);
+    expect(levelsWalked(() => instance.snapshot({ records: true }), 'home')).toBe(1);
   });
 
   it('records no loader whose data lost a literal `__proto__` key, so the client loads it again', async () => {
@@ -8831,6 +9020,47 @@ describe('utils', () => {
 
     expect(Object.getPrototypeOf(masked)).toBe(Object.prototype);
     expect(read(masked, '__proto__')).toEqual({ b: 'y' });
+  });
+
+  it('`omitProtoKeys` builds each level of a deep branch holding a `__proto__` key once, and leaves the clean siblings as they are', () => {
+    const level = () => Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`key${i}`, `${i}`]));
+    let deep: any = JSON.parse('{"__proto__": "x", "a": "y"}');
+
+    for (let depth = 0; depth < 1000; depth += 1) deep = { ...level(), k: deep };
+
+    // eslint-disable-next-line no-sparse-arrays
+    const clean = { nested: level(), list: ['a', , 'c'] };
+    const keys = vi.spyOn(Object, 'keys');
+    let result: any;
+    let read = 0;
+    let built: number[];
+
+    try {
+      built = levelsBuilt(() => {
+        result = omitProtoKeys({ deep, clean });
+        read = keys.mock.calls.length;
+      });
+    } finally {
+      keys.mockRestore();
+    }
+
+    // The bottom level, the 1,000 levels above it and the root, each built
+    // once from its keys.
+    expect({ levels: built.length, keys: built.reduce((sum, width) => sum + width, 0) }).toEqual({ levels: 1002, keys: 1 + 1000 * 101 + 2 });
+    // Each of the 1,004 objects is read at most twice: by the scan and by the walk.
+    expect(read).toBeLessThanOrEqual(2 * 1004);
+    expect(result.clean).toBe(clean);
+
+    let bottom = result.deep;
+
+    for (let depth = 0; depth < 1000; depth += 1) bottom = bottom.k;
+
+    expect(Object.keys(bottom)).toEqual(['a']);
+
+    // eslint-disable-next-line no-sparse-arrays
+    const table = { a: { b: 'c' }, n: [1, , 3] };
+
+    expect(omitProtoKeys(table)).toBe(table);
   });
 
   it('publishes the reusable helpers, and only those', () => {
