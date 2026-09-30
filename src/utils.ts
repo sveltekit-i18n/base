@@ -10,23 +10,14 @@ export const hasOwn = (obj: any, key: PropertyKey): boolean => obj != null && Ob
 // property, otherwise undefined. Centralizes the prototype-safe table lookup.
 export const read = <T = any>(obj: any, key: PropertyKey): T | undefined => (hasOwn(obj, key) ? obj[key] : undefined);
 
-export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Output>({
-  parser,
-  key,
-  params,
-  translations,
-  locale,
-  fallbackLocale,
-  ...rest
-}: {
-  parser: Parser.T<P, O>;
-  key: string;
-  params: Parser.Params;
-  translations: Translations.SerializedTranslations;
-  locale: Translations.Locales[number] | undefined;
-  fallbackLocale?: Config.FallbackLocale;
-  fallbackValue?: Config.FallbackValue;
-}): Translations.Translated<O> => {
+export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Output>(
+  config: Pick<Config.T<P, O>, 'parser' | 'fallbackLocale' | 'fallbackValue'> | undefined,
+  locale: Translations.Locales[number] | undefined,
+  key: string,
+  params: Parser.Params,
+  table: DotNotation.Input,
+  fallbackTable: DotNotation.Input,
+): Translations.Translated<O> => {
   if (!key) {
     logger.warn(`No translation key provided ('${locale}' locale). Skipping translation...`);
     return '';
@@ -37,19 +28,18 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     return '';
   }
 
-  const localeTranslations = read(translations, locale);
-  let text = read(localeTranslations, key);
+  const fallbackLocale = config?.fallbackLocale;
+  let text = read(table, key);
 
   if (fallbackLocale && text === undefined) {
     logger.debug(`No translation provided for '${key}' key in locale '${locale}'. Trying fallback '${fallbackLocale}'`);
-    const fallbackTranslations = read(translations, fallbackLocale);
-    text = read(fallbackTranslations, key);
+    text = read(fallbackTable, key);
   }
 
   if (text === undefined) {
     logger.debug(`No translation provided for '${key}' key in fallback '${fallbackLocale}'.`);
-    if (hasOwn(rest, 'fallbackValue')) {
-      return rest.fallbackValue;
+    if (hasOwn(config, 'fallbackValue')) {
+      return config?.fallbackValue;
     }
     logger.warn(`No translation nor fallback found for '${key}' .`);
 
@@ -57,6 +47,8 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     // key is what makes a missing translation visible instead of blank.
     return key;
   }
+
+  const parser = config?.parser;
 
   if (!parser || typeof parser.parse !== 'function') {
     // Reached on every call while no parser is set (e.g. before config loads),
