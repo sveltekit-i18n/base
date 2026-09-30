@@ -8353,13 +8353,7 @@ describe('logger', () => {
 
 describe('translate', () => {
   it('returns the key when no parser is configured and the translation is missing', () => {
-    const output = translate({
-      parser: undefined as any,
-      key: 'common.key',
-      params: [],
-      translations: { en: {} },
-      locale: 'en',
-    });
+    const output = translate({ parser: undefined as any }, 'en', 'common.key', [], {}, undefined);
 
     expect(output).toBe('common.key');
   });

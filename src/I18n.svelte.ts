@@ -723,17 +723,18 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // -- internals --------------------------------------------------------------
 
   #translate(locale: Config.Locale | undefined, key: string, params: Parser.Params): Translations.Translated<ParserOutput> {
-    const { parser, fallbackLocale, ...rest } = this.#config ?? {} as Config.T<ParserParams, ParserOutput>;
+    const config = this.#config;
+    const translations = this.#translations;
+    const fallbackLocale = config?.fallbackLocale;
 
-    return translate<ParserParams, ParserOutput>({
-      parser,
+    return translate<ParserParams, ParserOutput>(
+      config,
+      locale,
       key,
       params,
-      translations: this.#translations,
-      locale,
-      fallbackLocale,
-      ...(hasOwn(rest, 'fallbackValue') ? { fallbackValue: rest.fallbackValue } : {}),
-    });
+      locale ? read(translations, locale) : undefined,
+      fallbackLocale ? read(translations, fallbackLocale) : undefined,
+    );
   }
 
   /**
