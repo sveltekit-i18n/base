@@ -1044,6 +1044,84 @@ describe('i18n instance', () => {
     expect(loader).toHaveBeenCalledTimes(3);
     expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'article.title': 'Article 2' });
   });
+  describe('a locale a re-delivery rebuilds', () => {
+    const articleLoader = { namespace: 'article', locale: 'en', routes: [/^\/a\/(?<id>\d+)/], loader: async ({ params }: Loader.Props) => ({ title: `Article ${params.id}` }) };
+    const expectDerived = (instance: I18n) => expect(Object.entries(instance.translations.en)).toEqual(Object.entries(toDotNotation(instance.rawTranslations.en) ?? {}));
+
+    it('is handed to a custom `preprocess` once, whole', async () => {
+      const preprocess = vi.fn((table: Translations.SerializedTranslations) => toDotNotation(table) ?? {});
+      const instance = new i18n({
+        parser,
+        log,
+        preprocess,
+        loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { article: { seed: 's' } } });
+      await instance.loadTranslations('en', '/a/1');
+      preprocess.mockClear();
+      await instance.setRoute('/a/2');
+
+      expect(preprocess.mock.calls).toEqual([[{ article: { seed: 's', title: 'Article 2' }, common: { greeting: 'Hello' } }]]);
+    });
+    it('is derived from its raw table when a seeded leaf became a branch', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [{ namespace: 't', locale: 'en', routes: ['/t'], loader: async () => ({ a: { b: 'B' } }) }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { t: { a: 'seed' } } });
+      await instance.loadTranslations('en', '/t');
+      await instance.setRoute('/a/1');
+      await instance.setRoute('/a/2');
+
+      expectDerived(instance);
+    });
+    it('is derived from its raw table when a seeded branch became a leaf', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [{ namespace: '7', locale: 'en', routes: ['/s'], loader: async () => 'leaf' as any }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { 7: { a: { b: 'B' } } } });
+      await instance.loadTranslations('en', '/s');
+      await instance.setRoute('/a/1');
+      await instance.setRoute('/a/2');
+
+      expectDerived(instance);
+    });
+    it('is derived from its raw table after `loadConfig` switched `preprocess`', async () => {
+      const instance = new i18n({ parser, log, preprocess: 'preserveArrays', loaders: [articleLoader] });
+
+      instance.addTranslations({ en: { list: { items: ['a', 'b'] } } });
+      await instance.loadTranslations('en', '/a/1');
+      await instance.loadConfig({ parser, log, loaders: [articleLoader] });
+      await instance.loadTranslations('en', '/a/2');
+
+      expectDerived(instance);
+    });
+    it('keeps its place among the locales when the tables lack it', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        fallbackLocale: 'en',
+        loaders: [
+          { namespace: 'b', locale: 'en', loader: async () => ({ y: 'Y' }) },
+          { namespace: 'x', locale: 'de', loader: async () => ({ z: 'Z' }) },
+          { namespace: 'a', locale: 'en', cache: false, loader: async () => ({ v: 'V' }) },
+          { namespace: 'c', locale: 'cs', loader: async () => ({ w: 'W' }) },
+        ],
+      });
+
+      instance.hydrate({ translations: { cs: { c: { w: 'W' } } }, records: [{ id: '["en","a"]' }, { id: '["cs","c"]' }], locale: 'cs', route: '/' });
+      await instance.loadTranslations('de', '/x');
+
+      expect(Object.keys(instance.translations)).toEqual(['cs', 'en', 'de']);
+      expect(Object.keys(instance.translations)).toEqual(Object.keys(instance.rawTranslations));
+    });
+  });
   describe('params wanted by the current route', () => {
     const itemLoader = (resolvers: Record<string, () => void>, locale = 'en') => ({
       namespace: 'item',
