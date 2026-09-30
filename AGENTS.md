@@ -74,6 +74,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
 | `tests/specs/registry.spec.ts` | compiles the `tests/types/registry/` fixtures with `tsc` |
 | `tests/types/registry/` | type fixtures of the schema registry — programs of their own, outside `typecheck` |
+| `tests/specs/cost.spec.ts` | the checker's cost of a `t`/`l` call, counted in the `tests/types/cost/` probe |
+| `tests/types/cost/` | the probe program — outside `typecheck`, compiled in process by `tests/utils/cost.ts` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
@@ -654,6 +656,15 @@ not RCE/XSS.
   main `tsconfig.json` excludes `tests/types`, and ESLint ignores it. A
   fixture asserts with `@ts-expect-error` and a type-level `Equal`, so it
   fails by compiling.
+- **What a type costs the checker is tested by count, never by time.**
+  `tests/utils/cost.ts` compiles the `tests/types/cost/` probe with the
+  compiler API, from `cost.spec.ts` and `dist.spec.ts`, and compares
+  `getInstantiationCount()` across a call on schemas of two sizes. The probe's
+  schema is a mapped type with an `as` clause, whose `keyof` instantiates once
+  per key each time it is read; each measured call uses a key no earlier call
+  used, since the checker caches a conditional type by its arguments; and a
+  control that reads `keyof S` on every call proves the count still sees such
+  a read.
 - Drive behavior through the **public API** (`new i18n(CONFIG)`, reactive
   properties, awaited method returns). Pure helpers may be imported directly
   from `src/` when that yields a more deterministic test (e.g. unit-testing

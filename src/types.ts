@@ -621,6 +621,14 @@ export namespace Schema {
   type IsAny<T> = 0 extends 1 & T ? true : false;
 
   /**
+   * `keyof S`, read once per schema. TypeScript rebuilds `keyof` of an object
+   * type over every key each time it reads it, and a plain alias of it too;
+   * the instantiation of a conditional type is cached per type argument, so
+   * each call reads the keys this computed once.
+   */
+  type Keys<S> = [S] extends [unknown] ? keyof S : never;
+
+  /**
    * What satisfies every key in `K` — see `Params`. The fold runs over the
    * KEYS, so each key's own payload reaches the intersection whole; folding
    * over the payloads instead would collapse a single key's discriminated
@@ -629,9 +637,12 @@ export namespace Schema {
    * empty union stays `never`: no member means no payload, not an
    * unconstrained one.
    */
-  type BoxedPayload<S, K extends string> = K extends keyof S
+  type BoxedPayload<S, K extends string> = K extends Keys<S>
     ? [Exclude<S[K], undefined>] extends [never] ? never : (payload: Exclude<S[K], undefined>) => void
     : never;
+
+  /** Whether a key in `K` marks its payload optional; `boolean` when only some do. */
+  type OptionalOf<S, K extends string> = K extends Keys<S> ? (undefined extends S[K] ? true : false) : never;
 
   type PayloadOf<S, K extends string> = [BoxedPayload<S, K>] extends [never]
     ? never
@@ -669,8 +680,8 @@ export namespace Schema {
    */
   export type Params<S, K extends string, P extends Parser.Params> = [S] extends [never]
     ? P
-    : [K] extends [keyof S]
-      ? Payload<P, PayloadOf<S, K>, undefined extends S[K & keyof S] ? true : false>
+    : [K] extends [Keys<S>]
+      ? Payload<P, PayloadOf<S, K>, OptionalOf<S, K>>
       : P;
 }
 

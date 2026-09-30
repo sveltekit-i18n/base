@@ -1,0 +1,13 @@
+{
+  // The shipped artifact, reached by package name through the `exports` map.
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["svelte"]
+  },
+  "include": ["."]
+}
