@@ -638,7 +638,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       if (relevant !== handable) {
         logger.warn(`Leaving a '__proto__' key of locale '${locale}' out of the snapshot: load data cannot carry it.`);
 
-        const lost = Object.keys(handable).filter((key) => !hasOwn(relevant, key) || relevant[key] !== handable[key]);
+        const lost = Object.keys(handable).filter((key) => !hasOwn(relevant, key) || !Object.is(relevant[key], handable[key]));
 
         stripped.set(locale, lost);
 
