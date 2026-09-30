@@ -1,6 +1,6 @@
 import { untrack } from 'svelte';
 
-import { capturesParams, fetchTranslation, hasOwn, loaderName, maskOutputKeys, maskTranslations, mergeFetched, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
+import { capturesParams, dotNotates, fetchTranslation, hasOwn, loaderName, maskOutputKeys, maskTranslations, mergeFetched, mergeTranslations, omitProtoKeys, paramsSignature, read, resolveLoaders, routeParams, sanitizerFactory, sanitizeTranslationLocales, serialize, servedLocales, toDotNotation, translate, unique, withoutBasePath } from './utils.js';
 import type { ControlFlow, Delivery, Fetched, LoadRequest } from './utils.js';
 import { logError, logger, loggerFactory, setLogger } from './logger.js';
 
@@ -928,7 +928,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       // Dot notation, as `#preprocess` applies it, merges both spellings of a
       // key into one.
-      const dotted = typeof preprocess !== 'function' && preprocess !== 'none'
+      const dotted = dotNotates(preprocess)
         ? maskOutputKeys(masked, new Set(Object.keys(toDotNotation(Object.fromEntries(own), preprocess === 'preserveArrays') ?? {})), loader.namespace, preprocess === 'preserveArrays') ?? {}
         : masked;
 
@@ -1085,15 +1085,20 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
         }),
         tables.raw,
       ),
-      translations: translationLocales.reduce(
-        (acc, locale) => ({
-          ...acc,
-          [locale]: derived.includes(locale)
-            ? read(acc, locale) ?? {}
-            : mergeTranslations(read(acc, locale) || {}, this.#preprocess(read(sanitized, locale)), locale),
-        }),
-        tables.translations,
-      ),
+      translations: translationLocales.reduce((acc, locale) => {
+        const table = read(acc, locale);
+
+        if (derived.includes(locale)) return { ...acc, [locale]: table ?? {} };
+
+        // Checked right before `#preprocess` reads the same config, so the
+        // check and the preprocess that runs agree.
+        const fresh = table === undefined && dotNotates(this.#config?.preprocess);
+        const input = this.#preprocess(read(sanitized, locale));
+
+        // The dot notation builds the table fresh, so a locale without one yet
+        // takes it as it is.
+        return { ...acc, [locale]: fresh ? input : mergeTranslations(table || {}, input, locale) };
+      }, tables.translations),
     };
   }
 

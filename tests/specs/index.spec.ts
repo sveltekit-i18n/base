@@ -804,6 +804,103 @@ describe('i18n instance', () => {
     expect(Object.keys(instance.translations.en)).toHaveLength(10000);
     expect(instance.translations.en['common.key9999']).toBe('9999');
   });
+  it.each<[string, Config.T['preprocess']]>([
+    ['unset', undefined],
+    ['preserveArrays', 'preserveArrays'],
+    ['none', 'none'],
+    ['custom', (input: any) => Object.assign(Object.create(null), toDotNotation(input))],
+  ])('adding and hydrating a locale\'s first data gives both tables a plain prototype (`preprocess` %s)', async (_, preprocess) => {
+    const returned: unknown[] = [];
+    const tracked = typeof preprocess === 'function'
+      ? (input: any) => {
+        const output = preprocess(input);
+
+        returned.push(output);
+
+        return output;
+      }
+      : preprocess;
+    const plain = (instance: I18n) => {
+      expect(Object.getPrototypeOf(instance.translations.en)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf(instance.rawTranslations.en)).toBe(Object.prototype);
+      expect(returned).not.toContain(instance.translations.en);
+    };
+
+    const seeded = new i18n({ parser, log, preprocess: tracked });
+    const first = { common: { a: 'A' } };
+
+    seeded.addTranslations({ en: first });
+    plain(seeded);
+    expect(seeded.translations.en).not.toBe(first);
+
+    seeded.addTranslations({ en: { common: { b: 'B' } } });
+    plain(seeded);
+    expect(Object.keys(seeded.translations.en)).toHaveLength(preprocess === 'none' ? 1 : 2);
+
+    const config = () => ({
+      parser,
+      log,
+      preprocess: tracked,
+      loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'A', b: { c: 'C' } }) }],
+    });
+    const server = new i18n(config());
+
+    await server.loadTranslations('en');
+    plain(server);
+
+    const client = new i18n(config());
+
+    client.hydrate(server.snapshot({ records: true }));
+    plain(client);
+    expect(client.translations.en).toEqual(server.translations.en);
+  });
+  it('hands out each level it builds as built, without copying it, and a locale\'s first dot-notated table without a merge', async () => {
+    const setPrototypeOf = vi.spyOn(Object, 'setPrototypeOf');
+    // The levels given `Object.prototype` in place since the last check.
+    const finished = () => {
+      const levels = setPrototypeOf.mock.calls.filter(([, prototype]) => prototype === Object.prototype).map(([level]) => level);
+
+      setPrototypeOf.mockClear();
+
+      return levels;
+    };
+
+    try {
+      const instance = new i18n({ parser, log, loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'A', b: { c: 'C' } }) }] });
+
+      await instance.loadTranslations('en');
+
+      const tables = finished().filter((level) => Object.hasOwn(level as object, 'common.a'));
+
+      // The dot notation's level is the table: finished once, and merged into nothing.
+      expect(tables).toHaveLength(1);
+      expect(tables[0]).toBe(instance.translations.en);
+      expect(instance.translations.en).toEqual({ 'common.a': 'A', 'common.b.c': 'C' });
+
+      instance.addTranslations({ en: { common: { d: 'D' } } });
+
+      const levels = finished();
+      const handedOut = [instance.translations.en, instance.rawTranslations.en, instance.rawTranslations.en.common];
+
+      // Each level built is finished once: the raw namespace and locale the
+      // merge rebuilt, the added data dot-notated and the table it is merged
+      // into, the seed kept to rebuild the namespace, and its dot-notated keys
+      // that mask the delivery.
+      expect(levels.map((level) => Object.keys(level as object))).toEqual([
+        ['a', 'b', 'd'],
+        ['common'],
+        ['common.d'],
+        ['common.a', 'common.b.c', 'common.d'],
+        ['common'],
+        ['common.d'],
+      ]);
+      // And the levels handed out are those finished, not copies of them.
+      handedOut.forEach((level) => expect(levels.filter((finishedLevel) => finishedLevel === level)).toHaveLength(1));
+      expect(instance.translations.en).toEqual({ 'common.a': 'A', 'common.b.c': 'C', 'common.d': 'D' });
+    } finally {
+      setPrototypeOf.mockRestore();
+    }
+  });
   it('seeds over a wide namespace a loader delivered, building its level once per mask, in either spelling of a key', async () => {
     const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`g.key${i}`, `${i}`]));
     const instance = new i18n({
@@ -9127,10 +9224,16 @@ describe('utils', () => {
   it('`toDotNotation` keeps a literal `__proto__` key an own property', () => {
     // JSON.parse creates real own '__proto__' keys (object literals would not).
     const output: any = toDotNotation(JSON.parse('{"__proto__": {"polluted": "yes"}, "plain": "ok"}'));
+    const flat: any = toDotNotation(JSON.parse('{"__proto__": "own"}'));
 
     expect(({} as any).polluted).toBe(undefined); // Object.prototype untouched
     expect(output['__proto__.polluted']).toBe('yes');
     expect(output.plain).toBe('ok');
+    expect(Object.getPrototypeOf(output)).toBe(Object.prototype);
+
+    expect(Object.getOwnPropertyDescriptor(flat, '__proto__')?.value).toBe('own');
+    expect(Object.getPrototypeOf(flat)).toBe(Object.prototype);
+    expect(({} as any).own).toBe(undefined);
   });
   it('matches a `g`-flagged route pattern on every navigation', () => {
     // `test` advances `lastIndex` on a global/sticky pattern, so a route object

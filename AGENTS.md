@@ -629,13 +629,20 @@ chat (§3).
   copies every key so far and is quadratic in the level's width (see
   `maskTranslations`, `omitProtoKeys`). On a **measured hot path** a
   function-local accumulator may be built by mutation instead, but only into a
-  null-prototype object (`Object.create(null)`), and it must be finished with a
-  single spread before it escapes to consumers — that restores a normal
-  prototype while keeping the same pollution safety (see `toDotNotation`).
-  That accumulator stays the form for a level written in place, where a key's
-  value depends on what is already there (`mergeTranslations`). Long-lived internal state may be written in place only when it is
-  null-prototype and never exposed (see `#namespaceRecords` in §11) — never a plain
-  object indexed by consumer input. The locale-indexed folds in `serialize` and
+  null-prototype object (`Object.create(null)`), which stays the form for a
+  level written in place, where a key's value depends on what is already there
+  (`mergeTranslations`). Once its last key is written, and before it escapes
+  to consumers, it is given `Object.prototype` (`Object.setPrototypeOf`,
+  O(1), though V8 then keeps it in dictionary mode: on a level of a few
+  hundred keys, listing its keys with `Object.keys` or `for...in` takes many
+  times as long as on a copy, and serializing it about twice as long), or
+  finished with a single spread, which copies every key and so is left to
+  code where that copy is measured not to matter. Either restores a
+  normal prototype while a literal `'__proto__'` key stays an own data
+  property (see `toDotNotation`, `mergeTranslations`). Long-lived internal
+  state may be written in place only when it is null-prototype and never
+  exposed (see `#namespaceRecords` in §11) — never a plain object indexed by
+  consumer input. The locale-indexed folds in `serialize` and
   `#applyDeliveries` keep the spread form deliberately, even though it is
   quadratic in the number of locales: the counts are small, and only a
   measurement showing otherwise justifies moving them to the accumulator form.
