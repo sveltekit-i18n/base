@@ -1,0 +1,19 @@
+{
+  // The source this repository builds.
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    // Ambient rune declarations for the source's .svelte.ts modules.
+    "types": ["svelte"],
+    "paths": {
+      "@sveltekit-i18n/base": ["../../../src/index.ts"],
+      "#kit-env": ["../../../src/kit/env.ts"],
+      "#kit-server": ["../../../src/kit/server.ts"]
+    }
+  },
+  "include": ["."]
+}
