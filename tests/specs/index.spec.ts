@@ -8780,7 +8780,7 @@ describe('utils', () => {
       // A standard locale resolves identically whether or not it is cached.
       expect(sanitizeLocales('zh-Hans')).toEqual(sanitizeLocales('zh-Hans'));
 
-      // Failures are never cached, so the warning is not deduplicated away —
+      // The outcome is remembered, but the warning is not deduplicated away —
       // deduplicating it would tie the diagnostic to whichever logger and
       // level happened to be installed on the first occurrence.
       sanitizeLocales('qqq-alpha');
@@ -8790,6 +8790,24 @@ describe('utils', () => {
     }
 
     expect(captured.warn.filter(({ message }) => message.includes('qqq-alpha'))).toHaveLength(2);
+  });
+  it('`sanitizeLocales` asks `Intl` once for a locale it rejects', () => {
+    const { captured, restore } = captureLogs();
+    const lookup = vi.spyOn(Intl.Collator, 'supportedLocalesOf');
+
+    try {
+      // One `Intl` knows nothing of, and one it throws on.
+      for (let i = 0; i < 3; i += 1) expect(sanitizeLocales('qqq-gamma', 'qqq_gamma')).toEqual(['qqq-gamma', 'qqq_gamma']);
+
+      expect(lookup.mock.calls.filter(([locale]) => locale === 'qqq-gamma')).toHaveLength(1);
+      expect(lookup.mock.calls.filter(([locale]) => locale === 'qqq_gamma')).toHaveLength(1);
+    } finally {
+      lookup.mockRestore();
+      restore();
+    }
+
+    expect(captured.warn.filter(({ message }) => message.includes('qqq-gamma'))).toHaveLength(3);
+    expect(captured.warn.filter(({ message }) => message.includes('qqq_gamma'))).toHaveLength(3);
   });
   it('`sanitizeLocales` does not let a non-string input poison a string key', () => {
     const { restore } = captureLogs();
