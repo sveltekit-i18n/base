@@ -8911,6 +8911,39 @@ describe('utils', () => {
     expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
     expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
   });
+  it('`resolveLoaders` resolves many descriptors in bounded time', () => {
+    const loader = async () => ({});
+    const loaders = Array.from({ length: 40000 }, (_, i) => ({ locale: 'en', namespace: `ns${i}`, loader }));
+    const start = performance.now();
+    const resolvedLoaders = resolveLoaders(loaders);
+
+    // Milliseconds when each descriptor is appended once; seconds when the list is copied per descriptor.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(resolvedLoaders).toHaveLength(40000);
+  });
+  it('`resolveLoaders` describes a descriptor\'s routes once per call, however many locales it lists', () => {
+    let described = 0;
+
+    class Counted extends RegExp {
+      override toString() {
+        described += 1;
+
+        return super.toString();
+      }
+    }
+
+    const loader = async () => ({});
+    const routes: Array<string | RegExp> = ['/', new Counted('^/home$')];
+    const loaders = [{ locale: ['en', 'cs', 'de'], namespace: 'home', routes, loader }];
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/']])));
+    expect(described).toBe(1);
+
+    routes.push('/about');
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/', 's:/about']])));
+    expect(described).toBe(2);
+  });
 });
 
 describe('routePrefix', () => {
