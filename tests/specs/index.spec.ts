@@ -1068,6 +1068,53 @@ describe('i18n instance', () => {
 
       expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
     });
+    it('serves a navigation from the records in time independent of the other locales\' loaders', async () => {
+      const visited = async (count: number) => {
+        const locales = Array.from({ length: count }, (_, index) => `l${index}`);
+        const instance = new i18n({
+          parser,
+          log,
+          sanitizeLocales: false,
+          loaders: Array.from({ length: 100 }, (_, index) => ({
+            locale: locales,
+            namespace: `n${index}`,
+            ...(index % 2 ? { routes: [`/r${index % 10}`] } : {}),
+            loader: async () => ({ key: 'value' }),
+          })),
+        });
+
+        await instance.loadTranslations('l0', '/r0');
+        for (let route = 1; route < 10; route += 1) await instance.setRoute(`/r${route}`);
+
+        return instance;
+      };
+      const navigate = async (instance: I18n) => {
+        const start = performance.now();
+
+        for (let step = 0; step < 100; step += 1) await instance.setRoute(`/r${step % 10}`);
+
+        return performance.now() - start;
+      };
+
+      const one = await visited(1);
+      const many = await visited(100);
+      const best = { one: Infinity, many: Infinity };
+
+      // Alternating rounds after an untimed one, so warm-up and load weigh on both alike.
+      for (let round = 0; round < 11; round += 1) {
+        const timeOne = await navigate(one);
+        const timeMany = await navigate(many);
+
+        if (round > 0) {
+          best.one = Math.min(best.one, timeOne);
+          best.many = Math.min(best.many, timeMany);
+        }
+      }
+
+      expect(many.locale).toBe('l0');
+      // About even when a navigation walks the loaders of its locale; dozens of times slower when it walks every locale's.
+      expect(best.many).toBeLessThan(best.one * 8);
+    });
 
     it('drops an older load for other params once the route returned to the params it holds', async () => {
       const resolvers: Record<string, () => void> = {};
@@ -5338,6 +5385,34 @@ describe('i18n loadNamespace', () => {
     await instance.loadNamespace('editor');
 
     expect(calls.editor).toBeUndefined();
+  });
+
+  it('does not hand a route trigger the control flow of a namespace load that selected other loaders', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const redirect: unknown = { status: 303, location: '/login' };
+    let runs = 0;
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { locale: 'en', namespace: 'x', routes: ['/a'], loader: async () => { runs += 1; if (runs > 1) await gate; return { a: 'A' }; } },
+        { locale: 'en', namespace: 'x', routes: ['/other'], loader: async () => { await gate; throw redirect; } },
+        { locale: 'en', namespace: 'y', routes: ['/a'], loader: async () => ({ d: 'D' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/a');
+    instance.invalidate('en', 'x');
+
+    const warm = instance.loadNamespace('x');
+    const navigation = instance.setRoute('/a');
+
+    release();
+
+    await expect(warm).rejects.toMatchObject({ status: 303 });
+    await expect(navigation).resolves.toBeUndefined();
+    expect(instance.locale).toBe('en');
   });
 });
 

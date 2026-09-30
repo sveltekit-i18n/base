@@ -99,6 +99,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   `invalidate` and `destroy`.
   There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
+  On the server Svelte memoizes a `$derived` only when it is created during a
+  render, which the core's instances are not, so what a derived walks over
+  every loader is memoized by identity (`locales`), and a cache of per-config
+  state is keyed by the config it read, never reset by the config's writer: a
+  discarded `fork()` keeps plain fields but not the state write.
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
   `setRoute`/`loadTranslations`/`loadNamespace` start loads directly and
   return the promise of the MATCHING load — the in-flight key is what a
