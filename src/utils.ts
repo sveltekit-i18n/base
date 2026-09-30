@@ -64,9 +64,13 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
 };
 
 // `Intl.Collator.supportedLocalesOf` is comparatively expensive and locales
-// repeat constantly — per loader on every load trigger, per lookup.
+// repeat constantly — per loader on every load trigger, per lookup. A locale
+// Intl rejects is remembered too: its data is fixed for the life of the realm,
+// as the remembered hits already assume. It is still reported on every call,
+// so the warning reaches whichever logger and level is installed at the time.
 const LOCALE_CACHE_LIMIT = 1000;
-const sanitizedLocaleCache = new Map<string, string>();
+type SanitizedLocale = { locale: Config.Locale; nonStandard?: true };
+const sanitizedLocaleCache = new Map<string, SanitizedLocale>();
 
 // Insertion order is the eviction order, so reinserting on a hit makes it
 // least-recently-used: a flood of visitor-supplied locales evicts itself
@@ -82,7 +86,7 @@ const recallSanitizedLocale = (locale: string) => {
   return cached;
 };
 
-const rememberSanitizedLocale = (locale: string, sanitized: string) => {
+const rememberSanitizedLocale = (locale: string, sanitized: SanitizedLocale) => {
   if (sanitizedLocaleCache.size >= LOCALE_CACHE_LIMIT) {
     sanitizedLocaleCache.delete(sanitizedLocaleCache.keys().next().value as string);
   }
@@ -98,33 +102,31 @@ const mapLocales = (transform: (locale: any) => Config.Locale): Sanitizer => (..
   return locales.filter((locale) => !!locale).map(transform);
 };
 
+const sanitizeLocale = (locale: any): SanitizedLocale => {
+  try {
+    const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
+
+    if (sanitized) return { locale: sanitized };
+  } catch { /* reported as non-standard */ }
+
+  return { locale: `${locale}`.toLowerCase(), nonStandard: true };
+};
+
 export const sanitizeLocales = mapLocales((locale) => {
   // Only a string is a faithful key for itself.
   const cacheable = typeof locale === 'string';
 
-  if (cacheable) {
-    const cached = recallSanitizedLocale(locale);
+  let sanitized = cacheable ? recallSanitizedLocale(locale) : undefined;
 
-    if (cached !== undefined) return cached;
+  if (!sanitized) {
+    sanitized = sanitizeLocale(locale);
+
+    if (cacheable) rememberSanitizedLocale(locale, sanitized);
   }
 
-  let current = `${locale}`.toLowerCase();
-  try {
-    const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
+  if (sanitized.nonStandard) logger.warn(`'${locale}' locale is non-standard.`);
 
-    if (!sanitized) throw new Error();
-
-    current = sanitized;
-
-    if (cacheable) rememberSanitizedLocale(locale, current);
-  } catch {
-    // Deliberately not remembered: a locale Intl does not know yet can
-    // recover, and the warning stays tied to the call rather than to
-    // whichever logger was installed first.
-    logger.warn(`'${locale}' locale is non-standard.`);
-  }
-
-  return current;
+  return sanitized.locale;
 });
 
 // The normalization `config.sanitizeLocales` asks for. A custom transform is
