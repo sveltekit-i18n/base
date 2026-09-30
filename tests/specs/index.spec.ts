@@ -736,6 +736,18 @@ describe('i18n instance', () => {
     expect(instance.t('common.menu.home')).toBe('Domov');
     expect(warnSpy).not.toHaveBeenCalled();
   });
+  it('merges a large catalogue in bounded time, into an empty table and over a full one', () => {
+    const instance = new i18n({ parser, log });
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`key${i}`, `${i}`]));
+    const start = performance.now();
+
+    instance.addTranslations({ en: { common: data } });
+    instance.addTranslations({ en: { common: data } });
+    // Milliseconds when each key is merged once; tens of seconds when the table is rebuilt per key.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(Object.keys(instance.translations.en)).toHaveLength(10000);
+    expect(instance.translations.en['common.key9999']).toBe('9999');
+  });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
     const instance = new i18n({
