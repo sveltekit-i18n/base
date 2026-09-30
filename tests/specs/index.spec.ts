@@ -2174,6 +2174,84 @@ describe('i18n instance', () => {
 
     expect(t('greeting')).toBe('Ahoj');
   });
+
+  describe.skipIf(!effectsRun)('re-runs a destructured `l` reader once the table of its locale arrives', () => {
+    it.each([
+      ['the key', {}, 'greeting'],
+      ['the fallback', { fallbackLocale: 'en' }, 'Hello'],
+    ])('after it read %s', async (_, options, before) => {
+      const instance = new i18n({ parser: valueParser, log, ...options, translations: { en: { greeting: 'Hello' } } });
+
+      await instance.loadTranslations('en', '/');
+
+      const { l } = instance;
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(l('de', 'greeting')); });
+
+      instance.addTranslations({ de: { greeting: 'Hallo' } });
+      flushSync();
+      stop();
+
+      expect(seen).toEqual([before, 'Hallo']);
+    });
+  });
+
+  // A custom `preprocess` may hand back the object it returned before, changed
+  // in place: a table that keeps its identity still changes what `t` returns.
+  describe.skipIf(!effectsRun)('re-runs `t` readers when a custom `preprocess` hands back its previous output, changed', () => {
+    it('as a `cache: false` loader delivers again', async () => {
+      const output: Record<string, string> = {};
+      let delivered = 0;
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        preprocess: (input: any) => Object.assign(output, { 'c.hi': input.c.hi }),
+        loaders: [{ namespace: 'c', locale: 'en', cache: false, loader: async () => ({ hi: `Hi ${delivered += 1}` }) }],
+      });
+
+      await instance.loadTranslations('en', '/');
+
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(instance.t('c.hi')); });
+
+      await instance.loadTranslations('en', '/');
+      flushSync();
+      await instance.loadTranslations('en', '/');
+      flushSync();
+      stop();
+
+      expect(seen).toEqual(['Hi 1', 'Hi 2', 'Hi 3']);
+    });
+    it('as another locale\'s write lands in the object two re-delivered tables share', async () => {
+      const output: Record<string, any> = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        preprocess: (input: any) => Object.assign(output, input),
+        loaders: ['en', 'de'].map((locale) => ({ locale, namespace: 'ns', cache: false, loader: async () => ({ k: `${locale}-k` }) })),
+      });
+
+      // A second delivery replaces the first: each table is then the object
+      // `preprocess` handed back, one for both locales.
+      await instance.setRoute('/');
+      await instance.setLocale('de');
+      await instance.setLocale('de');
+      await instance.loadTranslations('en', '/', { activate: false });
+      await instance.loadTranslations('en', '/', { activate: false });
+
+      expect(instance.translations.en).toBe(instance.translations.de);
+
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(instance.t('x')); });
+
+      instance.addTranslations({ en: { x: 'X' } });
+      flushSync();
+      stop();
+
+      expect(instance.t('x')).toBe('X');
+      expect(seen.at(-1)).toBe('X');
+    });
+  });
 });
 
 describe('i18n locale keys', () => {

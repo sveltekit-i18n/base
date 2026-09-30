@@ -26,8 +26,8 @@ const sourceImports = (generate: Generate, src: string) => Object.entries(pkg.im
 // `source` is the directory the imports resolve to: this package's `src/`, or
 // another tree of it, which the benchmark measures against this one.
 export const compiled = (
-  test: { include: string[]; exclude?: string[]; fileParallelism?: boolean; execArgv?: string[] },
-  { source = true, generates = ['server', 'client'] }: { source?: boolean | string; generates?: readonly Generate[] } = {},
+  test: { name?: string; environment?: string; include: string[]; exclude?: string[]; fileParallelism?: boolean; execArgv?: string[] },
+  { source = true, generates = ['server', 'client'], asyncMode = false }: { source?: boolean | string; generates?: readonly Generate[]; asyncMode?: boolean } = {},
 ) => generates.map((generate) => ({
   resolve: {
     ...(generate === 'client' ? { conditions: ['browser'] } : {}),
@@ -35,8 +35,10 @@ export const compiled = (
   },
   ...(generate === 'client' ? { ssr: { resolve: { conditions: ['browser'] } } } : {}),
   plugins: [
-    // Compiles the `.svelte.ts` rune modules the core is written in.
-    svelte({ dynamicCompileOptions: () => ({ generate }) }),
+    // Compiles the `.svelte.ts` rune modules the core is written in, and, for
+    // the async project, a `.async.svelte` component with Svelte's async mode,
+    // which its import switches on for the spec that mounts it.
+    svelte({ dynamicCompileOptions: ({ filename }) => ({ generate, ...(asyncMode && filename.endsWith('.async.svelte') ? { experimental: { async: true } } : {}) }) }),
     // Workaround for vite-plugin-svelte 7.3 on rolldown-vite 8: the plugin
     // assigns its module-compile `transform.filter` in `configResolved`, which
     // the native filter pipeline snapshots too early — rune modules then reach
@@ -48,12 +50,19 @@ export const compiled = (
   test: { name: generate, environment: 'node', ...test },
 }));
 
+const asyncSpec = 'tests/specs/async.spec.ts';
+
 export default defineConfig({
   test: {
-    projects: compiled({
-      include: ['tests/specs/**/*.spec.ts'],
-      // The dist spec needs a fresh build first; it runs via `npm run test:dist`.
-      exclude: ['tests/specs/dist.spec.ts'],
-    }),
+    projects: [
+      ...compiled({
+        include: ['tests/specs/**/*.spec.ts'],
+        // The dist spec needs a fresh build first; it runs via `npm run test:dist`.
+        exclude: ['tests/specs/dist.spec.ts', asyncSpec],
+      }),
+      // Svelte's async batching, which SvelteKit's remote functions switch on:
+      // a client compile in a DOM.
+      ...compiled({ name: 'async', environment: 'happy-dom', include: [asyncSpec] }, { generates: ['client'], asyncMode: true }),
+    ],
   },
 });
