@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, maskOutputKeys, maskTranslations, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, maskOutputKeys, maskTranslations, matchLocale, omitProtoKeys, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -747,6 +747,34 @@ describe('i18n instance', () => {
     expect(performance.now() - start).toBeLessThan(1000);
     expect(Object.keys(instance.translations.en)).toHaveLength(10000);
     expect(instance.translations.en['common.key9999']).toBe('9999');
+  });
+  it('seeds over a wide namespace a loader delivered in bounded time, in either spelling of a key', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`g.key${i}`, `${i}`]));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => data },
+        { namespace: 'common', locale: 'en', cache: false, loader: async () => ({ extra: 'E' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    const start = performance.now();
+
+    instance.addTranslations({ en: { common: { 'g.key0': 'flat' } } });
+    instance.addTranslations({ en: { common: { g: { key1: 'nested' } } } });
+    // Milliseconds when each masked level is built once; about a minute when it is rebuilt per key.
+    expect(performance.now() - start).toBeLessThan(1000);
+
+    // The `cache: false` loader delivers again, so the namespace is rebuilt from the masked deliveries.
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.translations.en['common.extra']).toBe('E');
+    expect(instance.translations.en['common.g.key0']).toBe('flat');
+    expect(instance.translations.en['common.g.key1']).toBe('nested');
+    expect(instance.translations.en['common.g.key9999']).toBe('9999');
   });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
@@ -7637,6 +7665,22 @@ describe('i18n snapshot', () => {
     expect(instance.snapshot({ records: true }).records).toEqual([{ id: '["en","common"]' }]);
   });
 
+  it('leaves a `__proto__` key out of a wide level in bounded time', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`key${i}`, `${i}`]));
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) }] });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { common: JSON.parse(JSON.stringify(data).replace('{', '{"__proto__": "x", ')) } });
+
+    const start = performance.now();
+    const snapshot = instance.snapshot();
+
+    // Milliseconds when the level is built once; tens of seconds when it is rebuilt per key.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(Object.keys(snapshot.en.common)).toHaveLength(10000);
+    expect(Object.hasOwn(snapshot.en.common, '__proto__')).toBe(false);
+  });
+
   it('records no loader whose data lost a literal `__proto__` key, so the client loads it again', async () => {
     const calls: string[] = [];
     const loaders = [
@@ -8788,6 +8832,33 @@ describe('utils', () => {
 
     expect(Object.getPrototypeOf(masked)).toBe(Object.prototype);
     expect(read(masked, '__proto__')).toEqual({ b: 'y' });
+  });
+
+  it('`omitProtoKeys` leaves a `__proto__` key out of a deep branch in bounded time, and the clean siblings as they are', () => {
+    const level = () => Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`key${i}`, `${i}`]));
+    let deep: any = JSON.parse('{"__proto__": "x", "a": "y"}');
+
+    for (let depth = 0; depth < 1000; depth += 1) deep = { ...level(), k: deep };
+
+    // eslint-disable-next-line no-sparse-arrays
+    const clean = { nested: level(), list: ['a', , 'c'] };
+    const start = performance.now();
+    const result = omitProtoKeys({ deep, clean });
+
+    // Milliseconds when each level is scanned and rebuilt once; seconds when every rebuilt level scans its branch again.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result.clean).toBe(clean);
+
+    let bottom = result.deep;
+
+    for (let depth = 0; depth < 1000; depth += 1) bottom = bottom.k;
+
+    expect(Object.keys(bottom)).toEqual(['a']);
+
+    // eslint-disable-next-line no-sparse-arrays
+    const table = { a: { b: 'c' }, n: [1, , 3] };
+
+    expect(omitProtoKeys(table)).toBe(table);
   });
 
   it('publishes the reusable helpers, and only those', () => {
