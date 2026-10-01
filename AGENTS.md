@@ -448,9 +448,13 @@ green suite only proves what it tests. Every change goes through this cycle:
    call, a parse, a load, a rebuild of the tables, an effect re-run), what it
    retains and whether that stays bounded, what it adds to the bundle a
    consumer ships, and what its types cost the checker. A performance finding
-   is measured by count (calls, rebuilds, re-runs, instantiations, bytes)
-   rather than by wall-clock time, which the CI matrix does not reproduce, and
-   it needs the same concrete scenario as a bug.
+   needs the same concrete scenario as a bug, measured by count (calls,
+   rebuilds, re-runs, instantiations, bytes) and by time: a benchmark of the
+   base branch against the change at a stated input size (seconds per 10,000
+   keys), run on one machine in one session, alternating between the two
+   over repeated samples and reported with its spread. A test pins the
+   count; a time threshold in the suite only catches a blow-up by orders of
+   magnitude, since the CI matrix does not reproduce a timing.
 4. **Ground every claim.** A reviewer proves an assumption from the source
    (the host's code, the engine's behaviour on every runtime the package
    supports) or by reproducing it — never from memory.
