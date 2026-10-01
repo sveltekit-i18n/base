@@ -443,6 +443,14 @@ green suite only proves what it tests. Every change goes through this cycle:
 3. **Review**, its scope picked by the change's risk and by the planned issues
    it touches or will meet. Each finding needs a concrete scenario (input →
    wrong output) and must survive independent skeptics trying to refute it.
+   Every round also reviews performance, at runtime and in the type checker,
+   against the base branch: what the change adds to a hot path (a `t`/`l`
+   call, a parse, a load, a rebuild of the tables, an effect re-run), what it
+   retains and whether that stays bounded, what it adds to the bundle a
+   consumer ships, and what its types cost the checker. A performance finding
+   is measured by count (calls, rebuilds, re-runs, instantiations, bytes)
+   rather than by wall-clock time, which the CI matrix does not reproduce, and
+   it needs the same concrete scenario as a bug.
 4. **Ground every claim.** A reviewer proves an assumption from the source
    (the host's code, the engine's behaviour on every runtime the package
    supports) or by reproducing it — never from memory.
