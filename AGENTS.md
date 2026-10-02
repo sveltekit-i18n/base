@@ -506,7 +506,10 @@ exactly, so a dependency released after it forces another release of it.
   the family, a `lib` example or the site's playground that runs it, and
   for each release, the one that runs what the release adds. A package or a
   surface none of them runs gets one in the same plan, before its publish
-  — a new extension or parser before its first release.
+  — a new extension or parser before its first release. A new example is
+  named wherever the examples are listed or counted (`lib`'s `README.md`,
+  `examples/README.md`, its `AGENTS.md`, the site's examples page, `docs/`),
+  and `examples.yml` builds it.
 - **Close the loop.** After a publish, confirm the version on npm
   (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, the
   examples and the site, the lockfiles of the other repositories — as part of
