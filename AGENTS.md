@@ -502,6 +502,11 @@ exactly, so a dependency released after it forces another release of it.
   to. Each statement describes the version being published, and each link
   resolves: no dead page or anchor, and no page describing another version.
   A mismatch is fixed before the publish, never in the next release.
+- **Every package is shown in use.** The plan lists, for every package of
+  the family, a `lib` example or the site's playground that runs it, and
+  for each release, the one that runs what the release adds. A package or a
+  surface none of them runs gets one in the same plan, before its publish
+  — a new extension or parser before its first release.
 - **Close the loop.** After a publish, confirm the version on npm
   (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, the
   examples and the site, the lockfiles of the other repositories — as part of
