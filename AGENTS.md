@@ -429,8 +429,9 @@ differently.**
 - Before each code commit: `npm run build` **and** `npm test` pass. Report real
   output — never claim done without running them.
 - Type/lint/build errors never reach a commit, not even WIP.
-- Doc-only changes skip the build but still verify links resolve and markdown
-  renders.
+- Doc-only changes skip the build and the review cycle below, but each
+  statement is checked against the code it describes, and links resolve and
+  markdown renders.
 
 **Nothing merges unreviewed.** The goal is fewest bugs in the product; a
 green suite only proves what it tests. Every change goes through this cycle:
