@@ -27,3 +27,17 @@ it('the server load', async () => {
 
   record(`the server load, a page render (${n(KEYS)} keys)`, 'time', 'ms', await timeAsync(() => load(event())));
 }, 600_000);
+
+it('the universal load', async () => {
+  const data = table(KEYS, 'namespaces');
+  const { load } = defineI18n({ parser, log, loaders: loaders(data, ['en', 'cs']) });
+  let server = await load(event());
+  const universal = () => load({ url: new URL('https://x.test/'), params: {}, route: { id: '/' }, data: server });
+
+  expect((await universal()).i18n.locale).toBe('cs');
+
+  // Each round renders a page of its own: the server load builds the instance the universal one renders from.
+  record(`the universal load, a page render after its server load (${n(KEYS)} keys)`, 'time', 'ms', await timeAsync(universal, {
+    setup: async () => { server = await load(event()); },
+  }));
+}, 600_000);
