@@ -61,12 +61,18 @@ jobs:
           # The bump picks the dist-tag: a prerelease can only reach `next`,
           # and only a released version can move `latest`.
           if [ '${{ inputs.version }}' = next ]; then
-            TAG="$(npm version prerelease --preid=next | tail -n 1)"
+            TAG="$(npm version prerelease --preid=next --no-git-tag-version | tail -n 1)"
             DIST_TAG=next
           else
-            TAG="$(npm version '${{ inputs.version }}' | tail -n 1)"
+            TAG="$(npm version '${{ inputs.version }}' --no-git-tag-version | tail -n 1)"
             DIST_TAG=latest
           fi
+          # The release commit carries the benchmark of the version it
+          # releases; commit and tag are written as `npm version` writes them.
+          npm run bench -- --write
+          git add package.json package-lock.json BENCH.md
+          git commit -m "${TAG#v}"
+          git tag -a "$TAG" -m "${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "dist-tag=$DIST_TAG" >> "$GITHUB_OUTPUT"
 
