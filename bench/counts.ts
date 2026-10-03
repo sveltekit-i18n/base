@@ -1,5 +1,5 @@
 import { I18n, type Translations } from '@sveltekit-i18n/base';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 
 import { effect, effectsRun, flushSync } from '../tests/utils/effect.svelte.js';
 
@@ -55,6 +55,34 @@ it('loader calls', async () => {
   calls = 0;
   await i18n.loadTranslations('en');
   record('loader calls, loading 100 loaded namespaces again', 'count', 'calls', calls);
+});
+
+it('weak collection entries', async () => {
+  const i18n = new I18n({
+    parser: counting().parser,
+    log,
+    loaders: [{ locale: 'en', namespace: 'item', routes: [/^\/item\/(?<id>\d+)$/], loader: async ({ params }) => ({ id: params.id ?? '' }) }],
+  });
+
+  await i18n.loadTranslations('en', '/item/0');
+
+  // A navigation to new params replaces the table set, so a memo keyed by it
+  // misses on each one: an entry per navigation only adds a lookup, and
+  // memory held until a later collection. The WeakSet spy first: spying
+  // registers the spy in a WeakMap.
+  const added = vi.spyOn(WeakSet.prototype, 'add');
+  const set = vi.spyOn(WeakMap.prototype, 'set');
+
+  try {
+    for (let id = 1; id <= 1_000; id++) await i18n.setRoute(`/item/${id}`);
+
+    record('weak collection entries, 1,000 navigations to new params', 'count', 'entries', set.mock.calls.length + added.mock.calls.length);
+  } finally {
+    set.mockRestore();
+    added.mockRestore();
+  }
+
+  expect(i18n.translations.en).toEqual({ 'item.id': '1000' });
 });
 
 it('effect runs', async () => {
