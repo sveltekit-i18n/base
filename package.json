@@ -42,6 +42,7 @@
     "build": "svelte-package -i src -o dist",
     "prepublishOnly": "npm run build",
     "lint": "eslint --fix .",
+    "bench": "node bench/run.ts",
     "prepare": "simple-git-hooks"
   },
   "files": [

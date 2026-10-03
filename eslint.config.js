@@ -46,6 +46,7 @@ export default tseslint.config(
           '**/*.config.ts',
           '**/*.config.js',
           'tests/**',
+          'bench/**',
         ],
       }],
     },
@@ -75,7 +76,7 @@ export default tseslint.config(
   },
   {
     // Mock loaders are async by the Loader contract with nothing to await.
-    files: ['tests/**'],
+    files: ['tests/**', 'bench/**'],
     rules: {
       '@typescript-eslint/require-await': 'off',
     },

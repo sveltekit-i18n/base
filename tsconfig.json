@@ -8,7 +8,11 @@
     // a target by condition; the source is what gets checked.
     "paths": {
       "#kit-env": ["./src/kit/env.ts"],
-      "#kit-server": ["./src/kit/server.ts"]
+      "#kit-server": ["./src/kit/server.ts"],
+      // The benchmark imports the package by name, which its runner aliases
+      // to the tree it measures.
+      "@sveltekit-i18n/base": ["./src/index.ts"],
+      "@sveltekit-i18n/base/kit": ["./src/exports/kit.ts"]
     },
     "sourceMap": false,
     "strict": true,
@@ -29,10 +33,12 @@
   "include": [
     "./src",
     "./tests",
+    "./bench",
     "./*.js",
     "./*.ts"
   ],
   // Programs of their own, each with its own registration: one here would
-  // type every schema-less instance in the suite.
-  "exclude": ["./tests/types"]
+  // type every schema-less instance in the suite. The benchmark's probe
+  // resolves the core to the tree it measures.
+  "exclude": ["./tests/types", "./bench/types"]
 }

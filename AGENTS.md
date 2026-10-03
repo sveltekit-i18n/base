@@ -37,7 +37,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts` and the test components), environment `node` (`happy-dom` for `kit.spec.ts`); every suite runs twice, the rune modules compiled for the server and for the client (which also resolves with the `browser` condition, so `svelte` runs effects and `#kit-*` picks the browser half); each project aliases the `#kit-*` imports to the source it runs, and `tsconfig.json` maps them with `paths` |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
-| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg |
+| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg; `bench.yml` — the benchmark of a pull request against its base, re-run by `bench-label.yml` when its `bench-accepted` label changes |
 
 ## Commands
 
@@ -48,9 +48,10 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `npm run build` | `svelte-package` build to `dist/` |
 | `npm test` | vitest suite (runs `build` and `typecheck` first) |
 | `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
-| `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs |
+| `npm run typecheck` | `tsc --noEmit` over `src`, `tests`, `bench` and the root `.ts` configs |
 | `npm run lint` | `eslint --fix .` (also the pre-commit hook, via `simple-git-hooks`) |
 | `npm run prepare` | installs the git hooks (`simple-git-hooks`); npm runs it automatically after `npm install` |
+| `npm run bench` | the benchmark of this tree; `-- --compare <dir>` measures it against the package checked out at `<dir>` |
 
 ## Repository map
 
@@ -80,6 +81,9 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
 | `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile (see the rolldown filter workaround note inside) |
+| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts` and `kit.ts` measure its rows |
+| `vitest.bench.config.ts` | the benchmark's runner config — one project per run, aliased to the tree it measures |
+| `BENCH.md` | the benchmark of the last release, written into its release commit by `publish.yml` |
 
 ## Architecture you must respect
 
@@ -455,7 +459,16 @@ green suite only proves what it tests. Every change goes through this cycle:
    keys), run on one machine in one session, alternating between the two
    over repeated samples and reported with its spread. A test pins the
    count; a time threshold in the suite only catches a blow-up by orders of
-   magnitude, since the CI matrix does not reproduce a timing.
+   magnitude, since the CI matrix does not reproduce a timing. The `Bench`
+   job runs `bench/` that way on every pull request that touches what it
+   measures (the `paths` of `bench.yml`) and posts the table as its comment.
+   A project of the branch that fails fails the job; so does the comparison —
+   a count that grew, a row gone missing, a project of the base that failed —
+   unless the pull request carries the `bench-accepted` label (`bench-label.yml`
+   re-runs the job when the label changes; where GitHub refuses the re-run, a
+   push or a reopen of the pull request runs it anew). A size that
+   grew and a time beyond its spread are flagged for this review. A hot path
+   the rows do not cover gets a row in the same pull request.
 4. **Ground every claim.** A reviewer proves an assumption from the source
    (the host's code, the engine's behaviour on every runtime the package
    supports) or by reproducing it — never from memory.
