@@ -10,23 +10,14 @@ export const hasOwn = (obj: any, key: PropertyKey): boolean => obj != null && Ob
 // property, otherwise undefined. Centralizes the prototype-safe table lookup.
 export const read = <T = any>(obj: any, key: PropertyKey): T | undefined => (hasOwn(obj, key) ? obj[key] : undefined);
 
-export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Output>({
-  parser,
-  key,
-  params,
-  translations,
-  locale,
-  fallbackLocale,
-  ...rest
-}: {
-  parser: Parser.T<P, O>;
-  key: string;
-  params: Parser.Params;
-  translations: Translations.SerializedTranslations;
-  locale: Translations.Locales[number] | undefined;
-  fallbackLocale?: Config.FallbackLocale;
-  fallbackValue?: Config.FallbackValue;
-}): Translations.Translated<O> => {
+export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Output>(
+  config: Pick<Config.T<P, O>, 'parser' | 'fallbackLocale' | 'fallbackValue'> | undefined,
+  locale: Translations.Locales[number] | undefined,
+  key: string,
+  params: Parser.Params,
+  table: DotNotation.Input,
+  fallbackTable: DotNotation.Input,
+): Translations.Translated<O> => {
   if (!key) {
     logger.warn(`No translation key provided ('${locale}' locale). Skipping translation...`);
     return '';
@@ -37,19 +28,18 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     return '';
   }
 
-  const localeTranslations = read(translations, locale);
-  let text = read(localeTranslations, key);
+  const fallbackLocale = config?.fallbackLocale;
+  let text = read(table, key);
 
   if (fallbackLocale && text === undefined) {
     logger.debug(`No translation provided for '${key}' key in locale '${locale}'. Trying fallback '${fallbackLocale}'`);
-    const fallbackTranslations = read(translations, fallbackLocale);
-    text = read(fallbackTranslations, key);
+    text = read(fallbackTable, key);
   }
 
   if (text === undefined) {
     logger.debug(`No translation provided for '${key}' key in fallback '${fallbackLocale}'.`);
-    if (hasOwn(rest, 'fallbackValue')) {
-      return rest.fallbackValue;
+    if (hasOwn(config, 'fallbackValue')) {
+      return config?.fallbackValue;
     }
     logger.warn(`No translation nor fallback found for '${key}' .`);
 
@@ -57,6 +47,8 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
     // key is what makes a missing translation visible instead of blank.
     return key;
   }
+
+  const parser = config?.parser;
 
   if (!parser || typeof parser.parse !== 'function') {
     // Reached on every call while no parser is set (e.g. before config loads),
@@ -72,9 +64,13 @@ export const translate = <P extends Parser.Params = Parser.Params, O = Parser.Ou
 };
 
 // `Intl.Collator.supportedLocalesOf` is comparatively expensive and locales
-// repeat constantly — per loader on every load trigger, per lookup.
+// repeat constantly — per loader on every load trigger, per lookup. A locale
+// Intl rejects is remembered too: its data is fixed for the life of the realm,
+// as the remembered hits already assume. It is still reported on every call,
+// so the warning reaches whichever logger and level is installed at the time.
 const LOCALE_CACHE_LIMIT = 1000;
-const sanitizedLocaleCache = new Map<string, string>();
+type SanitizedLocale = { locale: Config.Locale; nonStandard?: true };
+const sanitizedLocaleCache = new Map<string, SanitizedLocale>();
 
 // Insertion order is the eviction order, so reinserting on a hit makes it
 // least-recently-used: a flood of visitor-supplied locales evicts itself
@@ -90,7 +86,7 @@ const recallSanitizedLocale = (locale: string) => {
   return cached;
 };
 
-const rememberSanitizedLocale = (locale: string, sanitized: string) => {
+const rememberSanitizedLocale = (locale: string, sanitized: SanitizedLocale) => {
   if (sanitizedLocaleCache.size >= LOCALE_CACHE_LIMIT) {
     sanitizedLocaleCache.delete(sanitizedLocaleCache.keys().next().value as string);
   }
@@ -106,33 +102,31 @@ const mapLocales = (transform: (locale: any) => Config.Locale): Sanitizer => (..
   return locales.filter((locale) => !!locale).map(transform);
 };
 
+const sanitizeLocale = (locale: any): SanitizedLocale => {
+  try {
+    const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
+
+    if (sanitized) return { locale: sanitized };
+  } catch { /* reported as non-standard */ }
+
+  return { locale: `${locale}`.toLowerCase(), nonStandard: true };
+};
+
 export const sanitizeLocales = mapLocales((locale) => {
   // Only a string is a faithful key for itself.
   const cacheable = typeof locale === 'string';
 
-  if (cacheable) {
-    const cached = recallSanitizedLocale(locale);
+  let sanitized = cacheable ? recallSanitizedLocale(locale) : undefined;
 
-    if (cached !== undefined) return cached;
+  if (!sanitized) {
+    sanitized = sanitizeLocale(locale);
+
+    if (cacheable) rememberSanitizedLocale(locale, sanitized);
   }
 
-  let current = `${locale}`.toLowerCase();
-  try {
-    const [sanitized] = Intl.Collator.supportedLocalesOf(locale);
+  if (sanitized.nonStandard) logger.warn(`'${locale}' locale is non-standard.`);
 
-    if (!sanitized) throw new Error();
-
-    current = sanitized;
-
-    if (cacheable) rememberSanitizedLocale(locale, current);
-  } catch {
-    // Deliberately not remembered: a locale Intl does not know yet can
-    // recover, and the warning stays tied to the call rather than to
-    // whichever logger was installed first.
-    logger.warn(`'${locale}' locale is non-standard.`);
-  }
-
-  return current;
+  return sanitized.locale;
 });
 
 // The normalization `config.sanitizeLocales` asks for. A custom transform is
@@ -485,6 +479,9 @@ export const routePrefix = (pathname: string, routeId: string | null): string | 
   return at === undefined ? undefined : raw.slice(0, at).map((segment) => `/${segment}`).join('');
 };
 
+/** Whether `config.preprocess` is the built-in dot notation. */
+export const dotNotates = (preprocess: Config.T['preprocess']): boolean => typeof preprocess !== 'function' && preprocess !== 'none';
+
 export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) => {
   if (preserveArrays && Array.isArray(input)) {
     return input.map((v) => toDotNotation(v, preserveArrays));
@@ -492,8 +489,9 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
 
   if (input && typeof input === 'object') {
     // Mutated in place (rebuilding per key is quadratic) into a null-prototype
-    // object, then spread once on the way out — a literal '__proto__' key stays
-    // an own property instead of reaching the prototype setter.
+    // object, then given `Object.prototype` once the last key is written — a
+    // spread would copy every key, and a literal '__proto__' key stays an own
+    // property either way instead of reaching the prototype setter.
     const output: any = Object.create(null);
     let hasEntries = false;
 
@@ -514,7 +512,7 @@ export const toDotNotation: DotNotation.T = (input, preserveArrays, parentKey) =
     walk(input, parentKey);
 
     if (hasEntries) {
-      return { ...output };
+      return Object.setPrototypeOf(output, Object.prototype);
     }
 
     return null;
@@ -539,17 +537,34 @@ const describeRoute = (route: Loader.Route): string => {
 
 // The content itself rather than a hash of it: equality stays exact, and the
 // string repeats what a serialized payload already carries, so it compresses
-// with it.
-const loaderId = ({ locale, namespace, routes }: Omit<Loader.Resolved, 'id' | 'loader'>): string => JSON.stringify(
-  routes ? [locale, namespace, routes.map(describeRoute)] : [locale, namespace],
+// with it. The pairs of one descriptor share its `routes`, so each list is
+// described once per resolution rather than once per pair.
+const loaderId = (
+  { locale, namespace, routes }: Omit<Loader.Resolved, 'id' | 'loader'>,
+  describe: (routes: readonly Loader.Route[]) => string[],
+): string => JSON.stringify(
+  routes ? [locale, namespace, describe(routes)] : [locale, namespace],
 );
 
 // A name shared by two loaders would hand one's records to the other, so
 // neither keeps it.
 const withIds = (loaders: Array<Omit<Loader.Resolved, 'id'>>): Loader.Resolved[] => {
+  const described = new Map<readonly Loader.Route[], string[]>();
+  const describe = (routes: readonly Loader.Route[]): string[] => {
+    const known = described.get(routes);
+
+    if (known !== undefined) return known;
+
+    const description = routes.map(describeRoute);
+
+    described.set(routes, description);
+
+    return description;
+  };
+
   const ids = loaders.map((loader) => {
     try {
-      return loaderId(loader);
+      return loaderId(loader, describe);
     } catch (error) {
       logError('Cannot derive an id for a loader.', error);
 
@@ -583,7 +598,9 @@ export const resolveLoaders = (
 ): Loader.Resolved[] => {
   const sanitize = sanitizerFactory(sanitizeLocales);
 
-  return withIds(input.reduce<Array<Omit<Loader.Resolved, 'id'>>>((acc, descriptor) => {
+  const resolved: Array<Omit<Loader.Resolved, 'id'>> = [];
+
+  input.forEach((descriptor) => {
     try {
       const { namespace, key, locale, loader, routes, cache } = descriptor;
 
@@ -602,25 +619,24 @@ export const resolveLoaders = (
       if (!namespaces.length || !locales.length) {
         logger.warn('Skipping a loader that names no locale or no namespace.');
 
-        return acc;
+        return;
       }
 
-      return [
-        ...acc,
-        ...locales.flatMap((pairLocale) => namespaces.map((pairNamespace) => ({
+      locales.forEach((pairLocale) => namespaces.forEach((pairNamespace) => {
+        resolved.push({
           namespace: pairNamespace,
           locale: pairLocale,
           loader,
           routes,
           ...(cache === false ? { cache } : {}),
-        }))),
-      ];
+        });
+      }));
     } catch (error) {
       logError('Skipping a loader that cannot be read.', error);
-
-      return acc;
     }
-  }, []));
+  });
+
+  return withIds(resolved);
 };
 
 const isMergeable = (value: any): boolean => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -645,15 +661,16 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
   }
 
   // Mutated in place (rebuilding per key is quadratic) into a null-prototype
-  // copy of `target`, then spread once on the way out — a literal '__proto__'
-  // key stays an own property instead of reaching the prototype setter.
+  // copy of `target`, then given `Object.prototype` once the last key is
+  // written — a literal '__proto__' key stays an own property instead of
+  // reaching the prototype setter.
   const output: any = Object.assign(Object.create(null), target);
 
   keys.forEach((key) => {
     output[key] = hasOwn(output, key) ? mergeTranslations(read(output, key), read(source, key), `${path}.${key}`, onConflict) : read(source, key);
   });
 
-  return { ...output };
+  return Object.setPrototypeOf(output, Object.prototype);
 };
 
 // What of `target` still shows once `source` is merged over it: the branches
@@ -662,13 +679,13 @@ export const mergeTranslations = (target: any, source: any, path: string, onConf
 export const maskTranslations = (target: any, source: any): any => {
   if (!isMergeable(target) || !isMergeable(source)) return undefined;
 
-  return Object.keys(target).reduce((acc, key) => {
-    if (!hasOwn(source, key)) return { ...acc, [key]: read(target, key) };
+  return Object.fromEntries(Object.keys(target).flatMap((key) => {
+    if (!hasOwn(source, key)) return [[key, read(target, key)]];
 
     const masked = maskTranslations(read(target, key), read(source, key));
 
-    return masked === undefined ? acc : { ...acc, [key]: masked };
-  }, {});
+    return masked === undefined ? [] : [[key, masked]];
+  }));
 };
 
 // What of `target`, dot-notated under `prefix`, still shows once `keys` are
@@ -695,7 +712,7 @@ export const maskOutputKeys = (target: any, keys: ReadonlySet<string>, prefix: s
     if (Array.isArray(target) && entries.every(([key], index) => key === `${index}`)) return entries.map(([, value]) => value);
   }
 
-  return entries.reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+  return Object.fromEntries(entries);
 };
 
 const isPlainObject = (value: any): boolean => {
@@ -706,24 +723,32 @@ const isPlainObject = (value: any): boolean => {
   return proto === Object.prototype || proto === null;
 };
 
-// devalue, which SvelteKit serializes load data with, refuses an object with
-// an own '__proto__' key. Branches without one are returned as they are.
-export const omitProtoKeys = (value: any): any => {
-  if (Array.isArray(value)) {
-    const items = value.map(omitProtoKeys);
+const holdsProtoKey = (value: any): boolean => (Array.isArray(value)
+  ? value.some(holdsProtoKey)
+  : isPlainObject(value) && Object.keys(value).some((key) => key === '__proto__' || holdsProtoKey(value[key])));
 
-    return items.some((item, i) => item !== value[i]) ? items : value;
+const withoutProtoKeys = (value: any): any => {
+  if (Array.isArray(value)) {
+    const items = value.map(withoutProtoKeys);
+
+    return items.some((item, i) => !Object.is(item, value[i])) ? items : value;
   }
 
   if (!isPlainObject(value)) return value;
 
   const keys = Object.keys(value);
-  const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, omitProtoKeys(value[key])] as const);
+  const entries = keys.filter((key) => key !== '__proto__').map((key) => [key, withoutProtoKeys(value[key])] as const);
 
-  if (entries.length === keys.length && entries.every(([key, item]) => item === value[key])) return value;
+  if (entries.length === keys.length && entries.every(([key, item]) => Object.is(item, value[key]))) return value;
 
-  return entries.reduce((acc, [key, item]) => ({ ...acc, [key]: item }), {});
+  return Object.fromEntries(entries);
 };
+
+// devalue, which SvelteKit serializes load data with, refuses an object with
+// an own '__proto__' key. Branches without one are returned as they are. A
+// snapshot runs this over every table, so a scan that copies nothing decides
+// first whether there is anything to leave out.
+export const omitProtoKeys = (value: any): any => (holdsProtoKey(value) ? withoutProtoKeys(value) : value);
 
 const reportLoaderConflict = (path: string) => {
   logger.warn(`Conflicting translations for '${path}'. Keeping the value of the last loader.`);
@@ -753,12 +778,16 @@ export const servedLocales = (loaders: readonly Loader.Resolved[], tables: Trans
 ]);
 
 /**
- * The locales a config serves, sanitized as an instance built from it
- * sanitizes them. Resolving the loaders logs what is wrong with them, so a
- * caller runs this once per config.
+ * The locales a config serves, from its loaders as `resolveLoaders` resolved
+ * them, sanitized as an instance built from it sanitizes them. Resolving the
+ * loaders logs what is wrong with them, so a caller resolves them once per
+ * config.
  */
-export const configLocales = ({ loaders, translations, sanitizeLocales: strategy }: Pick<Config.T, 'loaders' | 'translations' | 'sanitizeLocales'>): Config.Locale[] => servedLocales(
-  resolveLoaders(loaders, strategy),
+export const configLocales = (
+  { translations, sanitizeLocales: strategy }: Pick<Config.T, 'translations' | 'sanitizeLocales'>,
+  loaders: readonly Loader.Resolved[],
+): Config.Locale[] => servedLocales(
+  loaders,
   translations ? sanitizeTranslationLocales(translations, sanitizerFactory(strategy)) : {},
 );
 

@@ -34,7 +34,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Language | TypeScript, ESM (`"type": "module"`), `strict: true` |
 | Package manager | **npm** with `package-lock.json` (no pnpm/yarn) |
 | Build | `svelte-package` → `dist/` (per-file ESM + `.d.ts`; rune modules ship UNCOMPILED) |
-| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts` and the test components), environment `node` (`happy-dom` for `kit.spec.ts`); every suite runs twice, the rune modules compiled for the server and for the client (which also resolves with the `browser` condition, so `svelte` runs effects and `#kit-*` picks the browser half); each project aliases the `#kit-*` imports to the source it runs, and `tsconfig.json` maps them with `paths` |
+| Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts` and the test components), environment `node` (`happy-dom` for `kit.spec.ts`); every suite runs twice, the rune modules compiled for the server and for the client (which also resolves with the `browser` condition, so `svelte` runs effects and `#kit-*` picks the browser half), except `async.spec.ts`, which runs only in a third project, `async`: a client compile in `happy-dom` that compiles the `*.async.svelte` components with `experimental.async`; each project aliases the `#kit-*` imports to the source it runs, and `tsconfig.json` maps them with `paths` |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
 | CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg; `bench.yml` — the benchmark of a pull request against its base, re-run by `bench-label.yml` when its `bench-accepted` label changes |
@@ -71,7 +71,8 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite |
 | `tests/specs/kit.spec.ts` | the `/kit` suite, in `happy-dom` |
-| `tests/components/` | the Svelte components `kit.spec.ts` mounts |
+| `tests/specs/async.spec.ts` | `t` under Svelte's async batching and `fork()` — the `async` project only |
+| `tests/components/` | the Svelte components `kit.spec.ts` mounts, and the `*.async.svelte` ones `async.spec.ts` mounts |
 | `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
 | `tests/specs/registry.spec.ts` | compiles the `tests/types/registry/` fixtures with `tsc` |
 | `tests/types/registry/` | type fixtures of the schema registry — programs of their own, outside `typecheck` |
@@ -80,7 +81,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
-| `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile (see the rolldown filter workaround note inside) |
+| `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile, plus `async` (see the rolldown filter workaround note inside) |
 | `bench/` | the benchmark: `run.ts` runs it, one process per project and sample; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts` and `kit.ts` measure its rows |
 | `vitest.bench.config.ts` | the benchmark's runner config — one project per run, aliased to the tree it measures |
 | `BENCH.md` | the benchmark of the last release, written into its release commit by `publish.yml` |
@@ -99,6 +100,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   `invalidate` and `destroy`.
   There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
+  On the server Svelte memoizes a `$derived` only when it is created during a
+  render, which the core's instances are not, so what a derived walks over
+  every loader is memoized by identity (`locales`), and a cache of per-config
+  state is keyed by the config it read, never reset by the config's writer: a
+  discarded `fork()` keeps plain fields but not the state write.
 - **Loads are imperative, awaitable, and deduplicated.** `setLocale`/
   `setRoute`/`loadTranslations`/`loadNamespace` start loads directly and
   return the promise of the MATCHING load — the in-flight key is what a
@@ -344,7 +350,14 @@ translation state, loading, caching, route matching, and preprocessing — but
   data request; when a server `load` exists, `preferredLocale` runs in the
   browser only on a root error page SvelteKit renders without its data (the
   universal event says nothing of whether one exists). The server
-  builds an instance per pass; the browser keeps one per tab, and only the
+  builds an instance per page render, and the universal branch of that render
+  takes it over: `take` finds it by the payload object the server branch
+  returned, which SvelteKit hands to the universal load of the same request,
+  and hands it out once. That branch still loads, so a loader that failed soft
+  is retried, and hydrates nothing. A config with a `cache: false` loader,
+  whose hold-back only a hand-off gives, and a pass without that object (no
+  server load, a copied payload) build their own instance, from the snapshot
+  when there is one. The browser keeps one per tab, and only the
   pass that builds it activates — every later pass is a warm load of one
   target, since it may be a preload. `use()` activates at commit, comparing the
   server's answer with the last commit's (the per-result `tab` memory), so a
@@ -604,14 +617,23 @@ chat (§3).
   no multiple blank lines. Let `npm run lint` handle it.
 - Prefer the **functional, immutable** style for shared state (computed-key
   spread `{ ...acc, [k]: v }`, `reduce`). That spread form has `DefineProperty`
-  semantics — it can't pollute `Object.prototype`. On a **measured hot path** a
+  semantics — it can't pollute `Object.prototype`. A level built from a list of
+  entries (`filter`, `map`, `flatMap`) is finished with `Object.fromEntries`,
+  which defines each key the same way in one pass, where a spread per key
+  copies every key so far and is quadratic in the level's width (see
+  `maskTranslations`, `omitProtoKeys`). On a **measured hot path** a
   function-local accumulator may be built by mutation instead, but only into a
-  null-prototype object (`Object.create(null)`), and it must be finished with a
-  single spread before it escapes to consumers — that restores a normal
-  prototype while keeping the same pollution safety (see `toDotNotation`).
-  Long-lived internal state may be written in place only when it is
-  null-prototype and never exposed (see `#namespaceRecords` in §11) — never a plain
-  object indexed by consumer input. The locale-indexed folds in `serialize` and
+  null-prototype object (`Object.create(null)`), which stays the form for a
+  level written in place, where a key's value depends on what is already there
+  (`mergeTranslations`). Once its last key is written, and before it escapes
+  to consumers, it is given `Object.prototype` (`Object.setPrototypeOf`,
+  O(1)), or finished with a single spread, which copies every key and so is
+  left to code where that copy is measured not to matter. Either restores a
+  normal prototype while a literal `'__proto__'` key stays an own data
+  property (see `toDotNotation`, `mergeTranslations`). Long-lived internal
+  state may be written in place only when it is null-prototype and never
+  exposed (see `#namespaceRecords` in §11) — never a plain object indexed by
+  consumer input. The locale-indexed folds in `serialize` and
   `#applyDeliveries` keep the spread form deliberately, even though it is
   quadratic in the number of locales: the counts are small, and only a
   measurement showing otherwise justifies moving them to the accumulator form.
@@ -678,8 +700,17 @@ not RCE/XSS.
 
 - Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`. The
   exceptions are `tests/specs/kit.spec.ts`, which needs a DOM for `use()` and
-  `get()`, and `tests/specs/dist.spec.ts`, which exercises the SHIPPED artifact
-  and runs separately via `npm run test:dist` (which builds first).
+  `get()`, `tests/specs/async.spec.ts`, and `tests/specs/dist.spec.ts`, which
+  exercises the SHIPPED artifact and runs separately via `npm run test:dist`
+  (which builds first).
+- A case that needs Svelte's async mode (an `await` in a template, `fork()`)
+  goes to `tests/specs/async.spec.ts`, which runs only in the `async` project,
+  and mounts a component named `*.async.svelte`: that project compiles those
+  with `experimental.async`, and importing one switches async mode on for the
+  spec's module graph, so the other specs keep running without it. Such a case
+  asserts the settled state — the text inside an `await` and outside it, or
+  what an effect last saw — once the gate it held is released, waiting on it
+  with `vi.waitFor`, never on a timer.
 - A type test that needs a registration in `SvelteKitI18n.Register` goes to
   `tests/types/registry/`, never into the main program: a registration types
   every schema-less instance in the program it is part of, the suite's

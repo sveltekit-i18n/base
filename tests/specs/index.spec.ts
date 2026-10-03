@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import i18n from '../../src/index.js';
 import type { Config, Extension, I18n, Loader, Parser, Schema, Snapshot, Translations } from '../../src/index.js';
 import { logger, loggerFactory, setLogger } from '../../src/logger.js';
-import { configLocales, maskOutputKeys, maskTranslations, matchLocale, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
+import { configLocales, maskOutputKeys, maskTranslations, matchLocale, omitProtoKeys, paramsSignature, read, resolveLoaders, routePrefix, sanitizeLocales, testRoute, textDirection, toDotNotation, translate, withoutBasePath } from '../../src/utils.js';
 import * as publicUtils from '../../src/exports/utils.js';
 import type { DotNotation } from '../../src/exports/utils.js';
 import { CONFIG, getTranslations } from '../data/index.js';
@@ -748,6 +748,84 @@ describe('i18n instance', () => {
     expect(Object.keys(instance.translations.en)).toHaveLength(10000);
     expect(instance.translations.en['common.key9999']).toBe('9999');
   });
+  it.each<[string, Config.T['preprocess']]>([
+    ['unset', undefined],
+    ['preserveArrays', 'preserveArrays'],
+    ['none', 'none'],
+    ['custom', (input: any) => Object.assign(Object.create(null), toDotNotation(input))],
+  ])('adding and hydrating a locale\'s first data gives both tables a plain prototype (`preprocess` %s)', async (_, preprocess) => {
+    const returned: unknown[] = [];
+    const tracked = typeof preprocess === 'function'
+      ? (input: any) => {
+        const output = preprocess(input);
+
+        returned.push(output);
+
+        return output;
+      }
+      : preprocess;
+    const plain = (instance: I18n) => {
+      expect(Object.getPrototypeOf(instance.translations.en)).toBe(Object.prototype);
+      expect(Object.getPrototypeOf(instance.rawTranslations.en)).toBe(Object.prototype);
+      expect(returned).not.toContain(instance.translations.en);
+    };
+
+    const seeded = new i18n({ parser, log, preprocess: tracked });
+    const first = { common: { a: 'A' } };
+
+    seeded.addTranslations({ en: first });
+    plain(seeded);
+    expect(seeded.translations.en).not.toBe(first);
+
+    seeded.addTranslations({ en: { common: { b: 'B' } } });
+    plain(seeded);
+    expect(Object.keys(seeded.translations.en)).toHaveLength(preprocess === 'none' ? 1 : 2);
+
+    const config = () => ({
+      parser,
+      log,
+      preprocess: tracked,
+      loaders: [{ locale: 'en', namespace: 'common', loader: async () => ({ a: 'A', b: { c: 'C' } }) }],
+    });
+    const server = new i18n(config());
+
+    await server.loadTranslations('en');
+    plain(server);
+
+    const client = new i18n(config());
+
+    client.hydrate(server.snapshot({ records: true }));
+    plain(client);
+    expect(client.translations.en).toEqual(server.translations.en);
+  });
+  it('seeds over a wide namespace a loader delivered in bounded time, in either spelling of a key', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`g.key${i}`, `${i}`]));
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => data },
+        { namespace: 'common', locale: 'en', cache: false, loader: async () => ({ extra: 'E' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    const start = performance.now();
+
+    instance.addTranslations({ en: { common: { 'g.key0': 'flat' } } });
+    instance.addTranslations({ en: { common: { g: { key1: 'nested' } } } });
+    // Milliseconds when each masked level is built once; about a minute when it is rebuilt per key.
+    expect(performance.now() - start).toBeLessThan(1000);
+
+    // The `cache: false` loader delivers again, so the namespace is rebuilt from the masked deliveries.
+    await instance.loadTranslations('en', '/');
+
+    expect(instance.translations.en['common.extra']).toBe('E');
+    expect(instance.translations.en['common.g.key0']).toBe('flat');
+    expect(instance.translations.en['common.g.key1']).toBe('nested');
+    expect(instance.translations.en['common.g.key9999']).toBe('9999');
+  });
   it('a loader receives its sanitized locale and the triggering route', async () => {
     const received: unknown[] = [];
     const instance = new i18n({
@@ -1044,6 +1122,84 @@ describe('i18n instance', () => {
     expect(loader).toHaveBeenCalledTimes(3);
     expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'article.title': 'Article 2' });
   });
+  describe('a locale a re-delivery rebuilds', () => {
+    const articleLoader = { namespace: 'article', locale: 'en', routes: [/^\/a\/(?<id>\d+)/], loader: async ({ params }: Loader.Props) => ({ title: `Article ${params.id}` }) };
+    const expectDerived = (instance: I18n) => expect(Object.entries(instance.translations.en)).toEqual(Object.entries(toDotNotation(instance.rawTranslations.en) ?? {}));
+
+    it('is handed to a custom `preprocess` once, whole', async () => {
+      const preprocess = vi.fn((table: Translations.SerializedTranslations) => toDotNotation(table) ?? {});
+      const instance = new i18n({
+        parser,
+        log,
+        preprocess,
+        loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { article: { seed: 's' } } });
+      await instance.loadTranslations('en', '/a/1');
+      preprocess.mockClear();
+      await instance.setRoute('/a/2');
+
+      expect(preprocess.mock.calls).toEqual([[{ article: { seed: 's', title: 'Article 2' }, common: { greeting: 'Hello' } }]]);
+    });
+    it('is derived from its raw table when a seeded leaf became a branch', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [{ namespace: 't', locale: 'en', routes: ['/t'], loader: async () => ({ a: { b: 'B' } }) }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { t: { a: 'seed' } } });
+      await instance.loadTranslations('en', '/t');
+      await instance.setRoute('/a/1');
+      await instance.setRoute('/a/2');
+
+      expectDerived(instance);
+    });
+    it('is derived from its raw table when a seeded branch became a leaf', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        loaders: [{ namespace: '7', locale: 'en', routes: ['/s'], loader: async () => 'leaf' as any }, articleLoader],
+      });
+
+      instance.addTranslations({ en: { 7: { a: { b: 'B' } } } });
+      await instance.loadTranslations('en', '/s');
+      await instance.setRoute('/a/1');
+      await instance.setRoute('/a/2');
+
+      expectDerived(instance);
+    });
+    it('is derived from its raw table after `loadConfig` switched `preprocess`', async () => {
+      const instance = new i18n({ parser, log, preprocess: 'preserveArrays', loaders: [articleLoader] });
+
+      instance.addTranslations({ en: { list: { items: ['a', 'b'] } } });
+      await instance.loadTranslations('en', '/a/1');
+      await instance.loadConfig({ parser, log, loaders: [articleLoader] });
+      await instance.loadTranslations('en', '/a/2');
+
+      expectDerived(instance);
+    });
+    it('keeps its place among the locales when the tables lack it', async () => {
+      const instance = new i18n({
+        parser,
+        log,
+        fallbackLocale: 'en',
+        loaders: [
+          { namespace: 'b', locale: 'en', loader: async () => ({ y: 'Y' }) },
+          { namespace: 'x', locale: 'de', loader: async () => ({ z: 'Z' }) },
+          { namespace: 'a', locale: 'en', cache: false, loader: async () => ({ v: 'V' }) },
+          { namespace: 'c', locale: 'cs', loader: async () => ({ w: 'W' }) },
+        ],
+      });
+
+      instance.hydrate({ translations: { cs: { c: { w: 'W' } } }, records: [{ id: '["en","a"]' }, { id: '["cs","c"]' }], locale: 'cs', route: '/' });
+      await instance.loadTranslations('de', '/x');
+
+      expect(Object.keys(instance.translations)).toEqual(['cs', 'en', 'de']);
+      expect(Object.keys(instance.translations)).toEqual(Object.keys(instance.rawTranslations));
+    });
+  });
   describe('params wanted by the current route', () => {
     const itemLoader = (resolvers: Record<string, () => void>, locale = 'en') => ({
       namespace: 'item',
@@ -1067,6 +1223,53 @@ describe('i18n instance', () => {
       await instance.setRoute('/item/2');
 
       expect(instance.translations.en).toEqual({ 'common.greeting': 'Hello', 'item.id': '2' });
+    });
+    it('serves a navigation from the records in time independent of the other locales\' loaders', async () => {
+      const visited = async (count: number) => {
+        const locales = Array.from({ length: count }, (_, index) => `l${index}`);
+        const instance = new i18n({
+          parser,
+          log,
+          sanitizeLocales: false,
+          loaders: Array.from({ length: 100 }, (_, index) => ({
+            locale: locales,
+            namespace: `n${index}`,
+            ...(index % 2 ? { routes: [`/r${index % 10}`] } : {}),
+            loader: async () => ({ key: 'value' }),
+          })),
+        });
+
+        await instance.loadTranslations('l0', '/r0');
+        for (let route = 1; route < 10; route += 1) await instance.setRoute(`/r${route}`);
+
+        return instance;
+      };
+      const navigate = async (instance: I18n) => {
+        const start = performance.now();
+
+        for (let step = 0; step < 100; step += 1) await instance.setRoute(`/r${step % 10}`);
+
+        return performance.now() - start;
+      };
+
+      const one = await visited(1);
+      const many = await visited(100);
+      const best = { one: Infinity, many: Infinity };
+
+      // Alternating rounds after an untimed one, so warm-up and load weigh on both alike.
+      for (let round = 0; round < 11; round += 1) {
+        const timeOne = await navigate(one);
+        const timeMany = await navigate(many);
+
+        if (round > 0) {
+          best.one = Math.min(best.one, timeOne);
+          best.many = Math.min(best.many, timeMany);
+        }
+      }
+
+      expect(many.locale).toBe('l0');
+      // About even when a navigation walks the loaders of its locale; dozens of times slower when it walks every locale's.
+      expect(best.many).toBeLessThan(best.one * 8);
     });
 
     it('drops an older load for other params once the route returned to the params it holds', async () => {
@@ -1851,6 +2054,84 @@ describe('i18n instance', () => {
 
     expect(t('greeting')).toBe('Ahoj');
   });
+
+  describe.skipIf(!effectsRun)('re-runs a destructured `l` reader once the table of its locale arrives', () => {
+    it.each([
+      ['the key', {}, 'greeting'],
+      ['the fallback', { fallbackLocale: 'en' }, 'Hello'],
+    ])('after it read %s', async (_, options, before) => {
+      const instance = new i18n({ parser: valueParser, log, ...options, translations: { en: { greeting: 'Hello' } } });
+
+      await instance.loadTranslations('en', '/');
+
+      const { l } = instance;
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(l('de', 'greeting')); });
+
+      instance.addTranslations({ de: { greeting: 'Hallo' } });
+      flushSync();
+      stop();
+
+      expect(seen).toEqual([before, 'Hallo']);
+    });
+  });
+
+  // A custom `preprocess` may hand back the object it returned before, changed
+  // in place: a table that keeps its identity still changes what `t` returns.
+  describe.skipIf(!effectsRun)('re-runs `t` readers when a custom `preprocess` hands back its previous output, changed', () => {
+    it('as a `cache: false` loader delivers again', async () => {
+      const output: Record<string, string> = {};
+      let delivered = 0;
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        preprocess: (input: any) => Object.assign(output, { 'c.hi': input.c.hi }),
+        loaders: [{ namespace: 'c', locale: 'en', cache: false, loader: async () => ({ hi: `Hi ${delivered += 1}` }) }],
+      });
+
+      await instance.loadTranslations('en', '/');
+
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(instance.t('c.hi')); });
+
+      await instance.loadTranslations('en', '/');
+      flushSync();
+      await instance.loadTranslations('en', '/');
+      flushSync();
+      stop();
+
+      expect(seen).toEqual(['Hi 1', 'Hi 2', 'Hi 3']);
+    });
+    it('as another locale\'s write lands in the object two re-delivered tables share', async () => {
+      const output: Record<string, any> = {};
+      const instance = new i18n({
+        parser: valueParser,
+        log,
+        preprocess: (input: any) => Object.assign(output, input),
+        loaders: ['en', 'de'].map((locale) => ({ locale, namespace: 'ns', cache: false, loader: async () => ({ k: `${locale}-k` }) })),
+      });
+
+      // A second delivery replaces the first: each table is then the object
+      // `preprocess` handed back, one for both locales.
+      await instance.setRoute('/');
+      await instance.setLocale('de');
+      await instance.setLocale('de');
+      await instance.loadTranslations('en', '/', { activate: false });
+      await instance.loadTranslations('en', '/', { activate: false });
+
+      expect(instance.translations.en).toBe(instance.translations.de);
+
+      const seen: string[] = [];
+      const stop = effect(() => { seen.push(instance.t('x')); });
+
+      instance.addTranslations({ en: { x: 'X' } });
+      flushSync();
+      stop();
+
+      expect(instance.t('x')).toBe('X');
+      expect(seen.at(-1)).toBe('X');
+    });
+  });
 });
 
 describe('i18n locale keys', () => {
@@ -1995,7 +2276,7 @@ describe('i18n sanitizeLocales config', () => {
     ['translations only', { translations: { en: { greeting: 'Hello' } } }],
     ['no locale at all', { initLocale: 'en', fallbackLocale: 'cs' }],
   ] as [string, Config.T][])('derives the locales of a config as the instance does, with %s', (_, config) => {
-    expect(configLocales(config)).toEqual(new i18n({ ...config, parser, log }).locales);
+    expect(configLocales(config, resolveLoaders(config.loaders, config.sanitizeLocales))).toEqual(new i18n({ ...config, parser, log }).locales);
   });
 });
 
@@ -5339,6 +5620,34 @@ describe('i18n loadNamespace', () => {
 
     expect(calls.editor).toBeUndefined();
   });
+
+  it('does not hand a route trigger the control flow of a namespace load that selected other loaders', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const redirect: unknown = { status: 303, location: '/login' };
+    let runs = 0;
+    const instance = new i18n({
+      parser,
+      log,
+      loaders: [
+        { locale: 'en', namespace: 'x', routes: ['/a'], loader: async () => { runs += 1; if (runs > 1) await gate; return { a: 'A' }; } },
+        { locale: 'en', namespace: 'x', routes: ['/other'], loader: async () => { await gate; throw redirect; } },
+        { locale: 'en', namespace: 'y', routes: ['/a'], loader: async () => ({ d: 'D' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/a');
+    instance.invalidate('en', 'x');
+
+    const warm = instance.loadNamespace('x');
+    const navigation = instance.setRoute('/a');
+
+    release();
+
+    await expect(warm).rejects.toMatchObject({ status: 303 });
+    await expect(navigation).resolves.toBeUndefined();
+    expect(instance.locale).toBe('en');
+  });
 });
 
 describe('i18n cache and invalidation', () => {
@@ -7457,6 +7766,49 @@ describe('i18n snapshot', () => {
     expect(server.snapshot()).toEqual({ en: { common: { a: 'x', n: {} } } });
   });
 
+  it('hands a namespace holding NaN off with its record, and warns of nothing', async () => {
+    const warnSpy = vi.fn();
+    const instance = new i18n({
+      parser: valueParser,
+      log: { level: 'warn', logger: { error: () => {}, warn: warnSpy, debug: () => {} } },
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ title: 'T', n: Number.NaN }) },
+        { namespace: 'home', locale: 'en', loader: async () => ({ a: 'A' }) },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    expect(Object.keys(instance.snapshot().en)).toEqual(['common', 'home']);
+    expect(instance.snapshot({ records: true }).records).toHaveLength(2);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the record of a namespace whose flat key holds NaN beside a `__proto__` key elsewhere', async () => {
+    const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'common', locale: 'en', loader: async () => ({ title: 'T' }) }] });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { 'common.n': Number.NaN, other: JSON.parse('{"__proto__": "x", "k": "v"}') } });
+
+    expect(instance.snapshot({ records: true }).records).toEqual([{ id: '["en","common"]' }]);
+  });
+
+  it('leaves a `__proto__` key out of a wide level in bounded time', async () => {
+    const data = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`key${i}`, `${i}`]));
+    const instance = new i18n({ parser, log, loaders: [{ namespace: 'nav', locale: 'en', loader: async () => ({ home: 'Home' }) }] });
+
+    await instance.loadTranslations('en', '/');
+    instance.addTranslations({ en: { common: JSON.parse(JSON.stringify(data).replace('{', '{"__proto__": "x", ')) } });
+
+    const start = performance.now();
+    const snapshot = instance.snapshot();
+
+    // Milliseconds when the level is built once; tens of seconds when it is rebuilt per key.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(Object.keys(snapshot.en.common)).toHaveLength(10000);
+    expect(Object.hasOwn(snapshot.en.common, '__proto__')).toBe(false);
+  });
+
   it('records no loader whose data lost a literal `__proto__` key, so the client loads it again', async () => {
     const calls: string[] = [];
     const loaders = [
@@ -8157,13 +8509,7 @@ describe('logger', () => {
 
 describe('translate', () => {
   it('returns the key when no parser is configured and the translation is missing', () => {
-    const output = translate({
-      parser: undefined as any,
-      key: 'common.key',
-      params: [],
-      translations: { en: {} },
-      locale: 'en',
-    });
+    const output = translate({ parser: undefined as any }, 'en', 'common.key', [], {}, undefined);
 
     expect(output).toBe('common.key');
   });
@@ -8616,6 +8962,33 @@ describe('utils', () => {
     expect(read(masked, '__proto__')).toEqual({ b: 'y' });
   });
 
+  it('`omitProtoKeys` leaves a `__proto__` key out of a deep branch in bounded time, and the clean siblings as they are', () => {
+    const level = () => Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`key${i}`, `${i}`]));
+    let deep: any = JSON.parse('{"__proto__": "x", "a": "y"}');
+
+    for (let depth = 0; depth < 1000; depth += 1) deep = { ...level(), k: deep };
+
+    // eslint-disable-next-line no-sparse-arrays
+    const clean = { nested: level(), list: ['a', , 'c'] };
+    const start = performance.now();
+    const result = omitProtoKeys({ deep, clean });
+
+    // Milliseconds when each level is scanned and rebuilt once; seconds when every rebuilt level scans its branch again.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(result.clean).toBe(clean);
+
+    let bottom = result.deep;
+
+    for (let depth = 0; depth < 1000; depth += 1) bottom = bottom.k;
+
+    expect(Object.keys(bottom)).toEqual(['a']);
+
+    // eslint-disable-next-line no-sparse-arrays
+    const table = { a: { b: 'c' }, n: [1, , 3] };
+
+    expect(omitProtoKeys(table)).toBe(table);
+  });
+
   it('publishes the reusable helpers, and only those', () => {
     expect(publicUtils.toDotNotation).toBe(toDotNotation);
     expect(publicUtils.sanitizeLocales).toBe(sanitizeLocales);
@@ -8633,7 +9006,7 @@ describe('utils', () => {
       // A standard locale resolves identically whether or not it is cached.
       expect(sanitizeLocales('zh-Hans')).toEqual(sanitizeLocales('zh-Hans'));
 
-      // Failures are never cached, so the warning is not deduplicated away —
+      // The outcome is remembered, but the warning is not deduplicated away —
       // deduplicating it would tie the diagnostic to whichever logger and
       // level happened to be installed on the first occurrence.
       sanitizeLocales('qqq-alpha');
@@ -8643,6 +9016,24 @@ describe('utils', () => {
     }
 
     expect(captured.warn.filter(({ message }) => message.includes('qqq-alpha'))).toHaveLength(2);
+  });
+  it('`sanitizeLocales` asks `Intl` once for a locale it rejects', () => {
+    const { captured, restore } = captureLogs();
+    const lookup = vi.spyOn(Intl.Collator, 'supportedLocalesOf');
+
+    try {
+      // One `Intl` knows nothing of, and one it throws on.
+      for (let i = 0; i < 3; i += 1) expect(sanitizeLocales('qqq-gamma', 'qqq_gamma')).toEqual(['qqq-gamma', 'qqq_gamma']);
+
+      expect(lookup.mock.calls.filter(([locale]) => locale === 'qqq-gamma')).toHaveLength(1);
+      expect(lookup.mock.calls.filter(([locale]) => locale === 'qqq_gamma')).toHaveLength(1);
+    } finally {
+      lookup.mockRestore();
+      restore();
+    }
+
+    expect(captured.warn.filter(({ message }) => message.includes('qqq-gamma'))).toHaveLength(3);
+    expect(captured.warn.filter(({ message }) => message.includes('qqq_gamma'))).toHaveLength(3);
   });
   it('`sanitizeLocales` does not let a non-string input poison a string key', () => {
     const { restore } = captureLogs();
@@ -8662,10 +9053,16 @@ describe('utils', () => {
   it('`toDotNotation` keeps a literal `__proto__` key an own property', () => {
     // JSON.parse creates real own '__proto__' keys (object literals would not).
     const output: any = toDotNotation(JSON.parse('{"__proto__": {"polluted": "yes"}, "plain": "ok"}'));
+    const flat: any = toDotNotation(JSON.parse('{"__proto__": "own"}'));
 
     expect(({} as any).polluted).toBe(undefined); // Object.prototype untouched
     expect(output['__proto__.polluted']).toBe('yes');
     expect(output.plain).toBe('ok');
+    expect(Object.getPrototypeOf(output)).toBe(Object.prototype);
+
+    expect(Object.getOwnPropertyDescriptor(flat, '__proto__')?.value).toBe('own');
+    expect(Object.getPrototypeOf(flat)).toBe(Object.prototype);
+    expect(({} as any).own).toBe(undefined);
   });
   it('matches a `g`-flagged route pattern on every navigation', () => {
     // `test` advances `lastIndex` on a global/sticky pattern, so a route object
@@ -8910,6 +9307,39 @@ describe('utils', () => {
 
     expect(resolvedLoaders.map(({ locale, namespace }) => `${locale}:${namespace}`)).toEqual(['en:common']);
     expect(captured.warn.filter(({ message }) => message.includes('names no locale or no namespace'))).toHaveLength(3);
+  });
+  it('`resolveLoaders` resolves many descriptors in bounded time', () => {
+    const loader = async () => ({});
+    const loaders = Array.from({ length: 40000 }, (_, i) => ({ locale: 'en', namespace: `ns${i}`, loader }));
+    const start = performance.now();
+    const resolvedLoaders = resolveLoaders(loaders);
+
+    // Milliseconds when each descriptor is appended once; seconds when the list is copied per descriptor.
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(resolvedLoaders).toHaveLength(40000);
+  });
+  it('`resolveLoaders` describes a descriptor\'s routes once per call, however many locales it lists', () => {
+    let described = 0;
+
+    class Counted extends RegExp {
+      override toString() {
+        described += 1;
+
+        return super.toString();
+      }
+    }
+
+    const loader = async () => ({});
+    const routes: Array<string | RegExp> = ['/', new Counted('^/home$')];
+    const loaders = [{ locale: ['en', 'cs', 'de'], namespace: 'home', routes, loader }];
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/']])));
+    expect(described).toBe(1);
+
+    routes.push('/about');
+
+    expect(resolveLoaders(loaders).map(({ id }) => id)).toEqual(['en', 'cs', 'de'].map((locale) => JSON.stringify([locale, 'home', ['s:/', 'r:/^\\/home$/', 's:/about']])));
+    expect(described).toBe(2);
   });
 });
 

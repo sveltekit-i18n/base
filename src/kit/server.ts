@@ -1,10 +1,16 @@
+import type { I18n } from '../I18n.svelte.js';
 import { logger } from '../logger.js';
 import { matchLocale, routePrefix, textDirection, withoutBasePath } from '../utils.js';
 import type { Negotiated, ServerHalf, Shared } from './internal.js';
 import type { Kit } from './types.js';
 
-export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): ServerHalf => {
+export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: Shared): ServerHalf => {
   const answer = (event: Kit.RequestEvent): Negotiated => negotiate(event, event.request.headers.get('accept-language'));
+
+  // The instance each page render loaded, under the payload it returned:
+  // SvelteKit hands that very object to the universal load of the same
+  // request.
+  const built = new WeakMap<Kit.Payload, I18n>();
 
   let warned = false;
 
@@ -88,7 +94,22 @@ export const serverHalf = ({ create, negotiate, locales, basePath }: Shared): Se
 
       await (locale ? i18n.loadTranslations(locale, route) : i18n.setRoute(route));
 
-      return { i18n: { ...i18n.snapshot({ records: true }), ...(preferred ? { preferred: true as const } : {}) } };
+      const payload: Kit.Payload = { ...i18n.snapshot({ records: true }), ...(preferred ? { preferred: true as const } : {}) };
+
+      if (handOver()) built.set(payload, i18n);
+
+      return { i18n: payload };
+    },
+
+    // Once, so a payload an app keeps and returns again shares no instance.
+    take: (payload) => {
+      if (!payload) return undefined;
+
+      const i18n = built.get(payload);
+
+      built.delete(payload);
+
+      return i18n;
     },
   };
 };
