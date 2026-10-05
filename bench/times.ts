@@ -2,7 +2,7 @@ import { I18n } from '@sveltekit-i18n/base';
 import { expect, it } from 'vitest';
 
 import { collect, time, timeAsync } from './collect.js';
-import { key, loaders, log, n, parser, table } from './data.js';
+import { key, loaders, log, n, navigate, parser, table } from './data.js';
 
 const record = collect(import.meta.filename);
 
@@ -139,6 +139,23 @@ it('loads', async () => {
   await router.loadTranslations('en', '/');
 
   record('setRoute, to new params among 200 routes', 'time', 'ms', await timeAsync(() => router.setRoute(`/page199/${id++}`)));
+
+  const item = [/^\/item\/(?<id>\d+)$/];
+  const navigator = new I18n({
+    parser,
+    log,
+    loaders: [
+      { locale: 'en', namespace: 'live', routes: item, cache: false, loader: async ({ params }) => ({ id: params.id ?? '' }) },
+      { locale: 'en', namespace: 'item', routes: item, loader: async ({ params }) => ({ id: params.id ?? '' }) },
+    ],
+  });
+  let page = 0;
+
+  await navigator.loadTranslations('en', '/item/0');
+
+  record('a navigation to new params, a loader with cache: false beside a cached one', 'time', 'ms', await timeAsync(() => navigate(navigator, `/item/${++page}`)));
+
+  expect(navigator.translations.en).toEqual({ 'live.id': `${page}`, 'item.id': `${page}` });
 
   const others = Array.from({ length: 50 }, (_, n) => `l${n}`);
   const wide = new I18n({ parser, log, sanitizeLocales: false, loaders: routed.map((loader) => ({ ...loader, locale: others })) });

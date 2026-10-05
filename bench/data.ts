@@ -1,4 +1,4 @@
-import type { Loader, Translations } from '@sveltekit-i18n/base';
+import type { I18n, Loader, Translations } from '@sveltekit-i18n/base';
 
 /**
  * How a set of keys is laid out:
@@ -73,3 +73,18 @@ export const loaders = (data: Translations.Input, locales: readonly string[] = [
   namespace,
   loader: async () => data[namespace],
 })));
+
+/**
+ * A navigation of the active locale as `/kit` runs one after the first: the
+ * request, then its commit. A core without `preload()` warms the target, then
+ * sets the route.
+ */
+export const navigate = async (i18n: I18n, route: string) => {
+  if ('preload' in i18n) return i18n.setRoute(route, { preloaded: await i18n.preload(i18n.locale ?? '', route) });
+
+  const core: I18n = i18n;
+
+  await core.loadTranslations(core.locale ?? '', route, { activate: false });
+
+  return core.setRoute(route);
+};

@@ -125,6 +125,7 @@ describe('i18n instance', () => {
     expect(instance).toHaveProperty('addTranslations');
     expect(instance).toHaveProperty('setLocale');
     expect(instance).toHaveProperty('setRoute');
+    expect(instance).toHaveProperty('preload');
     expect(instance).toHaveProperty('invalidate');
     expect(instance).toHaveProperty('snapshot');
     expect(instance).toHaveProperty('hydrate');
@@ -7878,6 +7879,791 @@ describe('i18n loaders with `cache: false`', () => {
     await client.loadTranslations('en', '/');
 
     expect(calls).toEqual({ live: 1 });
+  });
+});
+
+describe('i18n preload', () => {
+  type Runs = Record<string, number>;
+
+  const items = [/^\/i\/(?<id>\d+)$/, /^\/j\/(?<id>\d+)$/];
+
+  const quiet = { level: 'error' as const, logger: { error: () => undefined } as any };
+
+  const macrotask = () => new Promise((resolve) => { setTimeout(resolve); });
+
+  const ran = (runs: Runs, name: string) => { runs[name] = (runs[name] ?? 0) + 1; };
+
+  // One loader for every route, and two with params: one whose source caches
+  // and one the core caches.
+  const setup = (runs: Runs, source = { version: 1 }) => [
+    { namespace: 'common', locale: ['en', 'cs'], loader: async ({ locale }: Loader.Props) => { ran(runs, 'common'); return { greeting: `Hello ${locale}` }; } },
+    {
+      namespace: 'live',
+      locale: ['en', 'cs'],
+      routes: items,
+      cache: false as const,
+      loader: async ({ params }: Loader.Props) => { ran(runs, 'live'); return { title: `live ${params.id} v${source.version}` }; },
+    },
+    { namespace: 'item', locale: ['en', 'cs'], routes: items, loader: async ({ params }: Loader.Props) => { ran(runs, 'item'); return { title: `item ${params.id}` }; } },
+  ];
+
+  // The same, with the cached loader held by the test.
+  const heldItem = (runs: Runs, source = { version: 1 }) => {
+    const item = held();
+    const loaders = [...setup(runs, source).filter(({ namespace }) => namespace !== 'item'), { namespace: 'item', locale: 'en', routes: items, loader: item.loader }];
+
+    return { item, loaders };
+  };
+
+  // A preload of `/i/2` in which the held loader fails soft, after a load of `/i/1`.
+  const failedSoft = async (runs: Runs, source = { version: 1 }) => {
+    const { item, loaders } = heldItem(runs, source);
+    const instance = new i18n({ parser: valueParser, log: quiet, loaders });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    item.calls[0].resolve({ title: 'item 1' });
+    await opened;
+
+    const preloading = instance.preload('en', '/i/2');
+
+    item.calls[1].reject(new Error('down'));
+
+    return { instance, item, preloaded: await preloading };
+  };
+
+  // A call handed a token whose answer of the loader whose source caches came
+  // from a fetch already in flight, while it fetches what failed soft in the
+  // preload.
+  const sharedAnswer = async () => {
+    const live = held();
+    const item = held();
+    const instance = new i18n({
+      parser: valueParser,
+      log: quiet,
+      loaders: [
+        { namespace: 'live', locale: 'en', routes: items, cache: false as const, loader: live.loader },
+        { namespace: 'item', locale: 'en', routes: items, loader: item.loader },
+      ],
+    });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    live.calls[0].resolve({ title: 'live 1' });
+    item.calls[0].resolve({ title: 'item 1' });
+    await opened;
+
+    const first = instance.preload('en', '/i/2');
+    const second = instance.preload('en', '/i/2');
+
+    live.calls[1].resolve({ title: 'live 2 a' });
+    item.calls[1].reject(new Error('down'));
+    await first;
+
+    const call = instance.setRoute('/i/2', { preloaded: await second });
+
+    return { instance, live, item, call };
+  };
+
+  it('lets the next call show what it delivered at once, running no loader again', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('en', '/i/2');
+
+    expect(runs).toEqual({ common: 1, live: 2, item: 2 });
+    expect(instance.t('live.title')).toBe('live 1 v1');
+    expect(instance.t('item.title')).toBe('item 1');
+    expect(instance.snapshot({ records: true }).route).toBe('/i/1');
+
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    expect(instance.loading).toBe(false);
+    expect(instance.t('live.title')).toBe('live 2 v1');
+    expect(instance.t('item.title')).toBe('item 2');
+
+    await call;
+    expect(runs).toEqual({ common: 1, live: 2, item: 2 });
+  });
+
+  it('switches the locale at once with the token of its preload', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('cs', '/i/2');
+
+    expect(instance.locale).toBe('en');
+
+    const call = instance.loadTranslations('cs', '/i/2', { preloaded });
+
+    expect(instance.locale).toBe('cs');
+    expect(instance.t('live.title')).toBe('live 2 v1');
+
+    await call;
+    expect(runs).toEqual({ common: 2, live: 2, item: 2 });
+  });
+
+  it('never counts towards `loading`, and writes neither the locale nor the route', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloading = instance.preload('cs', '/i/2');
+
+    expect(instance.loading).toBe(false);
+    await preloading;
+    expect(instance.locale).toBe('en');
+    expect(instance.snapshot({ records: true }).route).toBe('/i/1');
+
+    // The next trigger loads what was requested before the preload.
+    await instance.setRoute('/i/3');
+    expect(instance.locale).toBe('en');
+    expect(instance.t('item.title')).toBe('item 3');
+  });
+
+  it('shows the params of its own preload when an earlier preload of other params lands after it', async () => {
+    const gate = held();
+    const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'item', locale: 'en', routes: items, loader: gate.loader }] });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    gate.calls[0].resolve({ title: 'item 1' });
+    await opened;
+
+    const toTwo = instance.preload('en', '/i/2');
+    const toThree = instance.preload('en', '/i/3');
+
+    gate.calls[2].resolve({ title: 'item 3' });
+
+    const preloaded = await toThree;
+
+    gate.calls[1].resolve({ title: 'item 2' });
+    await toTwo;
+
+    void instance.setRoute('/i/3', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('item.title')).toBe('item 3');
+    expect(gate.loader).toHaveBeenCalledTimes(3);
+  });
+
+  it('fetches at the call only what failed soft in its preload, and shows it all at once', async () => {
+    const runs: Runs = {};
+    const { instance, item, preloaded } = await failedSoft(runs);
+
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    expect(instance.loading).toBe(true);
+    expect(instance.t('live.title')).toBe('live 1 v1');
+    expect(item.loader).toHaveBeenCalledTimes(3);
+
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 v1');
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(runs.live).toBe(2);
+  });
+
+  it.each([
+    ['an invalidate()', (instance: I18n) => { instance.invalidate(); }],
+    ['a reconfiguration', (instance: I18n, runs: Runs) => instance.loadConfig({ parser: valueParser, log, loaders: setup(runs) })],
+    ['a seed into its namespace', (instance: I18n) => { instance.addTranslations({ en: { live: { note: 'Seeded' } } }); }],
+    ['another delivery of its loader', (instance: I18n) => instance.loadNamespace('live')],
+  ])('runs the loader again at the call after %s since the preload', async (_, between) => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('en', '/i/2');
+
+    await between(instance, runs);
+
+    const before = runs.live;
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    expect(instance.loading).toBe(true);
+    await call;
+    expect(runs.live).toBe(before + 1);
+    expect(instance.t('live.title')).toBe('live 2 v1');
+  });
+
+  it('serves one call: a token is ignored once a call used it', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('en', '/i/2');
+
+    await instance.setRoute('/i/2', { preloaded });
+
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    expect(instance.loading).toBe(true);
+    await call;
+    expect(runs.live).toBe(3);
+  });
+
+  it.each([
+    ['another instance\'s token', async (_: I18n, runs: Runs) => {
+      const other = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+      await other.loadTranslations('en', '/i/1');
+
+      return other.preload('en', '/i/2');
+    }],
+    ['a token of another locale', (instance: I18n) => instance.preload('cs', '/i/2')],
+    ['a token of another route', (instance: I18n) => instance.preload('en', '/i/3')],
+  ])('ignores %s', async (_, preload) => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await preload(instance, runs);
+    const before = runs.live;
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    expect(instance.loading).toBe(true);
+    await call;
+    expect(runs.live).toBe(before + 1);
+    expect(instance.t('live.title')).toBe('live 2 v1');
+  });
+
+  it('leaves a token to the activating call: a warm load neither uses nor spends it', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('en', '/i/2');
+
+    await instance.loadTranslations('en', '/i/2', { activate: false, preloaded });
+    expect(runs.live).toBe(3);
+
+    void instance.setRoute('/i/2', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('live.title')).toBe('live 2 v1');
+    expect(runs.live).toBe(3);
+  });
+
+  it('shares the fetch of a load in flight for its route, and refreshes it after the call showed it', async () => {
+    const live = held();
+    const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'live', locale: 'en', routes: items, cache: false as const, loader: live.loader }] });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    live.calls[0].resolve({ title: 'live 1' });
+    await opened;
+
+    const first = instance.preload('en', '/i/2');
+    const second = instance.preload('en', '/i/2');
+
+    expect(live.loader).toHaveBeenCalledTimes(2);
+    live.calls[1].resolve({ title: 'live 2 a' });
+    await first;
+
+    const preloaded = await second;
+
+    void instance.setRoute('/i/2', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('live.title')).toBe('live 2 a');
+    expect(live.loader).toHaveBeenCalledTimes(3);
+
+    live.calls[2].resolve({ title: 'live 2 b' });
+    await vi.waitFor(() => expect(instance.t('live.title')).toBe('live 2 b'));
+    expect(instance.loading).toBe(false);
+  });
+
+  it('shows a shared answer with the rest the call loads, then fetches it again', async () => {
+    const { instance, live, item, call } = await sharedAnswer();
+
+    expect(live.loader).toHaveBeenCalledTimes(2);
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 a');
+    expect(instance.t('item.title')).toBe('item 2');
+
+    await vi.waitFor(() => expect(live.loader).toHaveBeenCalledTimes(3));
+    live.calls[2].resolve({ title: 'live 2 b' });
+    await vi.waitFor(() => expect(instance.t('live.title')).toBe('live 2 b'));
+  });
+
+  it.each([
+    ['the instance is destroyed', (instance: I18n) => { instance.destroy(); }],
+    ['`loadConfig()` replaces the config', (instance: I18n) => { void instance.loadConfig({ parser: valueParser, log: quiet }); }],
+  ])('fetches a shared answer again only while it shows: not once %s', async (_, replace) => {
+    const { live, item, call, instance } = await sharedAnswer();
+
+    replace(instance);
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    await macrotask();
+    expect(live.loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches a shared answer again only while it shows: not for a route left meanwhile', async () => {
+    const { instance, live, item, call } = await sharedAnswer();
+    const next = instance.setRoute('/i/3');
+
+    live.calls[2].resolve({ title: 'live 3' });
+    item.calls[3].resolve({ title: 'item 3' });
+    await next;
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    await macrotask();
+    expect(live.loader).toHaveBeenCalledTimes(3);
+    expect(instance.t('live.title')).toBe('live 3');
+  });
+
+  it.each([
+    ['the instance is destroyed', async (instance: I18n) => { instance.destroy(); }],
+    ['a route that does not select it is taken', async (instance: I18n) => { await instance.setRoute('/about'); }],
+  ])('fetches a shared answer again only while it shows: not once %s while the call fetches its severed part again', async (_, leave) => {
+    const { instance, live, item, call } = await sharedAnswer();
+
+    instance.invalidate('en', 'item');
+    item.calls[2].resolve({ title: 'item 2 stale' });
+    await vi.waitFor(() => expect(item.loader).toHaveBeenCalledTimes(4));
+    await leave(instance);
+    item.calls[3].resolve({ title: 'item 2' });
+    await call;
+    await macrotask();
+    expect(live.loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('fetches a shared answer again once a seed lands on it while the call fetches its severed part again', async () => {
+    const { instance, live, item, call } = await sharedAnswer();
+
+    instance.invalidate('en', 'item');
+    item.calls[2].resolve({ title: 'item 2 stale' });
+    await vi.waitFor(() => expect(item.loader).toHaveBeenCalledTimes(4));
+    instance.addTranslations({ en: { live: { note: 'Note' } } });
+    instance.addTranslations({ en: { live: { other: 'Other' } } });
+    item.calls[3].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 a');
+
+    await vi.waitFor(() => expect(live.loader).toHaveBeenCalledTimes(3));
+    live.calls[2].resolve({ title: 'live 2 b' });
+    await vi.waitFor(() => expect(instance.t('live.title')).toBe('live 2 b'));
+    expect(instance.t('live.note')).toBe('Note');
+    expect(instance.t('live.other')).toBe('Other');
+  });
+
+  it('fetches a shared answer again only while it shows: not once an invalidation fetched it again', async () => {
+    const { instance, live, item, call } = await sharedAnswer();
+
+    instance.invalidate('en', 'live');
+    item.calls[2].resolve({ title: 'item 2' });
+    await vi.waitFor(() => expect(live.loader).toHaveBeenCalledTimes(3));
+    live.calls[2].resolve({ title: 'live 2 resumed' });
+    await call;
+    await macrotask();
+    expect(live.loader).toHaveBeenCalledTimes(3);
+    expect(instance.t('live.title')).toBe('live 2 resumed');
+  });
+
+  it('runs a loader whose source caches again rather than join a load that already fetched it', async () => {
+    const runs: Runs = {};
+    const source = { version: 1 };
+    const { item, loaders } = heldItem(runs, source);
+    const instance = new i18n({ parser: valueParser, log, loaders });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    item.calls[0].resolve({ title: 'item 1' });
+    await opened;
+
+    const first = instance.preload('en', '/i/2');
+
+    // The first one's loader whose source caches delivered; the other is out.
+    await macrotask();
+    source.version = 2;
+
+    const second = instance.preload('en', '/i/2');
+
+    item.calls[1].resolve({ title: 'item 2' });
+    await first;
+
+    const preloaded = await second;
+
+    expect(runs.live).toBe(3);
+    expect(item.loader).toHaveBeenCalledTimes(2);
+
+    void instance.setRoute('/i/2', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('live.title')).toBe('live 2 v2');
+  });
+
+  it('voids the answer of a loader whose source caches while a load of another route still fetches it', async () => {
+    const live = held();
+    const instance = new i18n({ parser: valueParser, log, loaders: [{ namespace: 'live', locale: 'en', cache: false as const, loader: live.loader }] });
+    const opened = instance.loadTranslations('en', '/a');
+
+    live.calls[0].resolve({ title: 'live a' });
+    await opened;
+
+    const earlier = instance.loadTranslations('en', '/b');
+    const preloading = instance.preload('en', '/c');
+
+    live.calls[2].resolve({ title: 'live c' });
+
+    const preloaded = await preloading;
+    const call = instance.setRoute('/c', { preloaded });
+
+    expect(instance.loading).toBe(true);
+    expect(live.loader).toHaveBeenCalledTimes(4);
+
+    live.calls[1].resolve({ title: 'live b' });
+    live.calls[3].resolve({ title: 'live c 2' });
+    await earlier;
+    await call;
+    expect(instance.t('live.title')).toBe('live c 2');
+  });
+
+  it('shows its preload\'s delivery over a seed that lands while the call loads the rest', async () => {
+    const runs: Runs = {};
+    const { instance, item, preloaded } = await failedSoft(runs);
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    instance.addTranslations({ en: { live: { title: 'Seeded', note: 'Note' } } });
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 v1');
+    expect(instance.t('live.note')).toBe('Note');
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(runs.live).toBe(2);
+  });
+
+  it('keeps a delivery of the same params another route landed while the call loads the rest', async () => {
+    const runs: Runs = {};
+    const source = { version: 1 };
+    const { instance, item, preloaded } = await failedSoft(runs, source);
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    source.version = 2;
+
+    const warm = instance.loadTranslations('en', '/j/2', { activate: false });
+
+    item.calls[3].resolve({ title: 'item 2' });
+    await warm;
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 v2');
+    expect(runs.live).toBe(3);
+  });
+
+  it('drops what its preload delivered when the call fails on control flow', async () => {
+    const redirect: unknown = { status: 307, location: '/login' };
+    const runs: Runs = {};
+    const { instance, item, preloaded } = await failedSoft(runs);
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    item.calls[2].reject(redirect);
+    await expect(call).rejects.toBe(redirect);
+    expect(instance.snapshot({ records: true }).route).toBe('/i/1');
+    expect(instance.t('live.title')).toBe('live 1 v1');
+    expect(instance.t('item.title')).toBe('item 1');
+  });
+
+  it('fetches its preload\'s part again when an invalidate() lands while the call loads the rest', async () => {
+    const runs: Runs = {};
+    const source = { version: 1 };
+    const { instance, item, preloaded } = await failedSoft(runs, source);
+    const call = instance.setRoute('/i/2', { preloaded });
+
+    source.version = 2;
+    instance.invalidate();
+    item.calls[2].resolve({ title: 'item 2 stale' });
+    await vi.waitFor(() => expect(item.loader).toHaveBeenCalledTimes(4));
+    item.calls[3].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 v2');
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(runs.live).toBe(3);
+  });
+
+  it('fetches its preload\'s part again when a hand-off of other params replaces what the loader showed', async () => {
+    const runs: Runs = {};
+    const { instance, item, preloaded } = await failedSoft(runs);
+    const call = instance.setRoute('/i/2', { preloaded });
+    const live = instance.snapshot({ records: true })?.records?.find(({ id }) => id.includes('"live"'));
+
+    instance.hydrate({ translations: { en: { live: { title: 'live 3' } } }, records: [{ id: live!.id, signature: paramsSignature({ id: '3' }) }] });
+    item.calls[2].resolve({ title: 'item 2' });
+    await call;
+    expect(instance.t('live.title')).toBe('live 2 v1');
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(runs.live).toBe(3);
+  });
+
+  it('leaves the `cache` window to its preload, which judged it at the request', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const runs: Runs = {};
+      const instance = new i18n({ parser: valueParser, log, cache: 1000, loaders: setup(runs).filter(({ namespace }) => namespace !== 'live') });
+
+      await instance.loadTranslations('en', '/i/1');
+      vi.setSystemTime(Date.now() + 600);
+
+      const preloaded = await instance.preload('en', '/i/2');
+
+      expect(runs).toEqual({ common: 1, item: 2 });
+      vi.setSystemTime(Date.now() + 600);
+      void instance.setRoute('/i/2', { preloaded });
+      expect(instance.loading).toBe(false);
+      expect(instance.t('item.title')).toBe('item 2');
+      expect(runs).toEqual({ common: 1, item: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('serves its call after a later request found the window elapsed', async () => {
+    const gate = held();
+    const instance = new i18n({ parser: valueParser, log, cache: 0, loaders: [{ namespace: 'item', locale: 'en', routes: items, loader: gate.loader }] });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    gate.calls[0].resolve({ title: 'item 1' });
+    await opened;
+
+    const toTwo = instance.preload('en', '/i/2');
+
+    gate.calls[1].resolve({ title: 'item 2' });
+
+    const preloaded = await toTwo;
+    const toThree = instance.preload('en', '/i/3');
+
+    gate.calls[2].resolve({ title: 'item 3' });
+    await toThree;
+    void instance.setRoute('/i/2', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(gate.loader).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['nothing else to fetch', false],
+    ['the rest to fetch', true],
+  ])('records what its preload showed once a later request found the window elapsed, with %s', async (_, down) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const runs: Runs = {};
+      const status = { down: false };
+      const loaders = [
+        { namespace: 'common', locale: 'en', loader: async () => { ran(runs, 'common'); if (status.down) throw new Error('down'); return { greeting: 'Hello' }; } },
+        ...setup(runs).filter(({ namespace }) => namespace === 'item'),
+      ];
+      const instance = new i18n({ parser: valueParser, log: quiet, cache: 1000, loaders });
+
+      await instance.loadTranslations('en', '/x');
+      vi.setSystemTime(Date.now() + 600);
+
+      const preloaded = await instance.preload('en', '/i/2');
+
+      expect(instance.t('item.title')).toBe('item 2');
+      vi.setSystemTime(Date.now() + 600);
+      status.down = down;
+      await instance.preload('en', '/i/3');
+      status.down = false;
+      await instance.setRoute('/i/2', { preloaded });
+      expect(instance.snapshot({ records: true }).records?.some(({ id }) => id.includes('"item"'))).toBe(true);
+
+      await instance.setRoute('/i/2');
+      expect(runs).toEqual({ common: down ? 3 : 2, item: 2 });
+      expect(instance.t('item.title')).toBe('item 2');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records what its preload parked and a call since showed, once a later request found the window elapsed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const runs: Runs = {};
+      const status = { down: false };
+      const loaders = [
+        { namespace: 'common', locale: 'en', loader: async () => { ran(runs, 'common'); if (status.down) throw new Error('down'); return { greeting: 'Hello' }; } },
+        ...setup(runs).filter(({ namespace }) => namespace === 'item'),
+      ];
+      const instance = new i18n({ parser: valueParser, log: quiet, cache: 1000, loaders });
+
+      await instance.loadTranslations('en', '/i/1');
+
+      const preloaded = await instance.preload('en', '/i/2');
+
+      await instance.setRoute('/i/2');
+      vi.setSystemTime(Date.now() + 1200);
+      status.down = true;
+      await instance.preload('en', '/i/3');
+      status.down = false;
+      await instance.setRoute('/i/2', { preloaded });
+      expect(instance.snapshot({ records: true }).records?.some(({ id }) => id.includes('"item"'))).toBe(true);
+
+      await instance.setRoute('/i/2');
+      expect(runs).toEqual({ common: 3, item: 3 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts a window for what its preload showed when it records it again', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      let runs = 0;
+      const loaders = [{
+        namespace: 'item', locale: 'en', routes: items,
+        loader: async ({ params }: Loader.Props) => { runs += 1; if (params.id === '3') throw new Error('down'); return { title: `item ${params.id}` }; },
+      }];
+      const instance = new i18n({ parser: valueParser, log: quiet, cache: 1000, loaders });
+
+      await instance.loadTranslations('en', '/x');
+
+      const preloaded = await instance.preload('en', '/i/2');
+
+      vi.setSystemTime(Date.now() + 1000);
+      await instance.preload('en', '/i/3');
+      await instance.setRoute('/i/2', { preloaded });
+      await instance.setRoute('/i/2');
+      expect(runs).toBe(2);
+
+      vi.setSystemTime(Date.now() + 1000);
+      await instance.setRoute('/i/2');
+      expect(runs).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a seed that lands while the call loads the rest over what its preload showed before an expiry', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const runs: Runs = {};
+      const common = held();
+      const loaders = [
+        { namespace: 'common', locale: 'en', loader: common.loader },
+        ...setup(runs).filter(({ namespace }) => namespace === 'item'),
+      ];
+      const instance = new i18n({ parser: valueParser, log: quiet, cache: 1000, loaders });
+      const opened = instance.loadTranslations('en', '/x');
+
+      common.calls[0].resolve({ greeting: 'Hello' });
+      await opened;
+      vi.setSystemTime(Date.now() + 600);
+
+      const preloaded = await instance.preload('en', '/i/2');
+
+      vi.setSystemTime(Date.now() + 600);
+
+      const later = instance.preload('en', '/i/3');
+
+      common.calls[1].reject(new Error('down'));
+      await later;
+
+      const call = instance.setRoute('/i/2', { preloaded });
+
+      instance.addTranslations({ en: { item: { title: 'Seeded' } } });
+      common.calls[2].resolve({ greeting: 'Hello' });
+      await call;
+      expect(instance.t('item.title')).toBe('Seeded');
+      expect(runs).toEqual({ item: 2 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('judges the `cache` window, and the call shows what it fetched without judging it again', async () => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, cache: 0, loaders: setup(runs).filter(({ namespace }) => namespace !== 'live') });
+
+    await instance.loadTranslations('en', '/i/1');
+
+    const preloaded = await instance.preload('en', '/i/2');
+
+    expect(runs).toEqual({ common: 2, item: 2 });
+
+    void instance.setRoute('/i/2', { preloaded });
+    expect(instance.loading).toBe(false);
+    expect(instance.t('item.title')).toBe('item 2');
+    expect(runs).toEqual({ common: 2, item: 2 });
+  });
+
+  it('runs a loader whose source caches that a hand-off holds back', async () => {
+    const server = new i18n({ parser: valueParser, log, loaders: setup({}) });
+
+    await server.loadTranslations('en', '/i/1');
+
+    const runs: Runs = {};
+    const client = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    client.hydrate(server.snapshot({ records: true }));
+    await client.loadTranslations('en', '/i/1');
+    expect(runs).toEqual({});
+
+    await client.preload('en', '/i/1');
+    expect(runs).toEqual({ live: 1 });
+  });
+
+  it('rejects with the control flow its loader threw, and one nobody awaits raises nothing', async () => {
+    const redirect: unknown = { status: 307, location: '/login' };
+    const instance = new i18n({
+      parser: valueParser,
+      log: quiet,
+      loaders: [
+        { namespace: 'common', locale: 'en', loader: async () => ({ greeting: 'Hello' }) },
+        { namespace: 'secret', locale: 'en', routes: ['/secret'], loader: async () => { throw redirect; } },
+      ],
+    });
+
+    await instance.loadTranslations('en', '/');
+
+    void instance.preload('en', '/secret');
+    await expect(instance.preload('en', '/secret')).rejects.toBe(redirect);
+    expect(instance.locale).toBe('en');
+    expect(instance.snapshot({ records: true }).route).toBe('/');
+  });
+
+  it('resolves to `undefined` once the instance is destroyed, or when no locale resolves', async () => {
+    const live = held();
+    const instance = new i18n({ parser: valueParser, log: quiet, loaders: [{ namespace: 'live', locale: 'en', routes: items, cache: false as const, loader: live.loader }] });
+    const opened = instance.loadTranslations('en', '/i/1');
+
+    live.calls[0].resolve({ title: 'live 1' });
+    await opened;
+    expect(await instance.preload('fr', '/i/2')).toBeUndefined();
+
+    const preloading = instance.preload('en', '/i/2');
+
+    instance.destroy();
+    live.calls[1].resolve({ title: 'live 2' });
+    expect(await preloading).toBeUndefined();
+    expect(await instance.preload('en', '/i/3')).toBeUndefined();
+    expect(instance.t('live.title')).toBe('live 1');
+  });
+
+  it.each([
+    ['no options', undefined],
+    ['no token', { preloaded: undefined }],
+  ])('loads with %s as an activating call does without a preload', async (_, options) => {
+    const runs: Runs = {};
+    const instance = new i18n({ parser: valueParser, log, loaders: setup(runs) });
+
+    await instance.loadTranslations('en', '/i/1');
+    await instance.loadTranslations('en', '/i/2', { activate: false });
+
+    const call = instance.setRoute('/i/2', options);
+
+    // The cached loader's params were parked; the one whose source caches runs again.
+    expect(instance.loading).toBe(true);
+    expect(instance.t('live.title')).toBe('live 1 v1');
+    await call;
+    expect(runs).toEqual({ common: 1, live: 3, item: 2 });
+    expect(instance.t('item.title')).toBe('item 2');
+
+    await instance.loadTranslations('cs', '/i/2', options);
+    expect(instance.locale).toBe('cs');
+    expect(runs).toEqual({ common: 2, live: 4, item: 3 });
   });
 });
 

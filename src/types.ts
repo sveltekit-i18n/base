@@ -90,7 +90,7 @@ export namespace Config {
 
   export type T<P extends Parser.Params = Parser.Params, O = Parser.Output, S = any> = {
     /**
-     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again when the params its `routes` capture change, once the `config.cache` window elapses, or after `invalidate()` is called. A loader with `cache: false` runs on every load trigger that selects it.
+     * You can use loaders to define your asyncronous translation load. All loaded data are stored so loader is triggered only once – in case there is no previous version of the translation. It can get triggered again when the params its `routes` capture change, once the `config.cache` window elapses, or after `invalidate()` is called. A loader with `cache: false` runs on every load trigger that selects it, except a call handed the token of a `preload()` that ran it.
      */
     loaders?: readonly Loader.LoaderModule[];
     /**
@@ -183,7 +183,7 @@ export namespace Config {
      */
     basePath?: string;
     /**
-     * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next activating load trigger (`setLocale()`, `setRoute()`, `loadTranslations()`) runs its loaders again; a warm load – `loadTranslations(…, { activate: false })` or `loadNamespace()` – fills the tables without evaluating the window. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS. A loader with `cache: false` is outside the window.
+     * Time in milliseconds the loaded translations stay fresh for. Once a locale's translations are older, the next activating load trigger (`setLocale()`, `setRoute()`, `loadTranslations()`) or `preload()` runs its loaders again; a warm load – `loadTranslations(…, { activate: false })` or `loadNamespace()` – fills the tables without evaluating the window, and a call handed a `preload()`'s token leaves it to that preload. By default, loaded translations never expire – call `invalidate()` (or set a finite `cache`) when your translation source can change at runtime, e.g. a CMS. A loader with `cache: false` is outside the window.
      *
      * @default Number.POSITIVE_INFINITY
      *
@@ -212,6 +212,8 @@ export namespace Config {
 }
 
 declare const operator: unique symbol;
+
+declare const preloaded: unique symbol;
 
 export namespace Extension {
   export type Input = any;
@@ -347,7 +349,7 @@ export namespace Loader {
     */
     routes?: readonly Route[];
     /**
-    * Set to `false` when the loader's source does the caching – a SvelteKit remote `query`, an SWR layer, an HTTP cache. The core then keeps no freshness of its own for it: it runs on every load trigger that selects it, its data is applied each time like any refetch, and `config.cache` does not apply to it – refreshing the source is the app's business. Data hydrated from a snapshot still holds it back for the pass it arrived with, until an activating trigger asks for another locale or route; `invalidate()` ends that hand-off and discards a fetch of it in flight. Only `false` is accepted.
+    * Set to `false` when the loader's source does the caching – a SvelteKit remote `query`, an SWR layer, an HTTP cache. The core then keeps no freshness of its own for it: it runs on every load trigger that selects it – unless a fetch of it for the same params and route is in flight, which it shares – its data is applied each time like any refetch, and `config.cache` does not apply to it – refreshing the source is the app's business. A call handed a `preload()`'s token shows what the preload fetched instead of running it again; what the preload shared from a fetch already in flight is shown, then fetched again. Data hydrated from a snapshot still holds it back for the pass it arrived with, until an activating trigger asks for another locale or route, or a `preload()` runs; `invalidate()` ends that hand-off and discards a fetch of it in flight. Only `false` is accepted.
     */
     cache?: false;
   };
@@ -400,6 +402,15 @@ export namespace Loader {
      */
     id: string | null;
   };
+
+  /**
+   * What `preload()` resolves to: a token for the next activating call of the
+   * same locale and route, which takes it as `{ preloaded }` and shows what the
+   * preload fetched instead of fetching it again. It serves one call, of the
+   * instance that made it. Hold it by reference: it carries no data, and a
+   * copy is no token.
+   */
+  export type Preloaded = { readonly [preloaded]: true };
 
   /**
    * Loads translation data. Receives the load context (`locale`, `namespace`, `route`, `params`) –

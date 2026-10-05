@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { effect, effectsRun, flushSync } from '../tests/utils/effect.svelte.js';
 
 import { collect } from './collect.js';
-import { key, loaders, log, n, table } from './data.js';
+import { key, loaders, log, n, navigate, table } from './data.js';
 
 const record = collect(import.meta.filename);
 
@@ -83,6 +83,29 @@ it('weak collection entries', async () => {
   }
 
   expect(i18n.translations.en).toEqual({ 'item.id': '1000' });
+});
+
+it('loader calls of a navigation', async () => {
+  const routes = [/^\/item\/(?<id>\d+)$/];
+  const calls = { live: 0, item: 0 };
+  const i18n = new I18n({
+    parser: counting().parser,
+    log,
+    loaders: [
+      { locale: 'en', namespace: 'live', routes, cache: false, loader: async ({ params }) => { calls.live++; return { id: params.id ?? '' }; } },
+      { locale: 'en', namespace: 'item', routes, loader: async ({ params }) => { calls.item++; return { id: params.id ?? '' }; } },
+    ],
+  });
+
+  await i18n.loadTranslations('en', '/item/0');
+  Object.assign(calls, { live: 0, item: 0 });
+
+  for (let id = 1; id <= 100; id++) await navigate(i18n, `/item/${id}`);
+
+  record('loader calls, 100 navigations to new params, a loader with cache: false', 'count', 'calls', calls.live);
+  record('loader calls, 100 navigations to new params, a cached loader', 'count', 'calls', calls.item);
+
+  expect(i18n.translations.en).toEqual({ 'live.id': '100', 'item.id': '100' });
 });
 
 it('effect runs', async () => {
