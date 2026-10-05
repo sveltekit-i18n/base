@@ -96,8 +96,8 @@ translation state, loading, caching, route matching, and preprocessing — but
   bundler, not at publish time. The public surface is one reactive instance:
   properties (`locale`, `locales`, `loading`, `initialized`, `translations`,
   `rawTranslations`), reactive functions (`t`, `l`), promise-returning
-  methods (`loadTranslations`, `loadNamespace`, `loadConfig`, `setLocale`,
-  `setRoute`) and the synchronous `addTranslations`, `snapshot`, `hydrate`,
+  methods (`loadTranslations`, `preload`, `loadNamespace`, `loadConfig`,
+  `setLocale`, `setRoute`) and the synchronous `addTranslations`, `snapshot`, `hydrate`,
   `invalidate` and `destroy`.
   There are no stores and no `.get()` duals — reads are plain
   property/method access and are reactive wherever reads are tracked.
@@ -130,6 +130,38 @@ translation state, loading, caching, route matching, and preprocessing — but
   own, counts towards `loading` only once an activating trigger joins it, and
   never evaluates `cache` expiry: it fills the tables and leaves their
   freshness to the activating triggers, which the `cache` docs promise.
+  `preload()` is the request of a navigation that may never commit: it shows
+  nothing and lands its fetches as a warm load does, but it judges freshness
+  as a request — it evaluates expiry, ends a hand-off's pass (`#handedOff`)
+  and runs a `cache: false` loader — and starts or joins exactly what a warm
+  load would, except a load holding a `cache: false` fetch that already left
+  `#fetches` (it delivered before the request). It resolves to a token: a
+  frozen empty null-prototype object, whose state (`Preload`: config,
+  `#epoch`, locale, route, the `answers` — what each request delivered and
+  what its loader showed then — and the `earlier` loads of another route
+  holding a fetch of an answered `cache: false` loader) lives in
+  `#preloads`, a `WeakMap` keyed by the token. `#load` deletes the entry as it
+  reads it, used or ignored, so a pass that keeps a read token retains
+  nothing; a token serves the next
+  activating call of the same locale, route, config and `#epoch` (bumped by
+  `invalidate()` and a reconfiguration, never by expiry: the preload judged
+  the window at its own request), which then evaluates no expiry. An
+  answer serves while its loader still shows what it showed then or the
+  answer itself, and, for `cache: false`, while no `earlier` load still in
+  flight holds an unsevered fetch of it. An answer the loader shows whose
+  record an expiry since dropped is recorded again (`#rerecord`), and its
+  locale stamped, without applying it again. The call claims an answer not yet
+  shown as a `handed` `Unparked`; with nothing else to fetch it applies at
+  once, and otherwise lands with the rest. At the settle a handed claim whose
+  loader shows neither what it showed then nor a delivery of the same
+  signature is severed, so the call fetches it again (`#resume`), and a
+  seed's masked copy (`#addSanitized`) re-points `shown`, so a seed is no
+  replacement. A `cache: false` answer from a fetch the preload shared or
+  joined predates the request: the call shows it, then runs a warm
+  `#refresh` of it, after the call's load settles, while the instance and
+  its config stand, the loader still shows that answer (`#shows`: a seed's
+  masked copy of it counts, through `#maskedFrom`) and its params are still
+  wanted.
   There is no loader-trigger store,
   no promise purge, no `toPromise()`. A loader that throws fails soft: it is
   logged and the rest of the load lands. The one exception is SvelteKit's
@@ -271,7 +303,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   `loadNamespace` off its routes — and keeps no trigger that selects it from
   running it. Only a hand-off suppresses it, through `#handedOff`, for the
   pass the envelope arrived with — until an activating trigger asks for
-  another locale or route, or `invalidate()` covers it.
+  another locale or route, a `preload()` runs, or `invalidate()` covers it —
+  and only a `preload()` token keeps the call it is handed to from running it
+  again.
 - **The SSR hand-off is a pair.** `snapshot({ records: true })` serializes the
   data, the records of the loaders that delivered it (their `id` and params
   signature — never a reference), the active locale and the route;
@@ -371,8 +405,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   whose hold-back only a hand-off gives, and a pass without that object (no
   server load, a copied payload) build their own instance, from the snapshot
   when there is one. The browser keeps one per tab, and only the
-  pass that builds it activates — every later pass is a warm load of one
-  target, since it may be a preload. `use()` activates at commit, comparing the
+  pass that builds it activates — every later pass is a `preload()` of one
+  target, since it may be a hover, and keeps the token on the pass; the
+  commit hands it on, to the switch (`loadTranslations`) and to the stay
+  (`setRoute`). `use()`
+  activates at commit, comparing the
   server's answer with the last commit's (the per-result `tab` memory), so a
   client `setLocale()` stands until the answer changes; an answer given before
   the active locale changed changes nothing, and neither does one read from a
@@ -381,9 +418,23 @@ translation state, loading, caching, route matching, and preprocessing — but
   switching to (`tab.switching`) counts as the active one while the active
   locale is still the one it switched from — for the comparison and for the
   warm target — so the wiring's own switch is no client change, while a client
-  `setLocale()` that lands meanwhile is. A switch that fails, unless a later
-  call landed its locale, puts the previous answer back, so the next commit
-  with the same answer switches again. The context key and the
+  `setLocale()` that lands meanwhile is. The last commit (`tab.commits`) owns
+  the answer: once what it waits on settled (`tab.lapse`) — its switch, or,
+  for a stay committed right after the commit that started that switch or a
+  stay that carried it on, while that switch and its stays are still under
+  way and the locale is where the switch started, that switch and every such
+  stay (`switching.stays`) — a failure that left the tab short of
+  the locale switched to gives the previous answer back (`answered()`, read
+  as the tab stands whenever it is read), and the next commit with the same
+  answer switches again. Short means the tab has not shown that locale since
+  the switch started (`switching.reached`, which stays set), whoever's call
+  landed it, an undo's included; a switch to the locale it started from fell
+  short unless a call landed. A prerendered pass
+  whose locale the build's `preferredLocale` did not give takes the tab's
+  answer at its commit. A pass preloaded while a switch was under way (`pass.via`) that
+  failed by its commit is current at the locale it saw and at either locale
+  that switch's undo can put back: the one active as it started, or the one
+  the tab was heading for then. The context key and the
   key of the pass in `data` are one `Symbol.for`. `initLocale` and
   `extensions` are stripped from the instances it builds: `initLocale` is a
   negotiation candidate instead, and the wiring drives the core while

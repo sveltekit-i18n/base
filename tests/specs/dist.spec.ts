@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import I18n from '../../dist/index.js';
+import I18n, { type Loader } from '../../dist/index.js';
 import { read } from '../../src/utils.js';
 import { describeCost } from '../utils/cost.js';
 import { describeRegistry } from '../utils/registry.js';
@@ -24,6 +24,26 @@ describe('published artifact', () => {
 
     expect(instance.locale).toBe('en');
     expect(instance.t('common.greeting')).toBe('Hi');
+  });
+
+  it('hands a preload\'s token to the commit of the same locale and route', async () => {
+    let runs = 0;
+    const instance = new I18n({
+      parser,
+      log,
+      loaders: [{ namespace: 'item', locale: 'en', cache: false, loader: async () => ({ title: `v${runs += 1}` }) }],
+    });
+
+    const preloaded: Loader.Preloaded | undefined = await instance.preload('en', '/');
+
+    expect(preloaded).toBeDefined();
+    expect(instance.locale).toBe(undefined);
+
+    await instance.loadTranslations('en', '/', { preloaded });
+
+    expect(instance.locale).toBe('en');
+    expect(instance.t('item.title')).toBe('v1');
+    expect(runs).toBe(1);
   });
 
   it('keeps a locale named like an `Object.prototype` member as an own key', async () => {

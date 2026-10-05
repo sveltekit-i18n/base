@@ -53,8 +53,26 @@ type Call = {
 /** What an undo put back: whether the request changed, and the control flow the undone calls threw. */
 type Undone = { changed: boolean; threw: ControlFlow[] };
 
-/** A parked delivery an activating load counts on, with the request it serves. */
-type Unparked = { request: LoadRequest; delivery: Delivery };
+/**
+ * A delivery an activating load counts on, with the request it serves: a
+ * parked one, or one a preload's token `handed` it, with what its loader
+ * showed when the call claimed it.
+ */
+type Unparked = { request: LoadRequest; delivery: Delivery; handed?: { shown: Delivery | undefined } };
+
+/**
+ * What a preload fetched for one of its requests, what the loader showed as it
+ * resolved, and whether it shared a fetch of a loader with `cache: false`
+ * already in flight before it asked.
+ */
+type Answer = { delivery: Delivery; shown: Delivery | undefined; shared: boolean };
+
+/**
+ * What a preload's token stands for: the request, under the config and the
+ * invalidations it saw, its answers, and the loads of other routes then
+ * fetching a loader with `cache: false` it answered.
+ */
+type Preload = { config: object | undefined; epoch: number; locale: Config.Locale; route: string; answers: Answer[]; earlier: InflightLoad[] };
 
 /**
  * One loader's fetch in flight, which every load from its route that asks the
@@ -143,6 +161,10 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // and a reconfiguration hands them on to the same loaders of the new config.
   #deliveries = new Map<Loader.Resolved, Delivery>();
 
+  // The delivery each seed's masked copy in `#deliveries` stands for: a seed is
+  // no replacement, so what counts on a delivery counts on its copy.
+  #maskedFrom = new WeakMap<Delivery, Delivery>();
+
   #externalTranslations: Translations.SerializedTranslations = {};
 
   // The params signature the next trigger asks each loader for:
@@ -168,7 +190,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   // records keep no trigger that selects them from running them. It serves the
   // pass it arrived with: until an activating trigger asks for another locale
   // or route than the hand-off named, or than the first activating trigger
-  // after it where the hand-off named none.
+  // after it where the hand-off named none, or until a preload, the request
+  // of a navigation.
   #handedOff = new Map<Loader.Resolved, string>();
 
   #handOffPass: { locale?: Config.Locale; route?: string } = {};
@@ -201,6 +224,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * call that came later and has not failed keeps what it asked for.
    */
   #calls: Call[] = [];
+
+  // Moved by `invalidate()` and by a reconfiguration: a preload's answers
+  // predate one that moved it. Expiry leaves it: a preload judged the window
+  // at its own request, and a later request's judgement is no newer for it.
+  #epoch = 0;
+
+  // What each token of `preload()` stands for, until a call reads it.
+  #preloads = new WeakMap<object, Preload>();
 
   #destroyed = false;
 
@@ -404,7 +435,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return this.#stand(call, this.#route !== undefined ? this.#load(locale, this.#route, call) : Promise.resolve());
   });
 
-  setRoute = (input: string): Promise<void> => untrack(() => {
+  /**
+   * With `{ preloaded }`, the token of a `preload()` for the requested locale
+   * and this route, it shows what that preload fetched — see
+   * `loadTranslations()`.
+   */
+  setRoute = (input: string, options?: { preloaded?: Loader.Preloaded }): Promise<void> => untrack(() => {
     if (this.#inert('setRoute')) return Promise.resolve();
 
     const route = withoutBasePath(input, this.#config?.basePath);
@@ -416,7 +452,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       this.#route = route;
     }
 
-    return this.#stand(call, this.#requestedLocale !== undefined ? this.#load(this.#requestedLocale, route, call) : Promise.resolve());
+    return this.#stand(call, this.#requestedLocale !== undefined ? this.#load(this.#requestedLocale, route, call, undefined, options?.preloaded) : Promise.resolve());
   });
 
   /**
@@ -428,11 +464,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * it. It
    * leaves `cache` expiry to the next activating trigger. A loader's
    * `redirect()` or `error()` below 500 rejects it all the same.
+   *
+   * `{ preloaded }` hands an activating call the token of a `preload()` for
+   * the same locale and route. The call then evaluates no `cache` window — the
+   * preload did — and shows what the preload fetched instead of fetching it
+   * again, at once when nothing else is left to fetch, and otherwise with the
+   * rest, in one go. It fetches what the preload did not deliver, and anything
+   * of which an invalidation, a seed or another delivery replaced what the
+   * loader showed since. A token serves one call; another instance's, one of
+   * another locale or route, one used already and one older than a
+   * `loadConfig()` or an `invalidate()` are ignored, as is any with
+   * `{ activate: false }`. A window a later request found elapsed does not
+   * void it: the preload judged the window at its own request.
    */
   loadTranslations = (
     locale: Config.LocaleInput<LocaleUnion>,
     route?: string,
-    { activate = true }: { activate?: boolean } = {},
+    { activate = true, preloaded }: { activate?: boolean; preloaded?: Loader.Preloaded } = {},
   ): Promise<void> => untrack(() => {
     if (!locale || this.#inert('loadTranslations') || this.#unserved(locale)) return Promise.resolve();
 
@@ -445,7 +493,73 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     this.#requestedLocale = locale;
     this.#route = target;
 
-    return this.#stand(call, this.#load(locale, target, call));
+    return this.#stand(call, this.#load(locale, target, call, undefined, preloaded));
+  });
+
+  /**
+   * A request for `locale` on `route` (the current route by default) that
+   * shows nothing new by itself: what a router's `load` runs ahead of a
+   * navigation, a hover's included. Like an activating call it evaluates the
+   * `cache` window, ends the pass a hand-off serves, and runs a loader with
+   * `cache: false` — sharing a fetch of it for the same params and route
+   * already in flight. Like `{ activate: false }` it writes neither the locale
+   * nor the route, does not count towards `loading`, and lands what it fetched
+   * as a warm load does. It resolves to a token for the next activating call of
+   * that locale and route, which shows what it fetched (see
+   * `loadTranslations()`), and to `undefined` once the instance was destroyed
+   * or when nothing serves the locale. A loader's `redirect()` or `error()`
+   * below 500 rejects it; one nobody awaits never becomes an unhandled
+   * rejection.
+   */
+  preload = (locale: Config.LocaleInput<LocaleUnion>, route?: string): Promise<Loader.Preloaded | undefined> => untrack(() => {
+    const resolved = !locale || this.#inert('preload') || this.#unserved(locale) ? undefined : this.#resolveLocale(locale);
+
+    if (!resolved) return Promise.resolve(undefined);
+
+    const target = route === undefined ? this.#route ?? '' : withoutBasePath(route, this.#config?.basePath);
+
+    this.#invalidateExpired(resolved, this.#config?.fallbackLocale);
+    this.#handedOff.clear();
+
+    const config = this.#config;
+    const epoch = this.#epoch;
+    const matching = this.#matchLoaders(resolved, target);
+    const key = this.#inflightKey(resolved, target, matching);
+    const requests = this.#unloaded(matching);
+    const fresh = requests.filter(({ loader }) => loader.cache === false);
+    const fetching = new Set(this.#fetches);
+    const isFresh = ({ request }: Fetch) => fresh.some(({ loader, signature }) => request.loader === loader && request.signature === signature);
+
+    const earlier = Array.from(this.#inflight).filter(({ fetches }) => fetches.some((fetch) => fetch.route !== target && isFresh(fetch)));
+
+    // A fetch of a loader with `cache: false` that delivered before the request
+    // is no answer to it, so a load that holds one is not joined.
+    const joinable = requests.length ? this.#joinable(key, requests) : undefined;
+    const joined = joinable?.fetches.filter(isFresh).every((fetch) => this.#fetches.has(fetch)) ? joinable : undefined;
+    const entry = joined ?? (requests.length ? this.#start(resolved, target, key, requests, [], []) : undefined);
+    const fetches = entry?.fetches ?? [];
+
+    const preloaded = (entry?.promise ?? Promise.resolve()).then(() => Promise.all(fetches.map(({ outcome }) => outcome))).then((fetched) => {
+      if (this.#destroyed) return undefined;
+
+      const answers = requests.flatMap(({ loader, signature }): Answer[] => {
+        const index = fetches.findIndex(({ request }) => request.loader === loader && request.signature === signature);
+        const [delivery] = fetched[index]?.deliveries ?? [];
+        const shared = loader.cache === false && (joined !== undefined || fetching.has(fetches[index]));
+
+        return delivery ? [{ delivery, shown: this.#deliveries.get(loader), shared }] : [];
+      });
+
+      const token = Object.freeze(Object.create(null) as Loader.Preloaded);
+
+      this.#preloads.set(token, { config, epoch, locale: resolved, route: target, answers, earlier: earlier.filter((load) => this.#inflight.has(load)) });
+
+      return token;
+    });
+
+    preloaded.catch(() => undefined);
+
+    return preloaded;
   });
 
   /**
@@ -502,6 +616,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * expiry leaves it alone.
    */
   #invalidate(sanitized: Config.Locale | undefined, namespace?: Loader.Key, { expiry = false } = {}): void {
+    if (!expiry) this.#epoch += 1;
+
     const locales = sanitized === undefined ? Object.keys(this.#namespaceRecords) : [sanitized];
 
     locales.forEach((recorded) => {
@@ -944,7 +1060,16 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
         ? maskOutputKeys(masked, new Set(Object.keys(toDotNotation(Object.fromEntries(own), preprocess === 'preserveArrays') ?? {})), loader.namespace, preprocess === 'preserveArrays') ?? {}
         : masked;
 
-      this.#deliveries.set(loader, { ...delivery, data: dotted });
+      const seeded = { ...delivery, data: dotted };
+
+      this.#maskedFrom.set(seeded, this.#maskedFrom.get(delivery) ?? delivery);
+
+      // A call counting on what the loader showed counts on it seeded.
+      this.#inflight.forEach(({ unparked }) => unparked.forEach(({ handed }) => {
+        if (handed?.shown === delivery) handed.shown = seeded;
+      }));
+
+      this.#deliveries.set(loader, seeded);
     });
   }
 
@@ -1564,17 +1689,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * activating `call` — never registers either, until an activating trigger
    * joins it.
    */
-  #load(requestedLocale: Config.Locale, route: string, call?: Call, namespace?: Loader.Key): Promise<void> {
+  #load(requestedLocale: Config.Locale, route: string, call?: Call, namespace?: Loader.Key, preloaded?: Loader.Preloaded): Promise<void> {
     const locale = this.#resolveLocale(requestedLocale);
 
     if (!locale) return Promise.resolve();
+
+    const preload = call ? this.#preloadOf(preloaded, locale, route) : undefined;
 
     // Expiry is evaluated per activating trigger, BEFORE the in-flight check.
     // That order is safe: a locale is stamped only once its data arrived, so a
     // shared in-flight load cannot be invalidated by its own duplicates. A
     // warm trigger fills the tables and leaves their freshness to the next
-    // activating one.
-    if (call) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
+    // activating one, and a call with a preload's token to that preload.
+    if (call && !preload) this.#invalidateExpired(locale, this.#config?.fallbackLocale);
 
     const matching = namespace === undefined ? this.#matchLoaders(locale, route) : this.#matchNamespace(locale, namespace, route);
 
@@ -1585,7 +1712,43 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       this.#passHandOff(locale, route);
     }
 
-    return this.#loadSelection(locale, route, this.#inflightKey(locale, route, matching), matching, call ? [call] : []);
+    return this.#loadSelection(locale, route, this.#inflightKey(locale, route, matching), matching, call ? [call] : [], preload);
+  }
+
+  /** What `token` stands for while it serves a call for `locale` on `route`. A call reads it once, used or not. */
+  #preloadOf(token: Loader.Preloaded | undefined, locale: Config.Locale, route: string): Preload | undefined {
+    if (!token) return undefined;
+
+    const preload = this.#preloads.get(token);
+
+    this.#preloads.delete(token);
+
+    if (preload && preload.config === this.#config && preload.epoch === this.#epoch && preload.locale === locale && preload.route === route) return preload;
+
+    logger.debug('Ignoring a preload token that does not serve this call.');
+
+    return undefined;
+  }
+
+  /**
+   * The requests `preload` answered: while the loader shows what it showed as
+   * the preload resolved, or the answer itself, and — for a loader with
+   * `cache: false` — no load of another route that was fetching it then is
+   * still in flight, to land after the answer.
+   */
+  #answered({ answers, earlier }: Preload, requests: LoadRequest[]): Array<{ request: LoadRequest; answer: Answer }> {
+    return requests.flatMap((request) => {
+      const { loader, signature } = request;
+      const answer = answers.find(({ delivery }) => delivery.loader === loader && delivery.signature === signature);
+      const shown = this.#deliveries.get(loader);
+
+      if (!answer || (shown !== answer.shown && shown !== answer.delivery)) return [];
+
+      const overtaken = loader.cache === false && earlier.some((load) => this.#inflight.has(load) && !load.severed.has(loader)
+        && load.fetches.some((fetch) => fetch.request.loader === loader && fetch.request.signature === signature));
+
+      return overtaken ? [] : [{ request, answer }];
+    });
   }
 
   /**
@@ -1600,10 +1763,22 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     return JSON.stringify([locale, route, ...matching.map(({ loader, signature }) => [candidates.indexOf(loader), signature])]);
   }
 
-  /** Joins the load in flight under `key` that delivers what `selected` lacks, or starts one. */
-  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[]): Promise<void> {
-    const requests = this.#unloaded(selected);
-    const unparked = calls.length ? this.#claimParked(selected) : [];
+  /**
+   * Joins the load in flight under `key` that delivers what `selected` lacks,
+   * or starts one. What `preload` answered lands with it instead of being
+   * fetched.
+   */
+  #loadSelection(locale: Config.Locale, route: string, key: string, selected: LoadRequest[], calls: Call[], preload?: Preload): Promise<void> {
+    const unloaded = this.#unloaded(selected);
+    const answered = preload ? this.#answered(preload, unloaded) : [];
+    const requests = answered.length ? unloaded.filter((request) => !answered.some((answer) => answer.request === request)) : unloaded;
+    const handed = answered
+      .filter(({ request, answer }) => this.#deliveries.get(request.loader) !== answer.delivery)
+      .map(({ request, answer }): Unparked => ({ request, delivery: answer.delivery, handed: { shown: answer.shown } }));
+    const unparked = calls.length ? [...this.#claimParked(selected), ...handed] : [];
+    const refresh = answered.filter(({ answer }) => answer.shared);
+
+    if (calls.length) this.#rerecord(answered.map(({ answer }) => answer.delivery).filter((delivery) => this.#deliveries.get(delivery.loader) === delivery));
 
     if (!requests.length) {
       // Nothing to fetch — the locale still becomes active (its data is
@@ -1625,15 +1800,54 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
         this.#activate(locale);
       }
 
+      this.#refresh(locale, route, refresh);
+
       return Promise.resolve();
     }
 
-    // What is parked lands with the load, so a call it fails puts it back.
-    const inflight = this.#joinable(key, requests);
+    // What is parked lands with the load, so a call it fails puts it back. A
+    // load in flight may deliver what the token answered a second time.
+    const inflight = answered.length ? undefined : this.#joinable(key, requests);
 
     if (inflight) return this.#join(inflight, calls, unparked);
 
-    return this.#start(locale, route, key, requests, calls, unparked);
+    const { promise } = this.#start(locale, route, key, requests, calls, unparked);
+
+    if (refresh.length) promise.then(() => this.#refresh(locale, route, refresh), () => undefined);
+
+    return promise;
+  }
+
+  /**
+   * Records again what a preload showed itself and an expiry since dropped the
+   * records of: the preload judged the window at its request.
+   */
+  #rerecord(shown: Delivery[]): void {
+    const dropped = shown.filter(({ loader, signature }) => this.#loaderRecords.get(loader) !== signature);
+
+    dropped.forEach(({ loader, signature }) => this.#loaderRecords.set(loader, signature));
+    this.#stamp(dropped.filter(({ loader }) => loader.cache !== false).map(({ loader }) => loader.locale));
+  }
+
+  /**
+   * Fetches again, as a warm load, what a call showed from a preload's shared
+   * fetch: that fetch started before the preload's request. Only while it is
+   * shown and its params are still wanted — a later delivery is no older than
+   * the request.
+   */
+  #refresh(locale: Config.Locale, route: string, answered: Array<{ request: LoadRequest; answer: Answer }>): void {
+    const requests = this.#destroyed ? [] : answered
+      .filter(({ request, answer }) => this.#shows(request.loader, answer.delivery) && this.#isWanted(request))
+      .map(({ request }) => request);
+
+    if (requests.length) void this.#loadSelection(locale, route, this.#inflightKey(locale, route, requests), requests, []);
+  }
+
+  /** Whether `loader` still shows `delivery`, seeded or not. A reconfiguration replaces every delivery. */
+  #shows(loader: Loader.Resolved, delivery: Delivery): boolean {
+    const shown = this.#deliveries.get(loader);
+
+    return shown !== undefined && (this.#maskedFrom.get(shown) ?? shown) === delivery;
   }
 
   /** The load in flight under `key` that delivers every one of `requests`. */
@@ -1780,7 +1994,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /** Fetches `requests` as a load in flight under `key`, and settles it. */
-  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], unparked: Unparked[]): Promise<void> {
+  #start(locale: Config.Locale, route: string, key: string, requests: LoadRequest[], calls: Call[], unparked: Unparked[]): InflightLoad {
     const onRoute = route ? ` and '${route}' route` : '';
 
     let rejection: ControlFlow | undefined;
@@ -1809,12 +2023,23 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // `destroy()` — that raced this load severed some of its loaders. Their
       // data predates the invalidation: applying it would resurrect the
       // dropped bookkeeping and permanently suppress the promised refetch.
-      const current = deliveries.filter(({ loader }) => !entry.severed.has(loader));
+      const claims = entry.unparked.filter(({ request }) => !entry.severed.has(request.loader));
       // What it counts on applies while still parked: a newer record of the
-      // same params dropped it, and an invalidation severed it.
-      const held = entry.unparked
-        .filter(({ request, delivery }) => !entry.severed.has(request.loader) && this.#parked.get(request.loader) === delivery)
+      // same params dropped it, and an invalidation severed it. What a token
+      // handed it applies while the loader shows what it showed at the call;
+      // a delivery of other params since is fetched again, as a severed
+      // loader is, and one of the same params stands.
+      const held = claims
+        .filter(({ request, delivery, handed }) => (handed ? this.#deliveries.get(request.loader) === handed.shown : this.#parked.get(request.loader) === delivery))
         .map(({ delivery }) => delivery);
+
+      claims.forEach(({ request: { loader }, delivery, handed }) => {
+        const shown = this.#deliveries.get(loader);
+
+        if (handed && shown !== handed.shown && shown?.signature !== delivery.signature) entry.severed.add(loader);
+      });
+
+      const current = deliveries.filter(({ loader }) => !entry.severed.has(loader));
       const served = [...requests, ...entry.unparked.map(({ request }) => request)];
 
       rejection = this.#rejection(entry, locale, controlFlow);
@@ -1900,7 +2125,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     // process; an awaiting caller still receives the rejection.
     promise.then(settle, settle);
 
-    return promise;
+    return entry;
   }
 
   /**

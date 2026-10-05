@@ -234,7 +234,7 @@ A named capture group in a `RegExp` route is a load parameter: its match reaches
 
 `API_ORIGIN` stands for an origin such as `https://api.example.com`: a loader runs on the server too, where `fetch` takes only an absolute URL. See [route params](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#route-params) for the rules.
 
-A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for. See [the loader's `cache`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#cache-optional).
+A loader whose source does the caching itself — a SvelteKit remote `query`, an SWR layer, an HTTP cache — sets `cache: false`. It then runs on every load trigger that selects it, sharing a fetch of it already in flight for the same params and route, and `config.cache` does not apply to it; only a hydrated snapshot holds it back, for the locale and route it was rendered for, until another locale or route is requested or a `preload()` runs, and a call handed a [`preload()`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#preloadlocale-route) token shows what that preload fetched instead of running it again. See [the loader's `cache`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#cache-optional).
 
 A loader that throws is logged, and the rest of the load lands without its data; it runs again on the next load trigger. SvelteKit's `redirect()` and an `error()` below 500 (told by their shape: an own `status` with a `location` or a `body`, on a value that is not an `Error`) are logged too, but they also reject the load, so a SvelteKit `load` awaiting the call hands them to SvelteKit; the rejected call is undone — what it replaced goes back — unless a later call that has not failed came in the meantime. See [the loader](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#loader-required).
 
@@ -346,7 +346,7 @@ Set a finite value when your loaders fetch from a source that can change at runt
 cache: 3600000 // Translations older than 1 hour refetch on the next activating load
 ```
 
-Expiry is evaluated by the next activating load trigger (`setLocale`, `setRoute`, `loadTranslations`); a warm load — `loadTranslations(…, { activate: false })` or `loadNamespace()` — fills the tables without evaluating it. Set to `0` to treat translations as always stale (refetch on every activating load trigger). A loader with `cache: false` is outside the window. You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
+Expiry is evaluated by the next activating load trigger (`setLocale`, `setRoute`, `loadTranslations`) or `preload()`; a warm load — `loadTranslations(…, { activate: false })` or `loadNamespace()` — fills the tables without evaluating it, and a call handed a `preload()` token leaves it to that preload. Set to `0` to treat translations as always stale (refetch on every activating load trigger). A loader with `cache: false` is outside the window. You can also drop the loaded state manually at any time with [`invalidate()`](#methods).
 
 ### `extensions`
 
@@ -405,10 +405,11 @@ log: {
 
 Load-triggering methods return the promise of the matching load — concurrent duplicate triggers from one route share one in-flight load (and its promise) instead of fetching twice.
 
-- `loadTranslations(locale, route?, options?)` – load translations for locale and route; `route` defaults to the current one, and `{ activate: false }` only fills the tables without switching to them
+- `loadTranslations(locale, route?, options?)` – load translations for locale and route; `route` defaults to the current one, `{ activate: false }` only fills the tables without switching to them, and `{ preloaded }` takes a `preload()` token
+- `preload(locale, route?)` – the request of a navigation that may never commit (a router's `load`, a hover's included): it judges freshness and runs `cache: false` loaders as an activating call would, shows nothing, and resolves to a token the commit's `loadTranslations()` or `setRoute()` takes as `{ preloaded }` to show what it fetched instead of fetching it again
 - `loadNamespace(namespace, locale?)` – load one namespace on demand, whatever its loaders' routes, without switching to it; it stays loaded across routes
 - `setLocale(locale)` – request a locale; loads once a route is known
-- `setRoute(route)` – update the current route
+- `setRoute(route, options?)` – update the current route; `{ preloaded }` takes a `preload()` token
 - `loadConfig(config)` – (re)configure the instance
 - `addTranslations(translations)` – seed synchronous translations; the loaders of their namespaces still run and merge into them
 - `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`, for a plain `hydrate({ translations })`

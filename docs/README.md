@@ -558,7 +558,13 @@ For such a loader the core keeps no freshness of its own:
   [`loadNamespace()`](#loadnamespacenamespace-locale) runs it too — off its
   `routes` only until it has delivered, like any loader. Freshness and
   deduplication across triggers are its source's job; concurrent triggers from
-  one route still share one load.
+  one route still share one load, and a trigger shares a fetch of it for the
+  same params and route already in flight.
+- A [`preload()`](#preloadlocale-route) runs it as such a trigger, and the call
+  handed the preload's token shows that fetch rather than running the loader
+  again, so a navigation runs it once. What the preload shared from a fetch
+  already in flight is shown, then fetched again behind it, since that fetch
+  started before the navigation was requested.
 - Its data is applied each time it delivers, like any refetch.
 - It starts no [`cache`](#cache) window, and the config's `cache` does not apply
   to it: an expiry neither runs it again nor discards what it is fetching.
@@ -570,8 +576,9 @@ For such a loader the core keeps no freshness of its own:
 - The SSR hand-off still counts: data [`hydrate()`](#hydrateenvelope) applied
   serves the pass it arrived with — until an activating trigger asks for
   another locale or route than the envelope named, or than the first activating
-  trigger after it where the envelope named none — so a server-rendered page
-  does not refetch right after hydration.
+  trigger after it where the envelope named none, or a
+  [`preload()`](#preloadlocale-route) runs — so a server-rendered page does not
+  refetch right after hydration.
 
 Only `false` is accepted; any other value is reported and ignored.
 
@@ -670,7 +677,7 @@ appears in `url.pathname`. The URL of every page carries it (`/repo/about` on
 GitHub Pages), while loader [`routes`](#routes-optional) name the app's own
 paths (`/about`), so without it a route-scoped loader never matches.
 
-Every route handed in — to [`setRoute()`](#setrouteroute) and
+Every route handed in — to [`setRoute()`](#setrouteroute-options) and
 [`loadTranslations()`](#loadtranslationslocale-route-options) — loses the base
 path on the way in, on a segment boundary only: under `/repo`, `/repo/about` is
 `/about` and `/repo` is `/`, while `/repository` and a route that does not start
@@ -1246,12 +1253,13 @@ what an extension has in hand when it types its own output.
 
 How long loaded translations stay fresh. Once a locale's translations are
 older than this window, the **next activating load trigger**
-(`loadTranslations`, `setLocale`, `setRoute`) runs its loaders again; nothing
+(`loadTranslations`, `setLocale`, `setRoute`) or
+[`preload()`](#preloadlocale-route) runs its loaders again; nothing
 refetches on its own in the background. A warm load — a `loadTranslations()`
-call with [`{ activate: false }`](#loadtranslationslocale-route-options),
-[`loadNamespace()`](#loadnamespacenamespace-locale), or the `load` of a
-[SvelteKit](#sveltekit) navigation after the first, whose commit evaluates it
-instead — fills the tables without evaluating the window.
+call with [`{ activate: false }`](#loadtranslationslocale-route-options) or
+[`loadNamespace()`](#loadnamespacenamespace-locale) — fills the tables without
+evaluating the window, and a call handed a preload's token leaves it to that
+preload, which judged freshness when the navigation was requested.
 
 **Default (never expires):**
 
@@ -1288,7 +1296,7 @@ const config = {
 **How it works:**
 
 ```
-Activating load trigger (loadTranslations / setLocale / setRoute)
+Activating load trigger (loadTranslations / setLocale / setRoute) or preload()
    ↓
 Locale's translations older than `cache`? → drop its loaded state
    ↓
@@ -1526,7 +1534,7 @@ of its namespaces, say — still share each loader they both run for the same
 params, and each settles once everything it waits on has. A trigger from
 another route loads for its own: a loader
 receives the route, so what it delivers, or throws, for one need not fit
-another. Those methods,
+another. Those methods, [`preload()`](#preloadlocale-route),
 [`loadConfig()`](#loadconfigconfig),
 [`addTranslations()`](#addtranslationstranslations),
 [`hydrate()`](#hydrateenvelope) and assigning [`locale`](#locale) track none
@@ -1697,7 +1705,7 @@ to write.
 
 ### `loadTranslations(locale, route?, options?)`
 
-**Type:** `(locale: string, route?: string, options?: { activate?: boolean }) => Promise<void>`
+**Type:** `(locale: string, route?: string, options?: { activate?: boolean; preloaded?: Loader.Preloaded }) => Promise<void>`
 
 Loads translations for a locale and route (without [`basePath`](#basepath)),
 and activates the locale once they resolved. A locale nothing serves resolves without changing anything, the
@@ -1750,6 +1758,21 @@ await i18n.loadTranslations('de', '/about', { activate: false });
 The option exists only here. On `setLocale()` and `setRoute()` activation is the
 whole point of the call.
 
+**`{ preloaded }`** hands an activating call the token of a
+[`preload()`](#preloadlocale-route) of the same locale and route. The call
+shows what that preload fetched instead of fetching it again — a loader with
+[`cache: false`](#cache-optional) included — at once when nothing else is left
+to fetch, and otherwise together with the rest, in one go. It evaluates no
+[`cache`](#cache) window, since the preload did. It still fetches what the
+preload did not deliver, and anything whose displayed data an
+[invalidation](#invalidatelocale-namespace), a seed or another delivery replaced
+since. A token serves one call. It is ignored — the call loads as it would
+without one — when it comes from another instance, names another locale or
+route, was used already, predates a [`loadConfig()`](#loadconfigconfig) or an
+[`invalidate()`](#invalidatelocale-namespace), or is passed with
+`{ activate: false }`. A window a later request found elapsed does not void it:
+the preload judged the window at its own request.
+
 **Errors:** a loader that throws is caught and logged individually, so one
 broken loader does not fail the batch; only SvelteKit's `redirect()` and an
 `error()` below 500 reject the load ([see `loader`](#loader-required)).
@@ -1766,6 +1789,49 @@ and the promise rejects with the control flow, whose undo takes the route back
 too. A result you discard is safe:
 the failure is logged through the configured logger and never becomes an
 unhandled rejection — but it is then only visible in the log.
+
+---
+
+### `preload(locale, route?)`
+
+**Type:** `(locale: string, route?: string) => Promise<Loader.Preloaded | undefined>`
+
+The request of a navigation that may never commit — what a router's `load`
+runs ahead of it, a hover's included. `route` (without
+[`basePath`](#basepath)) defaults to the current route.
+
+Like an activating call, it is a request: it evaluates the [`cache`](#cache)
+window, ends the pass a [hand-off](#hydrateenvelope) serves, and runs a loader
+with [`cache: false`](#cache-optional) — unless a fetch of that loader for the
+same params and route is already in flight, which it shares. Like
+[`{ activate: false }`](#loadtranslationslocale-route-options), it shows
+nothing: it writes neither the requested locale nor the route, does not count
+towards [`loading`](#loading), and lands what it fetched as a warm load does,
+data for other [route params](#route-params) kept aside.
+
+It resolves to a token, a frozen empty object, for the next activating call of
+that locale and route, which takes it as
+[`{ preloaded }`](#loadtranslationslocale-route-options) — on
+`loadTranslations()` or [`setRoute()`](#setrouteroute-options) — and shows what the
+preload fetched instead of fetching it again. What it shared from a
+`cache: false` fetch already in flight predates the request, so that call
+shows it, then fetches the loader again behind it while it still shows and
+the route still wants it, which the call does not wait for.
+It resolves to `undefined` when the instance was destroyed or nothing serves
+the locale.
+
+A loader's `redirect()` or `error()` below 500 rejects it, as it would the
+navigation; a result nobody awaits never becomes an unhandled rejection.
+
+```javascript
+// As the navigation is requested — a hover, say:
+const preloaded = await i18n.preload('de', '/about');
+
+// As it commits:
+await i18n.loadTranslations('de', '/about', { preloaded });
+```
+
+[`/kit`](#sveltekit) does this for every navigation after the first.
 
 ---
 
@@ -1846,14 +1912,16 @@ failed came in the meantime ([see `loader`](#loader-required)).
 
 ---
 
-### `setRoute(route)`
+### `setRoute(route, options?)`
 
-**Type:** `(route: string) => Promise<void>`
+**Type:** `(route: string, options?: { preloaded?: Loader.Preloaded }) => Promise<void>`
 
 Updates the current route, without [`basePath`](#basepath), and loads
 route-scoped translations for the requested locale, if one is known. A loader's `redirect()` or `error()` below
 500 rejects the call and undoes it, as it does
-[`setLocale()`](#setlocalelocale)'s.
+[`setLocale()`](#setlocalelocale)'s. `{ preloaded }` takes the token of a
+[`preload()`](#preloadlocale-route) of the requested locale and this route, as
+[`loadTranslations()`](#loadtranslationslocale-route-options) does.
 
 ---
 
@@ -2113,6 +2181,9 @@ A loader with [`cache: false`](#cache-optional) is covered too: the call ends
 the hand-off that holds it back after [`hydrate()`](#hydrateenvelope), and a
 fetch of it in flight is severed like any other.
 
+A [`preload()`](#preloadlocale-route) token issued before the call no longer
+serves: the call it is handed to loads as it would without one.
+
 A namespace invalidation leaves the locale's [`cache`](#cache) window where it
 was: the refetched namespace expires together with the rest of the locale, so
 no table outlives the window.
@@ -2130,8 +2201,9 @@ refresh before the window elapses.
 Detaches the instance from its loading lifecycle. Loads still in flight
 settle, and whatever their loaders return or throw is discarded;
 [`loading`](#loading) drops to `false`, and every further load or mutation call
-(`loadTranslations`, `loadNamespace`, `setLocale`, `setRoute`, `loadConfig`,
-`addTranslations`, `hydrate`, `invalidate`) is ignored with a warning.
+(`loadTranslations`, `preload`, `loadNamespace`, `setLocale`, `setRoute`,
+`loadConfig`, `addTranslations`, `hydrate`, `invalidate`) is ignored with a
+warning.
 
 Reads keep working — `t`, `l`, `locale`, `translations` and `snapshot()` still
 return the instance's last state, so a component that is still tearing down
@@ -2235,7 +2307,9 @@ export { load } from '$lib/i18n';
   takes over the instance the server branch loaded in the same request, so
   nothing is hydrated twice; in the browser, or when a loader has
   `cache: false`, it builds the instance and [hydrates](#hydrateenvelope) the
-  snapshot. Either way it returns the instance as `data.i18n`, next to the
+  snapshot. On each later client navigation, it
+  [preloads](#preloadlocale-route) the target locale for the route, so `use()`
+  shows at commit what that request fetched. Either way it returns the instance as `data.i18n`, next to the
   other fields of the server's data. With
   [`extensions`](#extensions), `data.i18n` is what they make of the instance,
   while the wiring keeps driving the instance itself.
@@ -2375,13 +2449,14 @@ instance.
 |---|---|---|---|
 | Page render (SSR) | negotiates, loads, returns the snapshot | the instance the server branch loaded (a fresh one from the snapshot when a loader has `cache: false`) | — |
 | Hydration | — | the tab's instance, from the same snapshot, active before the first render | `use()` provides it |
-| Navigation | negotiates, returns the locale and the route | warms the target locale for the new route | `use()` switches and sets the route at commit |
+| Navigation | negotiates, returns the locale and the route | preloads the target locale for the new route | `use()` switches and sets the route at commit, showing what the preload fetched |
 | Preload | the same | the same | none: a preload shows nothing |
-| Navigation to a prerendered page | — (the build's page render) | warms the locale `preferredLocale` gave at build time, or else the tab's | `use()` switches to that locale at commit, or keeps the tab's |
+| Navigation to a prerendered page | — (the build's page render) | preloads the locale `preferredLocale` gave at build time, or else the tab's | `use()` switches to that locale at commit, or keeps the tab's |
 
-Each preload runs `load`, which warms the target locale's translations for the
-link's route. To keep hovering from fetching, turn preloading off where it
-costs too much: `data-sveltekit-preload-data="false"`.
+Each preload runs `load`, which preloads the target locale's translations for
+the link's route, and the navigation that commits it shows what that load
+fetched. To keep hovering from fetching, turn preloading off where it costs too
+much: `data-sveltekit-preload-data="false"`.
 
 ### Pitfalls
 
@@ -2420,17 +2495,16 @@ costs too much: `data-sveltekit-preload-data="false"`.
 - **The hash router is not supported.** Under `router.type: 'hash'`, the route
   lives in `url.hash`, while loaders are matched against `url.pathname`, so a
   route-scoped loader never matches.
-- **A [`cache: false`](#cache-optional) loader runs twice per navigation:** once
-  when `load` warms the target, and again when the navigation commits, since it
-  runs on every trigger that selects it. Its source is expected to cache. A
-  `redirect()` or an `error()` it throws on the commit run is not followed:
-  SvelteKit follows control flow thrown in `load` only. The tab stays on its
-  locale, and the next navigation with the same answer switches again.
-- **With a finite [`cache`](#cache), an expired loader runs again at commit**,
-  since `load` only warms the target and a warm load leaves expiry to the next
-  activating trigger. The page shows its previous data until the refetch
-  lands, and a `redirect()` or an `error()` the refetch throws is not followed
-  either.
+- **A loader can still run at commit.** The commit fetches again what `load`
+  did not deliver: a loader that failed soft, one an
+  [invalidation](#invalidatelocale-namespace) or a seed covered between the
+  two, and a [`cache: false`](#cache-optional) loader whose fetch `load` only
+  shared, which started before the navigation was requested (the commit shows
+  that one, then refreshes it behind). A `redirect()` or an `error()`
+  thrown there is not followed: SvelteKit follows control flow thrown in
+  `load` only. The tab stays on its locale, and the next navigation with the
+  same answer switches again — one preloaded while that switch was under way
+  included.
 
 ---
 
@@ -3246,6 +3320,19 @@ to what it replaced and is loaded for that route. It never throws
 synchronously: it returns the rejected promise, and the failure is logged
 once. See [`loader`](#loader-required).
 
+**A `/kit` navigation shows its data at commit.** In 3.2, every navigation
+after the first loaded its target warm, and the commit then judged the
+[`cache`](#cache) window and ran a [`cache: false`](#cache-optional) loader
+again, so the page showed the previous page's text, or raw keys, until that
+fetch landed. In 3.3 `load` [preloads](#preloadlocale-route) the target and
+`use()` hands the commit the token, which shows what the preload fetched in
+the commit's own flush: a `cache: false` loader the preload ran is not run
+again at commit, and one whose fetch the preload only shared is refreshed
+behind what it shows. A
+preload is a request, a hover's included, so it ends the pass a
+[`hydrate()`](#hydrateenvelope) hand-off held a `cache: false` loader back
+for.
+
 ---
 
 ## Upgrading from 3.1
@@ -3361,7 +3448,7 @@ place re-renders nothing. Write with
 [`addTranslations()`](#addtranslationstranslations), as before.
 
 **The loading calls read what they write untracked.**
-[`setLocale()`](#setlocalelocale), [`setRoute()`](#setrouteroute),
+[`setLocale()`](#setlocalelocale), [`setRoute()`](#setrouteroute-options),
 [`loadTranslations()`](#loadtranslationslocale-route-options),
 [`loadNamespace()`](#loadnamespacenamespace-locale),
 [`loadConfig()`](#loadconfigconfig),

@@ -5,7 +5,7 @@ import { serverHalf } from '#kit-server';
 
 import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
-import type { Config } from '../types.js';
+import type { Config, Loader } from '../types.js';
 import { configLocales, matchLocale, resolveLoaders, sanitizerFactory, textDirection } from '../utils.js';
 import type { Negotiated } from './internal.js';
 import type { Kit } from './types.js';
@@ -15,11 +15,33 @@ import type { Kit } from './types.js';
 const KEY = Symbol.for('@sveltekit-i18n/base/kit');
 
 /**
- * What one run of the universal branch saw: the instance, what its extensions
- * made of it, the server's answer, the route, and the locale active as it
- * started.
+ * A commit's switch of the locale: the locale active as it started, the one
+ * the tab was heading for then, the one it switches to, the answer it
+ * replaced, whether it landed, once it settles, whether each stay committed
+ * while it was under way landed, and whether the tab has shown the locale
+ * it switches to since it started.
  */
-type Pass = { i18n: I18n; surface: unknown; locale: string | undefined; route: string; seen: string | undefined };
+type Switching = {
+  from?: string;
+  back?: string;
+  to: string;
+  previous?: string;
+  landed: Promise<boolean>;
+  failed: boolean;
+  stays: Array<Promise<boolean>>;
+  reached: boolean;
+};
+
+/** What a commit waits on while a switch is under way, and how each landed, once all settled. */
+type Lapse = { commit: number; switching: Switching; outcomes?: boolean[] };
+
+/**
+ * What one run of the universal branch saw: the instance, what its extensions
+ * made of it, the server's answer, whether it takes the tab's answer at commit
+ * instead, the route, the locale the tab was heading for as it started, with
+ * the switch under way that gave it, and the token of its preload.
+ */
+type Pass = { i18n: I18n; surface: unknown; locale: string | undefined; follows: boolean; route: string; seen: string | undefined; via?: Switching; preloaded?: Loader.Preloaded };
 
 /** What the config's loaders and tables settle for the wiring, read once. */
 type Configured = { locales: string[]; handOver: boolean };
@@ -125,16 +147,42 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, handOver: () => resolved().handOver });
 
   // Browser only: the tab's instance, the server's answer at the last commit,
-  // and the locale that commit is switching to with the one it switches from,
-  // which only `use()` writes. A server keeps nothing between requests.
-  const tab: { i18n?: I18n; surface?: unknown; answer?: string; switching?: { from?: string; to: string }; committed: boolean } = { committed: false };
+  // the switch under way, what the last commit waits on, and how many commits
+  // there were, which only `use()` writes. A server keeps nothing between
+  // requests.
+  const tab: { i18n?: I18n; surface?: unknown; answer?: string; switching?: Switching; lapse?: Lapse; commits: number } = { commits: 0 };
 
-  // The locale the tab shows once the wiring's own switch lands: that switch
-  // is no client change, while a locale that moved from where it started is.
-  const heading = (i18n: I18n): string | undefined => {
-    const active = untrack(() => i18n.locale);
+  // The wiring's own switch, while the locale has not moved from where it
+  // started: that switch is no client change, while a locale that moved is.
+  const underway = (i18n: I18n): Switching | undefined => (tab.switching?.from === untrack(() => i18n.locale) ? tab.switching : undefined);
 
-    return tab.switching && tab.switching.from === active ? tab.switching.to : active;
+  // The locale the tab shows once the wiring's own switch lands.
+  const heading = (i18n: I18n): string | undefined => underway(i18n)?.to ?? untrack(() => i18n.locale);
+
+  const fallBack = (commit: number, switching: Switching): void => {
+    const lapse: Lapse = { commit, switching };
+
+    tab.lapse = lapse;
+    void Promise.all([switching.landed, ...switching.stays]).then((outcomes) => { lapse.outcomes = outcomes; });
+  };
+
+  // The answer of the last commit. Once its switch and every stay committed
+  // while that switch was under way settled, a failure that left the tab
+  // short of the locale switched to leaves the answer to the next commit:
+  // short, as long as the tab has not shown that locale since the switch
+  // started, whoever's call landed it. A switch to the locale it started from
+  // fell short unless a call landed.
+  const answered = (i18n: I18n): string | undefined => {
+    const { lapse } = tab;
+
+    if (!lapse?.outcomes || lapse.commit !== tab.commits || lapse.outcomes.every(Boolean)) return tab.answer;
+
+    const { outcomes, switching } = lapse;
+    const { from, to, previous } = switching;
+
+    if (untrack(() => i18n.locale) === to) switching.reached = true;
+
+    return (from === to ? !outcomes.some(Boolean) : !switching.reached) ? previous : tab.answer;
   };
 
   const universalLoad = async (event: Kit.UniversalLoadEvent): Promise<Record<string, any>> => {
@@ -146,7 +194,8 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     const fresh = !BROWSER || !tab.i18n;
     const i18n = rendered ?? (fresh ? create() : tab.i18n!);
     const surface = fresh ? pipe(i18n) : tab.surface;
-    const seen = heading(i18n);
+    const via = underway(i18n);
+    const seen = via?.to ?? untrack(() => i18n.locale);
 
     // A live server sends the tables on a page render only, so a later pass
     // that carries them read a prerendered file, whose locale was negotiated
@@ -154,11 +203,14 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     // `preferredLocale` gave it. Node and Deno define `navigator.languages`
     // too, from the server's own environment.
     const prerendered = !fresh && payload?.translations;
-    const answer = prerendered
-      ? (payload.preferred ? payload.locale : tab.answer)
+    const follows = Boolean(prerendered && !payload.preferred);
+    const answer = follows
+      ? answered(i18n)
       : payload ? payload.locale : negotiate(event, BROWSER ? navigator.languages : undefined).locale;
 
     if (BROWSER) Object.assign(tab, { i18n, surface });
+
+    let preloaded: Loader.Preloaded | undefined;
 
     if (fresh) {
       if (!rendered && payload?.translations) i18n.hydrate({ ...payload, translations: payload.translations });
@@ -167,14 +219,16 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
       // that builds the instance may activate it.
       await (answer ? i18n.loadTranslations(answer, route) : i18n.setRoute(route));
     } else {
-      // Warm only: this pass may be a preload, which must not change what is
-      // shown. The commit switches to a changed answer, or else stays.
-      const target = (answer !== tab.answer ? answer : undefined) ?? heading(i18n);
+      // The request of a navigation that may never commit, a hover's
+      // included: it activates nothing, and its token lets the commit show
+      // what it fetched. The commit switches to a changed answer, or else
+      // stays.
+      const target = (answer !== answered(i18n) ? answer : undefined) ?? heading(i18n);
 
-      if (target) await i18n.loadTranslations(target, route, { activate: false });
+      if (target) preloaded = await i18n.preload(target, route);
     }
 
-    const pass: Pass = { i18n, surface, locale: answer, route, seen };
+    const pass: Pass = { i18n, surface, locale: answer, follows, route, seen, via, preloaded };
 
     return { ...event.data, i18n: surface, [KEY]: pass };
   };
@@ -201,38 +255,73 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
 
       if (!pass) return;
 
-      if (!tab.committed || (pass.locale !== tab.answer && heading(pass.i18n) === pass.seen)) {
-        const { locale } = pass;
+      const first = !tab.commits;
+
+      tab.answer = answered(pass.i18n);
+
+      const commit = ++tab.commits;
+      const now = heading(pass.i18n);
+      // A switch that failed before this commit may have headed nowhere: its
+      // undo puts back the locale it started from or the one the tab was
+      // heading for, unless a later call landed the one it headed for.
+      const current = now === pass.seen || (pass.via?.failed === true && (now === pass.via.from || now === pass.via.back));
+
+      // A pass that takes the tab's answer never switches.
+      const locale = pass.follows ? tab.answer : pass.locale;
+
+      if (first || (locale !== tab.answer && current)) {
         const previous = tab.answer;
 
-        tab.committed = true;
         tab.answer = locale;
 
         if (locale !== undefined) {
-          const switching = { from: untrack(() => pass.i18n.locale), to: locale };
-          const done = () => {
-            if (tab.switching === switching) tab.switching = undefined;
+          const switching: Switching = {
+            from: untrack(() => pass.i18n.locale),
+            back: now,
+            to: locale,
+            previous,
+            failed: false,
+            stays: [],
+            reached: false,
+            landed: pass.i18n.loadTranslations(locale, pass.route, { preloaded: pass.preloaded }).then(() => true, () => {
+              switching.failed = true;
+
+              return false;
+            }),
           };
 
           tab.switching = switching;
-          // A switch that failed, and that no later call landed either, leaves
-          // the answer to the next commit.
-          pass.i18n.loadTranslations(locale, pass.route).then(done, () => {
-            done();
-            if (tab.answer === locale && untrack(() => pass.i18n.locale) !== locale) tab.answer = previous;
+          void switching.landed.then(() => {
+            if (tab.switching === switching) tab.switching = undefined;
           });
+          fallBack(commit, switching);
 
           return;
         }
       }
 
-      void pass.i18n.setRoute(pass.route);
+      // A stay committed while what the previous commit waits on is under way
+      // carries it on, unless the locale moved from where the switch started.
+      const { lapse } = tab;
+      const switching = lapse && !lapse.outcomes && lapse.commit === commit - 1 && lapse.switching.from === untrack(() => pass.i18n.locale)
+        ? lapse.switching
+        : undefined;
+      const stayed = pass.i18n.setRoute(pass.route, { preloaded: pass.preloaded }).then(() => true, () => false);
+
+      if (!switching) return;
+
+      switching.stays = [...switching.stays, stayed];
+      fallBack(commit, switching);
     });
 
     $effect(() => {
       const { locale } = i18n;
 
       if (!locale) return;
+
+      const switching = tab.lapse?.switching;
+
+      if (switching?.to === locale) switching.reached = true;
 
       document.documentElement.lang = locale;
       document.documentElement.dir = textDirection(locale);
