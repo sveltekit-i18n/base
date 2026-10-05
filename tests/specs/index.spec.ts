@@ -5246,6 +5246,519 @@ describe('i18n loaders that throw', () => {
     await next;
     expect(instance.locale).toBe('de');
   });
+
+  describe('a call whose data a custom `preprocess` fails on', () => {
+    const failure = new Error('preprocess boom');
+    const item = (locale: string, bad = '') => ({
+      namespace: 'item', locale, routes: items,
+      loader: vi.fn(async ({ params }: Loader.Props) => ({ title: params.id === bad ? 'bad' : `${locale} ${params.id}` })),
+    });
+    const config = (...loaders: Array<ReturnType<typeof item> | Loader.LoaderModule>) => ({
+      parser,
+      preprocess: (input: any) => {
+        if (JSON.stringify(input).includes('"bad"')) throw failure;
+
+        return toDotNotation(input) ?? {};
+      },
+      loaders,
+    });
+
+    // `en` shows item 1, after which `cs` is active on it and `en`'s item 2
+    // is parked, so a call for it has nothing left to fetch.
+    const parkedBad = async () => {
+      const cs = item('cs');
+      const en = item('en', '2');
+      const instance = new i18n(config(cs, en));
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('cs', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+
+      return { instance, cs, en };
+    };
+
+    it('rejects, and never throws, when what it applies at once fails, reporting it once', async () => {
+      const { instance } = await parkedBad();
+      let load: Promise<void> | undefined;
+
+      expect(() => { load = instance.loadTranslations('en', '/item/2'); }).not.toThrow();
+      await expect(load).rejects.toBe(failure);
+      expect(reported(failure).map(({ message }) => message)).toEqual(['[i18n]: Failed to load translations for \'en\' locale and \'/item/2\' route.']);
+      expect(instance.locale).toBe('cs');
+    });
+
+    it('throws nothing out of an assignment of `locale` whose data fails at once', async () => {
+      const { instance } = await parkedBad();
+
+      await instance.setRoute('/item/2');
+      expect(() => { instance.locale = 'en'; }).not.toThrow();
+      await vi.waitFor(() => expect(reported(failure)).toHaveLength(1));
+      expect(instance.locale).toBe('cs');
+    });
+
+    it.each([
+      ['what it applies at once', async () => {
+        const { instance, cs } = await parkedBad();
+
+        return { instance, cs, load: instance.loadTranslations('en', '/item/2') };
+      }],
+      ['what its load fetched', async () => {
+        const cs = item('cs');
+        const instance = new i18n(config(cs, item('en', '2')));
+
+        await instance.loadTranslations('cs', '/item/1');
+
+        return { instance, cs, load: instance.loadTranslations('en', '/item/2') };
+      }],
+    ])('puts back the locale it replaced when %s fails, while its route stands, and loads that locale there', async (_, start) => {
+      const { instance, cs, load } = await start();
+
+      await expect(load).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      expect(instance.translations.cs).toEqual({ 'item.title': 'cs 2' });
+      expect(cs.loader).toHaveBeenLastCalledWith(expect.objectContaining({ params: { id: '2' } }));
+      expect(instance.locale).toBe('cs');
+    });
+
+    it('rejects with the control flow when an undo puts back a request whose parked data fails to apply', async () => {
+      const thrown = new Redirect(307, '/login');
+      const gates: Array<(data: { title: string }) => void> = [];
+      const de = {
+        namespace: 'item', locale: 'de', routes: items,
+        loader: async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'de 1' } : new Promise<{ title: string }>((resolve) => { gates.push(resolve); })),
+      };
+      const fr = held();
+      const instance = new i18n(config(de, { namespace: 'common', locale: 'fr', loader: fr.loader }));
+
+      await instance.loadTranslations('de', '/item/1');
+
+      const route = instance.setRoute('/item/2');
+      const locale = instance.setLocale('fr');
+
+      gates[0]({ title: 'bad' });
+      await route;
+      fr.calls[0].reject(thrown);
+
+      await expect(locale).rejects.toBe(thrown);
+      expect(reported(failure)).toHaveLength(1);
+      expect(instance.locale).toBe('de');
+      expect(instance.translations.de).toEqual({ 'item.title': 'de 1' });
+    });
+
+    it('activates nothing when an undo puts back a locale whose parked data fails to apply', async () => {
+      const thrown = new Redirect(307, '/login');
+      const gates: Array<(data: { title: string }) => void> = [];
+      const de = {
+        namespace: 'item', locale: 'de', routes: items,
+        loader: async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'de 1' } : new Promise<{ title: string }>((resolve) => { gates.push(resolve); })),
+      };
+      const fr = held();
+      const instance = new i18n(config(item('cs'), de, { namespace: 'common', locale: 'fr', loader: fr.loader }));
+
+      await instance.loadTranslations('de', '/item/1');
+      await instance.loadTranslations('cs', '/item/1');
+
+      const switched = instance.loadTranslations('de', '/item/2');
+      const locale = instance.setLocale('fr');
+
+      gates[0]({ title: 'bad' });
+      await switched;
+      fr.calls[0].reject(thrown);
+
+      await expect(locale).rejects.toBe(thrown);
+      expect(reported(failure)).toHaveLength(1);
+      expect(instance.locale).toBe('cs');
+    });
+
+    it.each([
+      ['whose control flow rejects it', '/login', [/^\/login$/]],
+      ['whose control flow it discarded', '/login/1', [/^\/login\/(?<id>\d+)$/]],
+    ])('keeps its route when an earlier failed call %s is undone with it', async (_, login, routes) => {
+      const thrown = new Redirect(307, '/login');
+      const gates: Array<(data: { title: string }) => void> = [];
+      const en = {
+        namespace: 'item', locale: 'en', routes: items,
+        loader: async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'en 1' } : new Promise<{ title: string }>((resolve) => { gates.push(resolve); })),
+      };
+      const guard = held();
+      const cs = item('cs');
+      const instance = new i18n(config(en, { namespace: 'guard', locale: 'en', routes, loader: guard.loader }, cs));
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const guarded = instance.setRoute(login);
+      const route = instance.setRoute('/item/2');
+
+      guard.calls[0].reject(thrown);
+      await guarded.catch(() => undefined);
+      gates[0]({ title: 'bad' });
+      await expect(route).rejects.toBe(failure);
+
+      await instance.setLocale('cs');
+      expect(cs.loader).toHaveBeenCalledOnce();
+      expect(cs.loader).toHaveBeenCalledWith(expect.objectContaining({ params: { id: '2' } }));
+      expect(instance.translations.cs).toEqual({ 'item.title': 'cs 2' });
+    });
+
+    it('keeps its route, and loads nothing again, when a later call\'s control flow undoes it', async () => {
+      const thrown = new Redirect(307, '/login');
+      const gates: Array<(data: { title: string }) => void> = [];
+      const en = {
+        namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/, /^\/alt\/(?<id>\d+)$/],
+        loader: vi.fn(async ({ params }: Loader.Props) => (params.id === '1' ? { title: 'en 1' } : new Promise<{ title: string }>((resolve) => { gates.push(resolve); }))),
+      };
+      const guard = held();
+      const cs = item('cs');
+      const instance = new i18n(config(en, { namespace: 'guard', locale: 'en', routes: [/^\/alt\/\d+$/], loader: guard.loader }, cs));
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const route = instance.setRoute('/item/2');
+      const guarded = instance.setRoute('/alt/2');
+
+      gates.forEach((resolve) => { resolve({ title: 'bad' }); });
+      await expect(route).rejects.toBe(failure);
+      guard.calls[0].reject(thrown);
+      await expect(guarded).rejects.toBe(thrown);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      expect(en.loader.mock.calls.filter(([{ route: called }]) => called === '/item/2')).toHaveLength(1);
+
+      await instance.setLocale('cs');
+      expect(cs.loader).toHaveBeenCalledOnce();
+      expect(cs.loader).toHaveBeenCalledWith(expect.objectContaining({ params: { id: '2' } }));
+    });
+
+    it('keeps its route when a call before it fails with control flow', async () => {
+      const thrown = new Redirect(307, '/login');
+      const gate = held();
+      const cs = {
+        namespace: 'item', locale: 'cs', routes: items,
+        loader: async ({ params }: Loader.Props) => (params.id === '1' ? gate.loader() : { title: 'bad' }),
+      };
+      const de = item('de');
+      const instance = new i18n(config(item('en'), cs, de));
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const locale = instance.setLocale('cs');
+      const route = instance.setRoute('/item/2');
+
+      await expect(route).rejects.toBe(failure);
+      gate.calls[0].reject(thrown);
+      await locale.catch(() => undefined);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      expect(instance.locale).toBe('en');
+
+      await instance.setLocale('de');
+      expect(de.loader).toHaveBeenCalledOnce();
+      expect(de.loader).toHaveBeenCalledWith(expect.objectContaining({ params: { id: '2' } }));
+    });
+
+    it('fetches again what another load failed to apply from what both claimed', async () => {
+      let fetched = 0;
+      const en = {
+        namespace: 'item', locale: 'en', routes: [/^\/item\/(?<id>\d+)$/, /^\/alt\/(?<id>\d+)$/],
+        loader: async ({ params }: Loader.Props) => {
+          if (params.id !== '2') return { title: `en ${params.id}` };
+
+          fetched += 1;
+
+          return { title: fetched === 1 ? 'bad' : 'en 2' };
+        },
+      };
+      const onItem = held();
+      const onAlt = held();
+      const instance = new i18n(config(
+        en,
+        { namespace: 'onItem', locale: 'en', routes: [/^\/item\/\d+$/], cache: false, loader: onItem.loader },
+        { namespace: 'onAlt', locale: 'en', routes: [/^\/alt\/\d+$/], cache: false, loader: onAlt.loader },
+      ));
+
+      const opened = instance.loadTranslations('en', '/alt/1');
+
+      onAlt.calls[0].resolve({ text: 'alt' });
+      await opened;
+
+      const warm = instance.loadTranslations('en', '/item/2', { activate: false });
+
+      onItem.calls[0].resolve({ text: 'item' });
+      await warm;
+
+      const route = instance.setRoute('/item/2');
+      const other = instance.setRoute('/alt/2');
+
+      onItem.calls[1].resolve({ text: 'item' });
+      await expect(route).rejects.toBe(failure);
+      onAlt.calls[1].resolve({ text: 'alt' });
+      await other;
+
+      expect(fetched).toBe(2);
+      expect(instance.translations.en['item.title']).toBe('en 2');
+    });
+
+    it('keeps parked what it did not apply when a sibling\'s data fails', async () => {
+      const en = item('en');
+      const sibling = held();
+      const instance = new i18n(config(en, { namespace: 'sibling', locale: 'en', routes: [/^\/item\/\d+$/], cache: false, loader: sibling.loader }));
+
+      const opened = instance.loadTranslations('en', '/item/1');
+
+      sibling.calls[0].resolve({ text: 'fine' });
+      await opened;
+
+      const route = instance.setRoute('/item/2');
+      const later = instance.setRoute('/item/3');
+
+      sibling.calls[2].resolve({ text: 'fine' });
+      await later;
+      sibling.calls[1].resolve({ text: 'bad' });
+      await expect(route).rejects.toBe(failure);
+
+      const again = instance.setRoute('/item/2');
+
+      sibling.calls[3].resolve({ text: 'fine' });
+      await again;
+
+      expect(en.loader.mock.calls.filter(([{ params }]) => params.id === '2')).toHaveLength(1);
+    });
+
+    it('fetches nothing when the route shown is asked for again', async () => {
+      const en = item('en', '2');
+      const instance = new i18n(config(en));
+
+      await instance.loadTranslations('en', '/item/1');
+      await expect(instance.setRoute('/item/2')).rejects.toBe(failure);
+      await instance.setRoute('/item/1');
+
+      expect(en.loader).toHaveBeenCalledTimes(2);
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 1' });
+    });
+
+    it('fetches nothing again when an undo goes back to an earlier call whose data failed to apply', async () => {
+      const held = (locale: string, bad = '', instant = '') => {
+        const gates: Array<() => void> = [];
+        const loader = vi.fn(({ params }: Loader.Props) => new Promise<{ title: string }>((resolve) => {
+          const data = { title: params.id === bad ? 'bad' : `${locale} ${params.id}` };
+
+          if (params.id === instant) resolve(data);
+          else gates.push(() => { resolve(data); });
+        }));
+
+        return { descriptor: { namespace: 'item', locale, routes: items, loader }, loader, gates };
+      };
+      const en = held('en', '2', '1');
+      const de = held('de');
+      const instance = new i18n({ ...config(en.descriptor, de.descriptor), fallbackLocale: 'en' });
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const route = instance.setRoute('/item/2');
+      const locale = instance.setLocale('de');
+
+      en.gates[0]();
+      await expect(route).rejects.toBe(failure);
+      de.gates.forEach((open) => { open(); });
+      await expect(locale).rejects.toBe(failure);
+      await new Promise((resolve) => { setTimeout(resolve); });
+      en.gates.slice(1).forEach((open) => { open(); });
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      const back = instance.setRoute('/item/1');
+
+      en.gates.slice(2).forEach((open) => { open(); });
+      await back;
+
+      expect(en.loader.mock.calls.map(([{ params }]) => params.id)).toEqual(['1', '2']);
+      expect(instance.locale).toBe('en');
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 1' });
+    });
+
+    it('loads the locale an undo of `setLocale()` puts back when its data was invalidated meanwhile', async () => {
+      let open = () => {};
+      const en = item('en');
+      const de = { ...item('de'), loader: vi.fn(() => new Promise<{ title: string }>((resolve) => { open = () => { resolve({ title: 'bad' }); }; })) };
+      const instance = new i18n(config(en, de));
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const locale = instance.setLocale('de');
+
+      await vi.waitFor(() => expect(de.loader).toHaveBeenCalledTimes(1));
+      instance.invalidate('en');
+      open();
+      await expect(locale).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(en.loader).toHaveBeenCalledTimes(2);
+      expect(instance.locale).toBe('en');
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 1' });
+    });
+
+    it('fetches nothing again when an undo puts back the request that failed, spelled otherwise', async () => {
+      const en = {
+        namespace: 'item', locale: 'en', routes: items,
+        loader: vi.fn(async ({ params }: Loader.Props) => ({ title: en.loader.mock.calls.length > 1 ? 'bad' : `en ${params.id}` })),
+      };
+      const instance = new i18n(config(en));
+
+      await instance.loadTranslations('EN', '/item/1');
+      instance.invalidate('en');
+      await expect(instance.setLocale('en')).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await new Promise((resolve) => { setTimeout(resolve); });
+
+      expect(en.loader).toHaveBeenCalledTimes(2);
+      expect(instance.locale).toBe('en');
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 1' });
+    });
+
+    it('loads the request an undo puts back on the route that stands when no call asked for it there', async () => {
+      const gates: Array<() => void> = [];
+      const gated = () => new Promise<{ title: string }>((resolve) => { gates.push(() => { resolve({ title: 'bad' }); }); });
+      const enB = vi.fn(async () => ({ title: 'en b' }));
+      const instance = new i18n(config(
+        { namespace: 'common', locale: 'en', loader: async () => ({ hi: 'en' }) },
+        { namespace: 'common', locale: 'de', loader: async () => ({ hi: 'de' }) },
+        { namespace: 'x', locale: 'en', routes: [/^\/x$/], loader: gated },
+        { namespace: 'b', locale: 'de', routes: [/^\/b$/], loader: gated },
+        { namespace: 'b', locale: 'en', routes: [/^\/b$/], loader: enB },
+      ));
+
+      await instance.loadTranslations('en', '/a');
+
+      const route = instance.setRoute('/x');
+      const locale = instance.loadTranslations('de', '/b');
+
+      await vi.waitFor(() => expect(gates).toHaveLength(2));
+      gates[0]();
+      await expect(route).rejects.toBe(failure);
+      gates[1]();
+      await expect(locale).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await new Promise((resolve) => { setTimeout(resolve); });
+
+      expect(enB).toHaveBeenCalledTimes(1);
+      expect(instance.locale).toBe('en');
+      expect(instance.translations.en).toEqual({ 'common.hi': 'en', 'b.title': 'en b' });
+    });
+
+    it('wants the params of the route that stands when an undo goes back to a call whose control flow was discarded', async () => {
+      const guard = held();
+      const cs = held();
+      let twos = 0;
+      const en = {
+        namespace: 'item', locale: 'en', routes: items,
+        loader: vi.fn(async ({ params }: Loader.Props) => {
+          if (params.id !== '2') return { title: `en ${params.id}` };
+
+          twos += 1;
+
+          return twos === 1 ? guard.loader() : { title: 'en 2' };
+        }),
+      };
+      const instance = new i18n(config(en, { namespace: 'item', locale: 'cs', routes: items, loader: cs.loader }));
+
+      await instance.loadTranslations('en', '/item/1');
+
+      const route = instance.setRoute('/item/2');
+      const locale = instance.setLocale('cs');
+
+      await vi.waitFor(() => expect(guard.calls).toHaveLength(1));
+      guard.calls[0].reject(new Redirect(307, '/login'));
+      await route;
+      await vi.waitFor(() => expect(cs.calls).toHaveLength(1));
+      cs.calls[0].resolve({ title: 'bad' });
+      await expect(locale).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+
+      expect(instance.locale).toBe('en');
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 2' });
+      expect(en.loader).toHaveBeenCalledTimes(3);
+    });
+
+    it('wants the params of the route that stands once its data failed to apply', async () => {
+      let twos = 0;
+      const en = {
+        namespace: 'item', locale: 'en', routes: items,
+        loader: vi.fn(async ({ params }: Loader.Props) => {
+          if (params.id === '2') twos += 1;
+
+          return { title: params.id === '2' && twos === 1 ? 'bad' : `en ${params.id}` };
+        }),
+      };
+      const instance = new i18n(config(en));
+
+      await instance.loadTranslations('en', '/item/1');
+      await expect(instance.setRoute('/item/2')).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 2' });
+    });
+
+    it('keeps what a load in flight that claimed none of it delivers when parked data fails to apply', async () => {
+      const three = held();
+      const en = {
+        namespace: 'item', locale: 'en', routes: items,
+        loader: vi.fn(async ({ params }: Loader.Props) => (params.id === '3' ? three.loader() : { title: params.id === '2' ? 'bad' : `en ${params.id}` })),
+      };
+      const instance = new i18n(config(item('cs'), en));
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('cs', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+
+      const warm = instance.loadTranslations('en', '/item/3', { activate: false });
+
+      await expect(instance.loadTranslations('en', '/item/2')).rejects.toBe(failure);
+      await vi.waitFor(() => expect(three.calls).toHaveLength(1));
+      three.calls[0].resolve({ title: 'en 3' });
+      await warm;
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await instance.loadTranslations('en', '/item/3');
+
+      expect(en.loader.mock.calls.filter(([{ params }]) => params.id === '3')).toHaveLength(1);
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 3' });
+    });
+
+    it('keeps parked the data of other params when what it applies fails', async () => {
+      const en = item('en', '2');
+      const instance = new i18n(config(en));
+
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/3', { activate: false });
+      await expect(instance.setRoute('/item/2')).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+      await instance.setRoute('/item/3');
+
+      expect(en.loader.mock.calls.filter(([{ params }]) => params.id === '3')).toHaveLength(1);
+      expect(instance.translations.en).toEqual({ 'item.title': 'en 3' });
+    });
+
+    it('fetches again, at the next trigger, the parked data that failed to apply', async () => {
+      const { instance, en } = await parkedBad();
+
+      await expect(instance.loadTranslations('en', '/item/2')).rejects.toBe(failure);
+      expect(en.loader).toHaveBeenCalledTimes(2);
+      await expect(instance.loadTranslations('en', '/item/2')).rejects.toBe(failure);
+      expect(en.loader).toHaveBeenCalledTimes(3);
+      expect(en.loader).toHaveBeenLastCalledWith(expect.objectContaining({ params: { id: '2' } }));
+    });
+
+    it('reports once a `setRoute()` whose parked data fails to apply', async () => {
+      const instance = new i18n(config(item('cs'), item('en', '2')));
+
+      await instance.loadTranslations('cs', '/item/1');
+      await instance.loadTranslations('en', '/item/1');
+      await instance.loadTranslations('en', '/item/2', { activate: false });
+      await expect(instance.setRoute('/item/2')).rejects.toBe(failure);
+      await vi.waitFor(() => expect(instance.loading).toBe(false));
+
+      expect(reported(failure)).toHaveLength(1);
+      expect(instance.locale).toBe('en');
+    });
+  });
 });
 
 describe('i18n warm loads', () => {

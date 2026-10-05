@@ -167,7 +167,19 @@ translation state, loading, caching, route matching, and preprocessing — but
   discarded — like a delivery, and logged at `debug` — when an invalidation
   severed that loader, and, for an activating load, when a later request
   superseded its locale or wants other params from that loader (a route that
-  does not select it wants none); a resumed refetch that throws rejects the call after the rest has landed. A failed
+  does not select it wants none); a resumed refetch that throws rejects the call after the rest has landed. A
+  load whose data cannot be applied (a custom `preprocess` that throws) fails
+  its activating calls as control flow does (`#failApply`), except that the
+  route stands — the caller is on it already — for them and for every call
+  before them, whichever undo reaches those later (`routeStands`), so
+  `#settleUndo()` loads the restored locale there, and only when the undo
+  changed the request: an undo back to the request (`Call.asked`: the locale,
+  however it is spelled, and the route) of any call it undid whose route stands wants the params of that route again, keeps the records of
+  what is shown and loads nothing, as that request is what failed. What failed
+  to apply leaves `#parked`, and severs it from every load in flight that
+  claimed it, so the next trigger fetches it again. Such a call never throws synchronously, even
+  with nothing to fetch, and what `#settleUndo()` applies itself only logs a
+  failure, never replacing what the failed load rejects with. A failed
   load rejects every caller that shares it and is reported through the logger
   once, by the load itself; a load nobody awaits never becomes an unhandled
   rejection.

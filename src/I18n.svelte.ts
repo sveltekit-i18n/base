@@ -24,12 +24,16 @@ const unasked: Wanted = { config: undefined, signatures: new Map() };
 
 const noLoaders: readonly Loader.Resolved[] = [];
 
+/** A requested locale on a route. */
+type Asked = { locale: Config.Locale | undefined; route: string | undefined };
+
 /**
- * An activating call: what it replaced — the requested locale, the route and
- * what the loaders were wanted for — to put back should it fail, and whether
- * it did.
+ * An activating call: the request it asked for, what it replaced — the
+ * requested locale, the route and what the loaders were wanted for — to put
+ * back should it fail, and whether it did.
  */
 type Call = {
+  asked: Asked;
   replaced: {
     requestedLocale: Config.Locale | undefined;
     route: string | undefined;
@@ -40,6 +44,8 @@ type Call = {
   threw: ControlFlow[];
   /** Whether a load of it fetched its severed part again, which it does once. */
   resumed: boolean;
+  /** Whether an undo of it keeps the route: data failed to apply on the route the caller is on. */
+  routeStands?: boolean;
   /** Settles, never rejecting, once the call's load does. */
   settled?: Promise<void>;
 };
@@ -75,6 +81,9 @@ type InflightLoad = {
  * not one holds none of them.
  */
 const isNamespaceKey = (key: string, namespace: Loader.Key) => typeof namespace === 'string' && (key === namespace || key.startsWith(`${namespace}.`));
+
+/** What the log says of a load of `locale` on `route` whose data could not be applied. */
+const loadFailure = (locale: Config.Locale, route: string | undefined) => `Failed to load translations for '${locale}' locale${route ? ` and '${route}' route` : ''}.`;
 
 /**
  * The config as it is held, rather than as it arrives: `resolveLoaders` has
@@ -382,7 +391,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   setLocale = (locale?: Config.LocaleInput<LocaleUnion>): Promise<void> => untrack(() => {
     if (!locale || this.#inert('setLocale') || this.#unserved(locale)) return Promise.resolve();
 
-    const call = this.#ask();
+    const call = this.#ask({ locale, route: this.#route });
 
     if (locale !== this.#requestedLocale) {
       logger.debug(`Setting '${locale}' locale.`);
@@ -399,7 +408,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     if (this.#inert('setRoute')) return Promise.resolve();
 
     const route = withoutBasePath(input, this.#config?.basePath);
-    const call = this.#ask();
+    const call = this.#ask({ locale: this.#requestedLocale, route });
 
     if (route !== this.#route) {
       logger.debug(`Setting '${route}' route.`);
@@ -431,7 +440,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (!activate) return this.#load(locale, target);
 
-    const call = this.#ask();
+    const call = this.#ask({ locale, route: target });
 
     this.#requestedLocale = locale;
     this.#route = target;
@@ -1343,12 +1352,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   }
 
   /**
-   * Starts an activating call: keeps the requested locale and the route it is
-   * about to replace — with the params `#load` adds, what is put back should
-   * it fail.
+   * Starts an activating call of the request `asked`: keeps the requested
+   * locale and the route it is about to replace — with the params `#load`
+   * adds, what is put back should it fail.
    */
-  #ask(): Call {
-    const call: Call = { replaced: { requestedLocale: this.#requestedLocale, route: this.#route }, failed: false, threw: [], resumed: false };
+  #ask(asked: Asked): Call {
+    const call: Call = { asked, replaced: { requestedLocale: this.#requestedLocale, route: this.#route }, failed: false, threw: [], resumed: false };
 
     this.#calls = [...this.#calls, call];
 
@@ -1384,8 +1393,12 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const before = { locale: this.#requestedLocale, route: this.#route };
 
     let threw: ControlFlow[] | undefined;
+    // What the calls whose route stands asked for: an undo back to one of
+    // those requests puts back a request that failed.
+    let standing: Asked[] = [];
 
     for (let last = this.#calls.at(-1); last?.failed; last = this.#calls.at(-1)) {
+      if (last.routeStands) standing = [...standing, last.asked];
       this.#undo(last);
       this.#calls = this.#calls.slice(0, -1);
       threw = [...threw ?? [], ...last.threw];
@@ -1393,9 +1406,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (!threw) return undefined;
 
-    this.#rewant();
+    // Back at a request that failed: what is shown keeps its records, and it
+    // is not loaded again by itself.
+    const resolved = this.#resolveLocale(this.#requestedLocale);
+    const again = standing.some(({ locale, route }) => route === this.#route && this.#resolveLocale(locale) === resolved);
 
-    const changed = before.locale !== this.#requestedLocale || before.route !== this.#route;
+    this.#rewant(!again);
+
+    const changed = !again && (before.locale !== this.#requestedLocale || before.route !== this.#route);
 
     if (changed) {
       const onRoute = this.#route ? ` on '${this.#route}' route` : '';
@@ -1409,23 +1427,42 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   /**
    * Puts back what a failed call replaced. Whichever of the locale and the
    * route was not asked for before it stands: it is all there is for the next
-   * trigger to load.
+   * trigger to load. Of a call whose route stands, only the locale goes back.
    */
-  #undo({ replaced: { requestedLocale, route, wanted } }: Call): void {
+  #undo({ replaced: { requestedLocale, route, wanted }, routeStands }: Call): void {
     if (requestedLocale !== undefined) this.#requestedLocale = requestedLocale;
+    if (routeStands) return;
     if (route !== undefined) this.#route = route;
 
     if (wanted) this.#wanted = wanted;
   }
 
   /**
+   * Fails the calls whose data could not be applied, as control flow fails
+   * them, except that the route stands, whichever undo reaches them or a call
+   * before them: the caller is on it already. A request put back for that
+   * route is loaded there; one that is the same request again is not, as its
+   * data is what failed.
+   */
+  #failApply(calls: Call[]): void {
+    const last = Math.max(...calls.map((call) => this.#calls.indexOf(call)));
+
+    this.#calls.slice(0, last + 1).forEach((call) => { call.routeStands = true; });
+
+    const undone = this.#fail(calls, []);
+
+    if (undone?.changed) this.#settleUndo(undone);
+  }
+
+  /**
    * The loaders the request an undo left in place selects: wanted for the
    * params its route yields, and no longer recorded as loaded for others —
    * whatever another load delivered for them meanwhile stays displayed until
-   * the request loads them again. Runs before the failed load applies what
-   * its other loaders delivered, so that is filtered by what is wanted now.
+   * the request loads them again, unless `drop` is off. Runs before the
+   * failed load applies what its other loaders delivered, so that is filtered
+   * by what is wanted now.
    */
-  #rewant(): void {
+  #rewant(drop: boolean): void {
     const locale = this.#resolveLocale(this.#requestedLocale);
 
     if (!locale || this.#route === undefined) return;
@@ -1433,6 +1470,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     const matching = this.#matchLoaders(locale, this.#route);
 
     this.#want(matching);
+
+    if (!drop) return;
 
     matching.forEach(({ loader, signature }) => {
       if (this.#loaderRecords.has(loader) && this.#loaderRecords.get(loader) !== signature) this.#loaderRecords.delete(loader);
@@ -1469,7 +1508,16 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       if (activating) return;
 
-      this.#applyWanted(this.#claimParked(matching).map(({ delivery }) => delivery));
+      // No caller waits on it: what fails here is logged, and never replaces
+      // what the failed load rejects with.
+      try {
+        this.#applyWanted(this.#claimParked(matching).map(({ delivery }) => delivery));
+      } catch (error) {
+        logError(loadFailure(locale, route), error);
+
+        return;
+      }
+
       this.#activate(locale);
 
       return;
@@ -1479,7 +1527,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
     if (!changed || threw) return;
 
-    const call = this.#ask();
+    const call = this.#ask({ locale: this.#requestedLocale, route });
 
     void this.#stand(call, this.#load(locale, route, call));
   }
@@ -1561,7 +1609,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       // Nothing to fetch — the locale still becomes active (its data is
       // already present, parked or it has no loaders).
       if (calls.length) {
-        this.#applyWanted(unparked.map(({ delivery }) => delivery));
+        try {
+          this.#applyWanted(unparked.map(({ delivery }) => delivery));
+        } catch (error) {
+          logError(loadFailure(locale, route), error);
+          this.#failApply(calls);
+
+          // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors -- passed on as thrown
+          const promise = Promise.reject(error);
+          promise.catch(() => undefined);
+
+          return promise;
+        }
+
         this.#activate(locale);
       }
 
@@ -1617,7 +1677,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * others: a warm load parks what would replace it, unless it asks for no
    * params — `loadNamespace()` off the loader's routes. What an activating load
    * counts on stays parked until it settles. A loader with `cache: false` runs
-   * on every trigger that selects it, so nothing of it is parked.
+   * on every trigger that selects it, so nothing of it is parked. What fails
+   * to apply is fetched again.
    */
   #applyWanted(deliveries: Delivery[]): void {
     const wanted = deliveries.filter(({ loader, signature }) => {
@@ -1637,7 +1698,24 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
     parked.forEach((delivery) => this.#parked.set(delivery.loader, delivery));
     this.#stamp(parked.map(({ loader }) => loader.locale));
 
-    if (wanted.length) this.#applyDeliveries(wanted);
+    if (!wanted.length) return;
+
+    try {
+      this.#applyDeliveries(wanted);
+    } catch (error) {
+      // Parked no more, so the next trigger fetches it again, and a load in
+      // flight that claimed it fetches it again as a severed one.
+      wanted.forEach((delivery) => {
+        if (this.#parked.get(delivery.loader) !== delivery) return;
+
+        this.#parked.delete(delivery.loader);
+        this.#inflight.forEach((entry) => {
+          if (entry.unparked.some((claim) => claim.delivery === delivery)) entry.severed.add(delivery.loader);
+        });
+      });
+
+      throw error;
+    }
   }
 
   /** Takes the fetches `entry` waited on out of the table, once what they delivered is applied or parked. */
@@ -1756,7 +1834,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
       try {
         this.#applyWanted([...held, ...current]);
       } catch (error) {
-        if (rejection) logError(`Failed to load translations for '${locale}' locale${onRoute}.`, error);
+        if (rejection) logError(loadFailure(locale, route), error);
         else failure = { error };
       }
 
@@ -1764,7 +1842,11 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       if (undone) this.#settleUndo(undone);
 
-      if (failure) throw failure.error;
+      if (failure) {
+        this.#failApply(entry.calls);
+
+        throw failure.error;
+      }
       if (rejection) throw rejection.value;
 
       // A load of params the route no longer asks for, whatever it returned,
@@ -1792,7 +1874,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
 
       logError(rejection
         ? `Rejecting the load of '${locale}' locale${onRoute} with what the ${loaderName(rejection.loader)} loader threw.`
-        : `Failed to load translations for '${locale}' locale${onRoute}.`, error);
+        : loadFailure(locale, route), error);
     });
 
     // Resumed once per call: a loader that invalidates what it loads each time

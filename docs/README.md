@@ -11,6 +11,7 @@ Complete API reference for `@sveltekit-i18n/base`. This package provides core i1
 - [Utilities](#utilities)
 - [The parser contract](#the-parser-contract)
 - [TypeScript](#typescript)
+- [Upgrading from 3.2](#upgrading-from-32)
 - [Upgrading from 3.1](#upgrading-from-31)
 - [Upgrading from 3.0](#upgrading-from-30)
 - [See Also](#see-also)
@@ -206,7 +207,8 @@ every locale.
 
 - **A call that fails is undone.** A call fails when a loader of its load
   throws control flow, whether the call rejects with it or a later call
-  replaced it (below). The locale does not advance, and the requested locale,
+  replaced it (below), and when what its load brought cannot be applied — a
+  custom [`preprocess`](#preprocess) that throws. The locale does not advance, and the requested locale,
   the route and the [route params](#route-params) go back to what the call
   replaced — unless a later call that has not failed came in the meantime: a
   `setLocale()`, a `setRoute()`, an activating `loadTranslations()` or a
@@ -219,7 +221,10 @@ every locale.
   flight — unless the undo put back the very request that failed, or a loader
   it needs threw for it in the load of a call the undo drops: a failure never runs again by itself, so the
   next trigger loads that. A locale or a route nothing was asked for before stands,
-  each on its own: it is all there is for the next trigger to load.
+  each on its own: it is all there is for the next trigger to load. A call
+  whose data could not be applied keeps its route, which the page is on
+  already, so the locale put back is loaded for that route; a call before it
+  keeps that route too, whether it failed already or fails later.
 - **What the other loaders delivered is kept**, as a
   [warm load](#loadtranslationslocale-route-options) keeps it: it lands in the
   tables without activating anything, and the next trigger does not fetch it
@@ -861,7 +866,8 @@ Should it throw, what brought the data keeps none of it: neither table
 changes, and no loader counts as loaded, so the next trigger runs them.
 `addTranslations()` and `hydrate()` throw the error, and a load rejects with it
 — unless a loader of the load threw SvelteKit's control flow, which the load
-rejects with instead, the error only logged. A load that fetched part of itself
+rejects with instead, the error only logged. The calls that share a load
+rejecting with it are undone, their route aside ([see `loader`](#loader-required)). A load that fetched part of itself
 again after an [invalidation](#invalidatelocale-namespace) keeps the part that
 landed first. [`loadConfig()`](#loadconfigconfig) rejects with it too, but keeps
 the new config without starting its `initLocale` load.
@@ -1748,13 +1754,16 @@ whole point of the call.
 broken loader does not fail the batch; only SvelteKit's `redirect()` and an
 `error()` below 500 reject the load ([see `loader`](#loader-required)).
 Anything that throws afterwards — a custom `preprocess`, a malformed payload —
-**rejects the returned promise** and keeps none of what the load delivered, so
-the next trigger fetches it again — a load that fetched part of itself again
-after an [invalidation](#invalidatelocale-namespace) keeps the part that landed
-first — and `await` surfaces it (in SvelteKit, to the
+**rejects the returned promise**, even when the call had nothing to fetch, and
+keeps none of what the load delivered, so the next trigger fetches it again — a
+load that fetched part of itself again after an
+[invalidation](#invalidatelocale-namespace) keeps the part that landed first.
+The call is undone as control flow undoes it, except that its route stands
+([see `loader`](#loader-required)), and `await` surfaces the error (in SvelteKit, to the
 error page — the static `src/error.html` when it happens in the root layout);
 when a loader's control flow rejects the load too, that failure is only logged
-and the promise rejects with the control flow. A result you discard is safe:
+and the promise rejects with the control flow, whose undo takes the route back
+too. A result you discard is safe:
 the failure is logged through the configured logger and never becomes an
 unhandled rejection — but it is then only visible in the log.
 
@@ -3220,6 +3229,22 @@ letting the constructor's inference stand.
 
 For type-safe translation keys, supply a [`schema`](#schema); the wider
 TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+
+---
+
+## Upgrading from 3.2
+
+A 3.2 config loads in 3.3 as it is. What behaves differently:
+
+**A call whose data cannot be applied is undone.** In 3.2, when a custom
+[`preprocess`](#preprocess) threw on what a call's load brought, the call
+rejected but the locale it asked for stayed requested, so the next
+`setRoute()` loaded that locale again; and a call with nothing left to fetch
+threw synchronously. In 3.3 such a call is undone as one whose loader threw
+SvelteKit's control flow, except that its route stands: the locale goes back
+to what it replaced and is loaded for that route. It never throws
+synchronously: it returns the rejected promise, and the failure is logged
+once. See [`loader`](#loader-required).
 
 ---
 
