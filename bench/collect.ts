@@ -9,10 +9,13 @@ import { afterAll } from 'vitest';
  *   instantiations. The same on every machine, and a growth fails the job.
  * - `size`: bytes. The same on every machine, but nearly every change of
  *   runtime code grows one, so a growth is flagged for review.
- * - `time`: milliseconds, or bytes of heap, which vary from run to run: a
- *   difference counts only beyond the spread of the samples.
+ * - `time`: milliseconds, which vary from run to run: a difference counts only
+ *   beyond the spread of the samples and by more than a share of the median.
+ * - `heap`: bytes of heap a process retains, which vary by a few bytes from
+ *   process to process: any difference beyond the spread of the samples counts,
+ *   and a growth is flagged for review.
  */
-export type Kind = 'count' | 'size' | 'time';
+export type Kind = 'count' | 'size' | 'time' | 'heap';
 
 export type Row = { id: string; kind: Kind; unit: string; value: number };
 
