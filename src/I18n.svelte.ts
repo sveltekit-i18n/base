@@ -849,11 +849,14 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * records no loader and the next trigger fetches it again.
    */
   #applyDeliveries(applied: Delivery[]): void {
-    const { loaders = [] } = this.#config ?? {};
-
     // One load, however its deliveries were gathered: a preload claimed with
-    // it comes first, yet the loader declared later still wins.
-    const deliveries = [...applied].sort((a, b) => loaders.indexOf(a.loader) - loaders.indexOf(b.loader));
+    // it comes first, yet the loader declared later still wins. Only the order
+    // within a locale matters, so each delivery is placed once, among the
+    // loaders of its own locale.
+    const deliveries = applied
+      .map((delivery) => ({ delivery, position: this.#localeLoaders(delivery.loader.locale).indexOf(delivery.loader) }))
+      .sort((a, b) => a.position - b.position)
+      .map(({ delivery }) => delivery);
 
     const replaced = deliveries
       .filter(({ loader }) => this.#deliveries.has(loader))

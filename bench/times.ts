@@ -148,6 +148,19 @@ it('loads', async () => {
 
   record(`setRoute, to new params among 200 routes of 50 locales (${n(10_000)} loaders)`, 'time', 'ms', await timeAsync(() => wide.setRoute(`/page199/${step++}`)));
 
+  // A load that delivers several namespaces orders them, beside the loaders
+  // of 99 other locales.
+  const hundred = Array.from({ length: 100 }, (_, n) => `l${n}`);
+  const spread = routed.slice(0, 100).map(({ routes, ...loader }) => ({ ...loader, locale: hundred }));
+  let reloaded = new I18n({ parser, log, sanitizeLocales: false, loaders: spread });
+
+  record(`loadTranslations of a new instance, 100 namespaces of 100 locales (${n(10_000)} loaders)`, 'time', 'ms', await timeAsync(() => reloaded.loadTranslations('l99'), {
+    setup: () => { reloaded = new I18n({ parser, log, sanitizeLocales: false, loaders: spread }); },
+  }));
+  record(`loadTranslations again, 100 namespaces of 100 locales (${n(10_000)} loaders)`, 'time', 'ms', await timeAsync(() => reloaded.loadTranslations('l99'), {
+    setup: () => reloaded.invalidate('l99'),
+  }));
+
   const switcher = await loaded();
   let locale = 'en';
 

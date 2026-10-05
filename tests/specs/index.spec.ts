@@ -1359,6 +1359,40 @@ describe('i18n instance', () => {
 
       expect(await navigate(50)).toBe(await navigate(1));
     });
+    it('reads none of the other locales\' loaders to order the deliveries of a load', async () => {
+      const reload = async (count: number) => {
+        const locales = Array.from({ length: count }, (_, index) => `l${index}`);
+        const input = Array.from({ length: 10 }, (_, index) => ({
+          locale: locales,
+          namespace: `n${index}`,
+          loader: async () => ({ key: 'v' }),
+        }));
+
+        visits.inputs.add(input);
+        visits.reads = 0;
+
+        const instance = new i18n({ parser, log, sanitizeLocales: false, loaders: input });
+
+        await instance.loadTranslations('l0');
+
+        // The count sees the descriptors the config load and the first load read.
+        expect(visits.reads).toBeGreaterThan(0);
+
+        visits.reads = 0;
+
+        // Every reload delivers all ten namespaces at once.
+        for (let step = 0; step < 10; step += 1) {
+          instance.invalidate('l0');
+          await instance.loadTranslations('l0');
+        }
+
+        expect(Object.keys(instance.translations.l0)).toHaveLength(10);
+
+        return visits.reads;
+      };
+
+      expect(await reload(50)).toBe(await reload(1));
+    });
 
     it('enters no table set a navigation replaces into a weak collection', async () => {
       const instance = new i18n({
