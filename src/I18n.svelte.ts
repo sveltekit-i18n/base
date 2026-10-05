@@ -1358,23 +1358,33 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   #unsnapshottable(sanitizedLocale: Config.Locale, withRecords: boolean): Loader.Key[] {
     const { loaders = [] } = this.#config ?? {};
 
-    const own = loaders.filter(({ locale }) => locale === sanitizedLocale);
+    // Grouped in one pass: a filter per namespace would be quadratic in the
+    // number of loaders.
+    const byNamespace = new Map<Loader.Key, Loader.Resolved[]>();
 
-    return unique(own.map(({ namespace }) => namespace)).filter((namespace) => {
-      const feeding = own.filter((loader) => loader.namespace === namespace);
+    loaders.forEach((loader) => {
+      if (loader.locale !== sanitizedLocale) return;
 
+      const feeding = byNamespace.get(loader.namespace);
+
+      if (feeding) feeding.push(loader);
+      else byNamespace.set(loader.namespace, [loader]);
+    });
+
+    const named = new Set(read<Loader.Key[]>(this.#namespaceRecords, sanitizedLocale));
+
+    return Array.from(byNamespace).filter(([namespace, feeding]) => {
       const several = feeding.length > 1;
       const params = feeding.some(({ routes }) => capturesParams(routes));
 
       // Seeded data alone would keep the client's loaders from ever running.
-      const delivered = feeding.some((loader) => this.#loaderRecords.has(loader))
-        || (read<Loader.Key[]>(this.#namespaceRecords, sanitizedLocale) || []).includes(namespace);
+      const delivered = feeding.some((loader) => this.#loaderRecords.has(loader)) || named.has(namespace);
 
       if (!withRecords) return several || params || !delivered;
 
       // Only a record lets the client replace the data once the params change.
       return params && (several || feeding.some((loader) => loader.id === null || !this.#loaderRecords.has(loader)));
-    });
+    }).map(([namespace]) => namespace);
   }
 
   /** The loaders of `sanitizedLocale` and of the fallback locale, in `loaders` order. */
