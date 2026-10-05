@@ -468,7 +468,14 @@ green suite only proves what it tests. Every change goes through this cycle:
    re-runs the job when the label changes; where GitHub refuses the re-run, a
    push or a reopen of the pull request runs it anew). A size that
    grew and a time beyond its spread are flagged for this review. A hot path
-   the rows do not cover gets a row in the same pull request.
+   the rows do not cover gets a row in the same pull request. Performance
+   work goes where consumers spend the most time: the most used scenarios and
+   flows (a `t`/`l` call, a page render, a navigation, a load) are optimized
+   as far as they go, first. A change that speeds up a rare or extreme shape
+   is taken only when it costs those flows nothing measurable. When a
+   measurement shows that a planned item does not pay off, the item is
+   reported with that measurement before it is implemented, never done
+   anyway.
 4. **Ground every claim.** A reviewer proves an assumption from the source
    (the host's code, the engine's behaviour on every runtime the package
    supports) or by reproducing it — never from memory.
