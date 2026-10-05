@@ -5,8 +5,8 @@ import { serverHalf } from '#kit-server';
 
 import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
-import type { Config, Loader } from '../types.js';
-import { configLocales, matchLocale, resolveLoaders, sanitizerFactory, textDirection } from '../utils.js';
+import type { Config, Loader, Snapshot } from '../types.js';
+import { configLocales, matchLocale, paramsSignature, resolveLoaders, routeParams, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
 import type { Negotiated } from './internal.js';
 import type { Kit } from './types.js';
 
@@ -44,7 +44,7 @@ type Lapse = { commit: number; switching: Switching; outcomes?: boolean[] };
 type Pass = { i18n: I18n; surface: unknown; locale: string | undefined; follows: boolean; route: string; seen: string | undefined; via?: Switching; preloaded?: Loader.Preloaded };
 
 /** What the config's loaders and tables settle for the wiring, read once. */
-type Configured = { locales: string[]; handOver: boolean };
+type Configured = { locales: string[]; handOver: boolean; loaders: Loader.Resolved[] };
 
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
@@ -84,10 +84,10 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     try {
       const loaders = resolveLoaders(config.loaders, config.sanitizeLocales);
 
-      configured = { locales: configLocales(config, loaders), handOver: !loaders.some(({ cache }) => cache === false) };
+      configured = { locales: configLocales(config, loaders), handOver: !loaders.some(({ cache }) => cache === false), loaders };
     } catch {
       // The instance reports a malformed config itself.
-      configured = { locales: [], handOver: false };
+      configured = { locales: [], handOver: false, loaders: [] };
     }
 
     defaults = [sanitized(config.initLocale), sanitized(config.fallbackLocale)];
@@ -147,10 +147,13 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, handOver: () => resolved().handOver });
 
   // Browser only: the tab's instance, the server's answer at the last commit,
-  // the switch under way, what the last commit waits on, and how many commits
-  // there were, which only `use()` writes. A server keeps nothing between
-  // requests.
-  const tab: { i18n?: I18n; surface?: unknown; answer?: string; switching?: Switching; lapse?: Lapse; commits: number } = { commits: 0 };
+  // the switch under way, what the last commit waits on, how many commits
+  // there were, which only `use()` writes, and the tables the pass that built
+  // the instance left when it activated it without a hand-off for a config
+  // with a `cache: false` loader, until the first commit reads them. None of
+  // it lives in `data`, which the app may hold in deep state. A server keeps
+  // nothing between requests.
+  const tab: { i18n?: I18n; surface?: unknown; answer?: string; switching?: Switching; lapse?: Lapse; commits: number; activated?: object } = { commits: 0 };
 
   // The wiring's own switch, while the locale has not moved from where it
   // started: that switch is no client change, while a locale that moved is.
@@ -158,6 +161,41 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
 
   // The locale the tab shows once the wiring's own switch lands.
   const heading = (i18n: I18n): string | undefined => underway(i18n)?.to ?? untrack(() => i18n.locale);
+
+  // The records an activation of `locale` on `route` leaves once every loader
+  // it selects delivered, in `loaders` order as `snapshot()` lists them, or
+  // `undefined` when none of them has `cache: false`, so the commit runs
+  // nothing again, or one of them has no id, whose record no snapshot shows.
+  const records = (locale: string, route: string): Snapshot.LoadRecord[] | undefined => {
+    const selected = resolved().loaders.flatMap((loader) => {
+      const params = loader.locale === locale || loader.locale === defaults[1] ? routeParams(loader.routes, route) : undefined;
+
+      return params ? [{ id: loader.id, signature: paramsSignature(params), cache: loader.cache }] : [];
+    });
+
+    if (!selected.some(({ cache }) => cache === false)) return undefined;
+
+    const listed = selected.flatMap(({ id, signature }) => (id === null ? [] : [signature ? { id, signature } : { id }]));
+
+    return listed.length === selected.length ? listed : undefined;
+  };
+
+  // Whether an instance still stands where the activation of `locale` on
+  // `route` left it, with `tables`: nothing loading or landed since, its
+  // records whole and every loader delivered, which a failed loader, another
+  // load, a reconfiguration and an invalidation of what it loaded each undo.
+  const stands = (i18n: I18n, locale: string, route: string, tables: object): boolean => untrack(() => {
+    if (i18n.loading || i18n.locale !== locale || i18n.rawTranslations !== tables) return false;
+
+    const path = withoutBasePath(route, config.basePath);
+    const expected = records(locale, path);
+
+    if (!expected) return false;
+
+    const envelope = i18n.snapshot({ records: true });
+
+    return envelope.route === path && JSON.stringify(envelope.records) === JSON.stringify(expected);
+  });
 
   const fallBack = (commit: number, switching: Switching): void => {
     const lapse: Lapse = { commit, switching };
@@ -228,6 +266,10 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
       if (target) preloaded = await i18n.preload(target, route);
     }
 
+    // Unless a hand-off holds it back, the commit would run a loader with
+    // `cache: false` again for the very request this pass activated.
+    if (BROWSER && fresh && !payload?.translations && !resolved().handOver) tab.activated = untrack(() => i18n.rawTranslations);
+
     const pass: Pass = { i18n, surface, locale: answer, follows, route, seen, via, preloaded };
 
     return { ...event.data, i18n: surface, [KEY]: pass };
@@ -256,6 +298,11 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
       if (!pass) return;
 
       const first = !tab.commits;
+      const { activated } = tab;
+
+      // Read by the first commit alone: the tables would outlive their
+      // replacement for the life of the tab.
+      tab.activated = undefined;
 
       tab.answer = answered(pass.i18n);
 
@@ -275,6 +322,9 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
         tab.answer = locale;
 
         if (locale !== undefined) {
+          // The pass that built the instance activated it for this request:
+          // while it stands there, that activation is the commit's.
+          const taken = first && activated !== undefined && stands(pass.i18n, locale, pass.route, activated);
           const switching: Switching = {
             from: untrack(() => pass.i18n.locale),
             back: now,
@@ -283,7 +333,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
             failed: false,
             stays: [],
             reached: false,
-            landed: pass.i18n.loadTranslations(locale, pass.route, { preloaded: pass.preloaded }).then(() => true, () => {
+            landed: (taken ? Promise.resolve() : pass.i18n.loadTranslations(locale, pass.route, { preloaded: pass.preloaded })).then(() => true, () => {
               switching.failed = true;
 
               return false;

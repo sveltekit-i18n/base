@@ -9,7 +9,7 @@ import { compiled, SRC, type Generate } from './vitest.config.js';
 // other file shares the CPU while one is timed.
 const projects: Record<string, { include: string[]; generate: Generate }> = {
   counts: { include: ['bench/counts.ts', 'bench/sizes.ts', 'bench/checker.ts'], generate: 'client' },
-  times: { include: ['bench/times.ts'], generate: 'client' },
+  times: { include: ['bench/times.ts', 'bench/page.ts'], generate: 'client' },
   kit: { include: ['bench/kit.ts'], generate: 'server' },
 };
 
