@@ -1,10 +1,11 @@
 // Runs the benchmark: `npm run bench` measures this tree, and
 // `npm run bench -- --compare <dir>` measures it against the package checked
 // out at `<dir>` (master, in CI), printing a table of both. Node runs this file
-// as it is, so it imports nothing it would have to compile.
+// as it is, so it imports nothing it would have to compile: Node's modules, and
+// `compare.ts`, which Node runs as it is too.
 //
 //   --compare <dir>   the package root to measure against
-//   --samples <n>     processes per side for the time rows (default 5)
+//   --samples <n>     processes per side for the time rows (default 11)
 //   --report <file>   also writes the table, as Markdown, to <file>
 //   --write           writes BENCH.md from this tree's rows
 //
@@ -19,6 +20,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
+import { change, flagOf, median, spreadOf, THRESHOLD } from './compare.ts';
+
 type Kind = 'count' | 'size' | 'time';
 type Row = { id: string; kind: Kind; unit: string; value: number };
 type Subject = 'master' | 'head';
@@ -29,14 +32,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'bench/out');
 const KINDS: Kind[] = ['count', 'size', 'time'];
 
-// A time counts as changed only beyond the spread of both sides and by more
-// than this share of master's median.
-const THRESHOLD = 0.05;
-
 const { values: args } = parseArgs({
   options: {
     compare: { type: 'string' },
-    samples: { type: 'string', default: '5' },
+    samples: { type: 'string', default: '11' },
     report: { type: 'string' },
     write: { type: 'boolean', default: false },
   },
@@ -108,20 +107,13 @@ for (let sample = 0; sample < samples; sample++) {
   }
 }
 
-const median = (values: number[]) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = sorted.length >> 1;
-
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-};
-
 const format = (value: number, unit: string) => {
   if (unit === 'ms' || unit === 'µs') return `${value.toLocaleString('en-US', { maximumSignificantDigits: 3 })} ${unit}`;
 
   return `${Math.round(value).toLocaleString('en-US')} ${unit}`;
 };
 
-const spread = ({ values, unit }: Measured) => (values.length > 1 ? `${format(Math.min(...values), unit)} to ${format(Math.max(...values), unit)}` : '');
+const spread = ({ values, unit }: Measured) => (values.length > 1 ? spreadOf(values).map((bound) => format(bound, unit)).join(' to ') : '');
 
 type Line = { id: string; kind: Kind; master?: Measured; head?: Measured; flag: string; delta: string };
 
@@ -135,19 +127,10 @@ const compare = (id: string): Line => {
   if (!master) return { id, kind, head, flag: args.compare ? 'new' : '', delta: '' };
 
   const [from, to] = [median(master.values), median(head.values)];
-  const change = from === 0 ? (to === 0 ? 0 : Infinity) : (to - from) / Math.abs(from);
-  const delta = from === to ? '0' : `${to > from ? '+' : ''}${format(to - from, head.unit)}${Number.isFinite(change) ? ` (${to > from ? '+' : ''}${(100 * change).toFixed(1)}%)` : ''}`;
+  const share = change(from, to);
+  const delta = from === to ? '0' : `${to > from ? '+' : ''}${format(to - from, head.unit)}${Number.isFinite(share) ? ` (${to > from ? '+' : ''}${(100 * share).toFixed(1)}%)` : ''}`;
 
-  if (kind === 'time') {
-    const slower = Math.min(...head.values) > Math.max(...master.values) && change >= THRESHOLD;
-    const faster = Math.max(...head.values) < Math.min(...master.values) && change <= -THRESHOLD;
-
-    return { id, kind, master, head, delta, flag: slower ? 'slower, review' : faster ? 'faster' : '' };
-  }
-
-  if (to > from) return { id, kind, master, head, delta, flag: kind === 'count' ? 'grew, fails' : 'grew, review' };
-
-  return { id, kind, master, head, delta, flag: to < from ? 'shrank' : '' };
+  return { id, kind, master, head, delta, flag: flagOf(kind, master.values, head.values) };
 };
 
 const ids = [...new Set([...measured.head.keys(), ...measured.master.keys()])];
@@ -183,7 +166,7 @@ const verdict = [
   review.length ? `- ${review.length} row${review.length === 1 ? '' : 's'} to review: a size that grew or a time beyond its spread by ${100 * THRESHOLD}% or more. Neither fails the job.` : '',
 ].filter(Boolean);
 
-const environment = `Node ${process.version}, ${platform()} ${arch()}; times are medians of ${samples} process${samples === 1 ? '' : 'es'}${args.compare ? ' per side' : ''}, each the median of its rounds.`;
+const environment = `Node ${process.version}, ${platform()} ${arch()}; times are medians of ${samples} process${samples === 1 ? '' : 'es'}${args.compare ? ' per side' : ''}, each the median of its rounds; a spread leaves out the fastest and the slowest quarter of them, rounded down.`;
 
 const report = [
   `<!-- bench:${name} -->`,

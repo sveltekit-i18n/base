@@ -34,7 +34,7 @@
   },
   "scripts": {
     "dev": "svelte-package -i src -o dist -w",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p bench",
     "pretest": "npm run build && npm run typecheck",
     "test": "vitest run",
     "pretest:dist": "npm run build",

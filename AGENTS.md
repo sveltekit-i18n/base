@@ -48,7 +48,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `npm run build` | `svelte-package` build to `dist/` |
 | `npm test` | vitest suite (runs `build` and `typecheck` first) |
 | `npm run test:dist` | builds, then tests the SHIPPED artifact (`tests/specs/dist.spec.ts`) |
-| `npm run typecheck` | `tsc --noEmit` over `src`, `tests`, `bench` and the root `.ts` configs |
+| `npm run typecheck` | `tsc --noEmit` over `src`, `tests` and the root `.ts` configs, then over `bench` (`bench/tsconfig.json`, which alone allows a `.ts` specifier) |
 | `npm run lint` | `eslint --fix .` (also the pre-commit hook, via `simple-git-hooks`) |
 | `npm run prepare` | installs the git hooks (`simple-git-hooks`); npm runs it automatically after `npm install` |
 | `npm run bench` | the benchmark of this tree; `-- --compare <dir>` measures it against the package checked out at `<dir>` |
@@ -74,6 +74,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/specs/async.spec.ts` | `t` under Svelte's async batching and `fork()` — the `async` project only |
 | `tests/components/` | the Svelte components `kit.spec.ts` mounts, and the `*.async.svelte` ones `async.spec.ts` mounts |
 | `tests/specs/dist.spec.ts` | shipped-artifact checks — runs only via `npm run test:dist` |
+| `tests/specs/bench.spec.ts` | how the benchmark reads a row against the base (`bench/compare.ts`) |
 | `tests/specs/registry.spec.ts` | compiles the `tests/types/registry/` fixtures with `tsc` |
 | `tests/types/registry/` | type fixtures of the schema registry — programs of their own, outside `typecheck` |
 | `tests/specs/cost.spec.ts` | the checker's cost of a `t`/`l` call, counted in the `tests/types/cost/` probe |
@@ -82,7 +83,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
 | `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile, plus `async` (see the rolldown filter workaround note inside) |
-| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts` and `kit.ts` measure its rows |
+| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample, and `compare.ts` reads each row against the base; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts` and `kit.ts` measure its rows |
 | `vitest.bench.config.ts` | the benchmark's runner config — one project per run, aliased to the tree it measures |
 | `BENCH.md` | the benchmark of the last release, written into its release commit by `publish.yml` |
 
@@ -480,15 +481,17 @@ green suite only proves what it tests. Every change goes through this cycle:
    unless the pull request carries the `bench-accepted` label (`bench-label.yml`
    re-runs the job when the label changes; where GitHub refuses the re-run, a
    push or a reopen of the pull request runs it anew). A size that
-   grew and a time beyond its spread are flagged for this review. A hot path
-   the rows do not cover gets a row in the same pull request. Performance
-   work goes where consumers spend the most time: the most used scenarios and
-   flows (a `t`/`l` call, a page render, a navigation, a load) are optimized
-   as far as they go, first. A change that speeds up a rare or extreme shape
-   is taken only when it costs those flows nothing measurable. When a
-   measurement shows that a planned item does not pay off, the item is
-   reported with that measurement before it is implemented, never done
-   anyway.
+   grew and a time beyond its spread are flagged for this review; the spread
+   leaves out the fastest and the slowest quarter of the samples, rounded
+   down, so a process that shared the machine with a busy neighbour neither
+   hides a change nor flags one. A hot path the rows do not cover gets a row
+   in the same pull request. Performance work goes where consumers spend the
+   most time: the most used scenarios and flows (a `t`/`l` call, a page
+   render, a navigation, a load) are optimized as far as they go, first. A
+   change that speeds up a rare or extreme shape is taken only when it costs
+   those flows nothing measurable. When a measurement shows that a planned
+   item does not pay off, the item is reported with that measurement before
+   it is implemented, never done anyway.
 4. **Ground every claim.** A reviewer proves an assumption from the source
    (the host's code, the engine's behaviour on every runtime the package
    supports) or by reproducing it — never from memory.
@@ -710,7 +713,8 @@ not RCE/XSS.
 
 - Tests live in `tests/specs/index.spec.ts`; fixtures in `tests/data/`. The
   exceptions are `tests/specs/kit.spec.ts`, which needs a DOM for `use()` and
-  `get()`, `tests/specs/async.spec.ts`, and `tests/specs/dist.spec.ts`, which
+  `get()`, `tests/specs/async.spec.ts`, `tests/specs/bench.spec.ts`, which pins
+  how the benchmark reads a row, and `tests/specs/dist.spec.ts`, which
   exercises the SHIPPED artifact and runs separately via `npm run test:dist`
   (which builds first).
 - A case that needs Svelte's async mode (an `await` in a template, `fork()`)
