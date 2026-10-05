@@ -41,6 +41,29 @@ jobs:
         env:
           tests: true
 
+  Lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Install Dependencies
+        run: npm ci
+
+      # `dist.spec.ts` imports the build, which the type-checked rules read.
+      - name: Build
+        run: npm run build
+
+      # Without `--fix`, which `npm run lint` passes: a finding fails the job.
+      - name: Lint
+        run: npx eslint .
+
   # The package declares no runtime API of its own, so these legs exist to keep
   # that true. Dependencies still install through npm: the alternative runtimes
   # run the suite, they do not manage the tree.

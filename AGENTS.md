@@ -37,7 +37,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | Tests | Vitest + `vite-plugin-svelte` (compiles `.svelte.ts` and the test components), environment `node` (`happy-dom` for `kit.spec.ts`); every suite runs twice, the rune modules compiled for the server and for the client (which also resolves with the `browser` condition, so `svelte` runs effects and `#kit-*` picks the browser half), except `async.spec.ts`, which runs only in a third project, `async`: a client compile in `happy-dom` that compiles the `*.async.svelte` components with `experimental.async`; each project aliases the `#kit-*` imports to the source it runs, and `tsconfig.json` maps them with `paths` |
 | Lint | ESLint 10 flat config (`eslint.config.js`): typescript-eslint 8 type-checked + `@stylistic` + `import-x/no-extraneous-dependencies` |
 | Runtime peer | `svelte >=5` (runes; no `svelte/store`) |
-| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg; `bench.yml` — the benchmark of a pull request against its base, re-run by `bench-label.yml` when its `bench-accepted` label changes |
+| CI | `.github/workflows/tests.yml` — Node 22 + 24, ubuntu/macOS/windows, plus a Bun and a Deno leg and ESLint without `--fix`; `bench.yml` — the benchmark of a pull request against its base, re-run by `bench-label.yml` when its `bench-accepted` label changes |
 
 ## Commands
 
