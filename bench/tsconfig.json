@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // Node runs the benchmark's runner as it is, by stripping its types, so it
+    // imports what it shares with the suite by the `.ts` name. Only this
+    // program allows that name: src/ ships its modules as `.js`.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["."],
+  // The probe resolves the core to the tree it measures.
+  "exclude": ["./types", "./out"]
+}

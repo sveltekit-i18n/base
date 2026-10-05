@@ -33,12 +33,11 @@
   "include": [
     "./src",
     "./tests",
-    "./bench",
     "./*.js",
     "./*.ts"
   ],
   // Programs of their own, each with its own registration: one here would
-  // type every schema-less instance in the suite. The benchmark's probe
-  // resolves the core to the tree it measures.
-  "exclude": ["./tests/types", "./bench/types"]
+  // type every schema-less instance in the suite. The benchmark is checked by
+  // bench/tsconfig.json.
+  "exclude": ["./tests/types"]
 }
