@@ -1175,6 +1175,316 @@ describe('/kit', () => {
       languages.mockRestore();
     });
 
+    // A first pass that hydrates nothing: no server load, `ssr = false` with
+    // one (a payload without tables), a root error page without its data.
+    describe('the first page without a hand-off', () => {
+      const firstPage = (routes?: RegExp[], extra: Record<string, any> = {}) => {
+        const runs: string[] = [];
+        const live = (locale: string) => ({
+          locale,
+          namespace: 'live',
+          routes,
+          cache: false,
+          loader: ({ route }: { route: string }) => {
+            runs.push(`${locale}:${route}`);
+
+            return Promise.resolve({ value: `live ${runs.length}` });
+          },
+        });
+        const wiring = setup({
+          loaders: [
+            { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ greeting: 'Ahoj' }) },
+            { locale: 'en', namespace: 'common', loader: () => Promise.resolve({ greeting: 'Hello' }) },
+            live('cs'),
+            live('en'),
+          ],
+          ...extra,
+        });
+
+        return { wiring, runs };
+      };
+
+      const answering = (locale: string) => {
+        const languages = vi.spyOn(navigator, 'languages', 'get').mockReturnValue([locale]);
+
+        onTestFinished(() => languages.mockRestore());
+      };
+
+      const opened = (wiring: Kit.T<any>, data: { current: object }) => {
+        const { component } = mountLayout(wiring, data);
+
+        onTestFinished(() => unmount(component));
+      };
+
+      const settled = async (i18n: any) => {
+        await vi.waitFor(() => expect(i18n.loading).toBe(false));
+        await new Promise((resolve) => setTimeout(resolve));
+      };
+
+      it.each([
+        ['without a server load', '/', null, 'cs', undefined],
+        ['with ssr off', '/', 'cs', 'cs', undefined],
+        ['for an answer other than the first locale', '/', 'en', 'en', undefined],
+        ['for route params', '/blog/a', null, 'cs', [/^\/blog\/(?<slug>[^/]+)$/]],
+      ])('runs a loader whose source caches once, %s, and mounts what the pass showed', async (_name, path, answer, locale, routes) => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage(routes);
+        const data = cell<object>(await wiring.load(universalEvent(path, answer ? page(path, answer) : null)));
+        const { i18n } = data.current as { i18n: any };
+
+        opened(wiring, data);
+        expect(i18n.loading).toBe(false);
+        expect(i18n.t('live.value')).toBe('live 1');
+        await settled(i18n);
+        expect(runs).toEqual([`${locale}:${path}`]);
+        expect(i18n.locale).toBe(locale);
+        expect(document.documentElement.lang).toBe(locale);
+      });
+
+      it('runs a loader whose source caches once with a fallback locale, whose loaders the pass ran too', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage(undefined, { fallbackLocale: 'en' });
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        opened(wiring, data);
+        expect(i18n.loading).toBe(false);
+        await settled(i18n);
+        expect(runs).toEqual(['cs:/', 'en:/']);
+      });
+
+      it('runs a loader whose source caches once under a base path', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage(undefined, { basePath: '/repo' });
+        const data = cell<object>(await wiring.load(universalEvent('/repo/a', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        opened(wiring, data);
+        expect(i18n.loading).toBe(false);
+        await settled(i18n);
+        expect(runs).toEqual(['cs:/a']);
+      });
+
+      it('switches back at commit from a locale a child load set before it', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage();
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        await i18n.setLocale('en');
+        opened(wiring, data);
+        await settled(i18n);
+        expect(i18n.locale).toBe('cs');
+        expect(runs).toEqual(['cs:/', 'en:/', 'cs:/']);
+      });
+
+      it('commits its answer over a locale a child load is still switching to', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage();
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        void i18n.setLocale('en');
+        opened(wiring, data);
+        await settled(i18n);
+        expect(i18n.locale).toBe('cs');
+        expect(runs).toEqual(['cs:/', 'en:/', 'cs:/']);
+      });
+
+      it('fetches at commit what a child load invalidated before it', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage();
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        i18n.invalidate();
+        opened(wiring, data);
+        await settled(i18n);
+        expect(runs).toEqual(['cs:/', 'cs:/']);
+        expect(i18n.t('live.value')).toBe('live 2');
+      });
+
+      it('fetches at commit a loader that failed soft in the pass', async () => {
+        answering('cs');
+
+        let attempts = 0;
+        const runs: string[] = [];
+        const wiring = setup({
+          log: { level: 'error' as const, logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+          loaders: [
+            {
+              locale: 'cs',
+              namespace: 'common',
+              loader: () => (++attempts === 1 ? Promise.reject(new Error('down')) : Promise.resolve({ greeting: 'Ahoj' })),
+            },
+            { locale: 'cs', namespace: 'live', cache: false, loader: () => { runs.push('cs'); return Promise.resolve({ value: 'now' }); } },
+          ],
+        });
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        opened(wiring, data);
+        await settled(i18n);
+        expect(attempts).toBe(2);
+        expect(document.body.innerHTML).toContain('Ahoj');
+        expect(runs).toEqual(['cs', 'cs']);
+      });
+
+      it('puts back at commit the route a child load moved before it', async () => {
+        answering('cs');
+
+        const { wiring, runs } = firstPage();
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        await i18n.setRoute('/elsewhere');
+        opened(wiring, data);
+        await settled(i18n);
+        expect(i18n.snapshot({ records: true }).route).toBe('/');
+        expect(runs).toEqual(['cs:/', 'cs:/elsewhere', 'cs:/']);
+      });
+
+      // Loaders of one namespace without routes share their description, so
+      // none of them has an id, and no snapshot records what they delivered.
+      const chunked = (first: () => Promise<Record<string, string>>) => {
+        const runs: string[] = [];
+        const wiring = setup({
+          log: { level: 'error' as const, logger: { error: () => {}, warn: () => {}, debug: () => {} } },
+          loaders: [
+            { locale: 'cs', namespace: 'common', loader: first },
+            { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ extra: 'navic' }) },
+            { locale: 'cs', namespace: 'live', cache: false, loader: () => { runs.push('cs'); return Promise.resolve({ value: 'now' }); } },
+          ],
+        });
+
+        return { wiring, runs };
+      };
+
+      it('fetches at commit a loader without an id that failed soft in the pass', async () => {
+        answering('cs');
+
+        let attempts = 0;
+        const { wiring, runs } = chunked(() => (++attempts === 1 ? Promise.reject(new Error('down')) : Promise.resolve({ greeting: 'Ahoj' })));
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        opened(wiring, data);
+        await settled(i18n);
+        expect(attempts).toBe(2);
+        expect(document.body.innerHTML).toContain('Ahoj');
+        expect(runs).toEqual(['cs', 'cs']);
+      });
+
+      it('fetches at commit what a child load invalidated of loaders without an id', async () => {
+        answering('cs');
+
+        let version = 0;
+        const { wiring } = chunked(() => Promise.resolve({ greeting: `v${++version}` }));
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        i18n.invalidate('cs', 'common');
+        opened(wiring, data);
+        await settled(i18n);
+        expect(version).toBe(2);
+        expect(document.body.innerHTML).toContain('v2');
+      });
+
+      it('loads at commit what a loadConfig() in between brought for the route', async () => {
+        answering('cs');
+
+        const runs: string[] = [];
+        const wiring = setup({
+          loaders: [
+            { locale: 'cs', namespace: 'live', routes: ['/live'], cache: false, loader: () => { runs.push('live'); return Promise.resolve({ value: 'now' }); } },
+          ],
+        });
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        await i18n.loadConfig({
+          parser: valueParser,
+          loaders: [
+            { locale: 'cs', namespace: 'common', loader: () => { runs.push('common'); return Promise.resolve({ greeting: 'Ahoj' }); } },
+          ],
+        });
+        opened(wiring, data);
+        await settled(i18n);
+        expect(i18n.locale).toBe('cs');
+        expect(runs).toEqual(['common']);
+        expect(i18n.t('common.greeting')).toBe('Ahoj');
+      });
+
+      it('retries at commit a loader a loadConfig() in between brought and that failed soft', async () => {
+        answering('cs');
+
+        let attempts = 0;
+        const loaders = [
+          { locale: 'cs', namespace: 'common', loader: () => Promise.resolve({ greeting: 'Ahoj' }) },
+          { locale: 'cs', namespace: 'live', cache: false, loader: () => Promise.resolve({ value: 'now' }) },
+        ];
+        const wiring = setup({ loaders });
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        await i18n.loadConfig({
+          parser: valueParser,
+          log: { level: 'error' as const, logger: { error: () => {} } },
+          initLocale: 'cs',
+          loaders: [
+            ...loaders,
+            { locale: 'cs', namespace: 'extra', loader: () => (++attempts === 1 ? Promise.reject(new Error('down')) : Promise.resolve({ more: 'Víc' })) },
+          ],
+        });
+        opened(wiring, data);
+        await settled(i18n);
+        expect(attempts).toBe(2);
+        expect(i18n.t('extra.more')).toBe('Víc');
+      });
+
+      it('loads at commit after a setLocale() in between that loaded the same request again', async () => {
+        answering('cs');
+
+        const runs: string[] = [];
+        const wiring = setup({
+          loaders: [
+            { locale: 'cs', namespace: 'live', cache: false, loader: () => { runs.push('live'); return Promise.resolve({ value: 'now' }); } },
+          ],
+        });
+        const data = cell<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+
+        await i18n.setLocale('cs');
+        opened(wiring, data);
+        await settled(i18n);
+        expect(runs).toEqual(['live', 'live', 'live']);
+      });
+
+      it('takes the activation in one commit when the app holds `data` in deep state', async () => {
+        answering('cs');
+
+        const runs: string[] = [];
+        const wiring = setup({
+          loaders: [{ locale: 'cs', namespace: 'live', cache: false, loader: () => { runs.push('live'); return Promise.resolve({ value: 'now' }); } }],
+        });
+        const data = deep<object>(await wiring.load(universalEvent('/', null)));
+        const { i18n } = data.current as { i18n: any };
+        const loadTranslations = vi.spyOn(i18n, 'loadTranslations');
+        const setRoute = vi.spyOn(i18n, 'setRoute');
+
+        opened(wiring, data);
+        await settled(i18n);
+        expect(runs).toEqual(['live']);
+        expect([loadTranslations.mock.calls, setRoute.mock.calls]).toEqual([[], []]);
+      });
+    });
+
     // Every later pass preloads: the commit shows what its request delivered
     // and runs no loader that answered.
     describe('a navigation', () => {
@@ -1405,13 +1715,14 @@ describe('/kit', () => {
           { locale: 'cs', namespace: 'common', cache: false, loader: () => Promise.resolve({ greeting: `v${++version}` }) },
         ]);
         const data = cell<object>(await wiring.load(universalEvent('/a', page('/a'))));
-        const i18n = await opened(wiring, data, 'v2');
+        const i18n = await opened(wiring, data, 'v1');
         const before = runs.length;
         const next = await wiring.load(universalEvent('/b', page('/b')));
 
         i18n.invalidate();
         commit(data, next);
-        await vi.waitFor(() => expect(text()).toBe('v4'));
+        await vi.waitFor(() => expect(i18n.loading).toBe(false));
+        expect(text()).toBe('v3');
         expect(runs.slice(before)).toEqual(['cs:common:/b', 'cs:common:/b']);
       });
 

@@ -83,7 +83,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
 | `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile, plus `async` (see the rolldown filter workaround note inside) |
-| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample, and `compare.ts` reads each row against the base; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts` and `kit.ts` measure its rows |
+| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample, and `compare.ts` reads each row against the base; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts`, `page.ts` (which mounts `Page.svelte`) and `kit.ts` measure its rows |
 | `vitest.bench.config.ts` | the benchmark's runner config — one project per run, aliased to the tree it measures |
 | `BENCH.md` | the benchmark of the last release, written into its release commit by `publish.yml` |
 
@@ -408,7 +408,23 @@ translation state, loading, caching, route matching, and preprocessing — but
   pass that builds it activates — every later pass is a `preload()` of one
   target, since it may be a hover, and keeps the token on the pass; the
   commit hands it on, to the switch (`loadTranslations`) and to the stay
-  (`setRoute`). `use()`
+  (`setRoute`). A pass that builds it and hydrates nothing, for a config
+  with a `cache: false` loader, keeps the tables its activation left
+  (`tab.activated`, never in `data`, which the app may hold in deep state),
+  and the first commit takes that activation as its own — calls nothing —
+  while the instance still stands where it left it (`stands`): nothing
+  `loading`, the answer active, `rawTranslations` the very object it left,
+  and the route and the records of `snapshot({ records: true })` exactly
+  those the activation leaves once every loader it selects delivered, one of
+  them with `cache: false` and none without an id (a namespace or a record
+  the snapshot leaves out moves them). A loader that failed soft, an
+  activating load under way, anything that landed in between — a client
+  `setLocale()`, `setRoute()`, `loadConfig()`, a warm load, `addTranslations()`
+  or `hydrate()` — and an `invalidate()` of what the page loads move it, and
+  the commit then loads as it would otherwise; a `cache` window that elapsed
+  since the pass is left to the next trigger. The commit drops
+  `tab.activated` as it reads it, so the tables it held do not outlive their
+  replacement. `use()`
   activates at commit, comparing the
   server's answer with the last commit's (the per-result `tab` memory), so a
   client `setLocale()` stands until the answer changes; an answer given before

@@ -2307,7 +2307,16 @@ export { load } from '$lib/i18n';
   takes over the instance the server branch loaded in the same request, so
   nothing is hydrated twice; in the browser, or when a loader has
   `cache: false`, it builds the instance and [hydrates](#hydrateenvelope) the
-  snapshot. On each later client navigation, it
+  snapshot. Without a snapshot (no server `load`, `ssr = false`) it loads the
+  negotiated locale itself; when that load ran a
+  [`cache: false`](#cache-optional) loader, the first commit takes it as its
+  own, so that loader runs once, while the instance is not `loading`,
+  nothing landed in it since (a load, `addTranslations()`, `hydrate()`),
+  nothing invalidated what the page loads, and its
+  [snapshot](#snapshotoptions) records every loader the page selects — a
+  loader that failed soft, one without an `id`, one whose namespace holds a
+  literal `__proto__` key and one whose namespace the snapshot leaves out each
+  make the commit load again. On each later client navigation, it
   [preloads](#preloadlocale-route) the target locale for the route, so `use()`
   shows at commit what that request fetched. Either way it returns the instance as `data.i18n`, next to the
   other fields of the server's data. With
@@ -3331,7 +3340,13 @@ again at commit, and one whose fetch the preload only shared is refreshed
 behind what it shows. A
 preload is a request, a hover's included, so it ends the pass a
 [`hydrate()`](#hydrateenvelope) hand-off held a `cache: false` loader back
-for.
+for. On the first page without a snapshot to hydrate — no server `load`,
+`ssr = false` — the first commit ran a `cache: false` loader again, after
+`load` had run it; in 3.3 that commit takes the load of `load` as its own,
+unless the instance is `loading`, something landed in it or invalidated what
+the page loads in between, or its [snapshot](#snapshotoptions) cannot record every loader
+the page selects: one failed soft, has no `id`, or feeds a namespace that
+holds a literal `__proto__` key or that the snapshot leaves out.
 
 ---
 
