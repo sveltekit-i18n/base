@@ -9638,14 +9638,30 @@ describe('routePrefix', () => {
     expect(routePrefix(pathname, routeId)).toBe(expected);
   });
 
-  it('decides a long pathname against many rest params in bounded time, and leaves a longer one alone', () => {
-    const pathname = '/x'.repeat(64);
+  it('decides a long pathname against many rest params in work polynomial in its segments, and leaves a longer one alone', () => {
     const routeId = '/[...a]/[...b]/[...c]/[...d]/y';
-    const start = performance.now();
+    // Every pattern the matcher decides is tested with `startsWith`, so its
+    // calls count the decisions.
+    const decisions = (segments: number) => {
+      const startsWith = vi.spyOn(String.prototype, 'startsWith');
+
+      try {
+        return { prefix: routePrefix('/x'.repeat(segments), routeId), count: startsWith.mock.calls.length };
+      } finally {
+        startsWith.mockRestore();
+      }
+    };
+    const [half, full] = [decisions(16), decisions(32)];
+
+    expect([half.prefix, full.prefix]).toEqual([undefined, undefined]);
+    expect(full.count).toBeGreaterThan(half.count);
+    // At most quadratic when each pair is decided once; deciding them again
+    // per path grows with the fourth power of the segments, one per rest param.
+    expect(full.count).toBeLessThanOrEqual(4 * half.count);
+
+    const pathname = '/x'.repeat(64);
 
     expect(routePrefix(pathname, routeId)).toBe(undefined);
-    // Milliseconds when each pair is decided once; seconds when it is not.
-    expect(performance.now() - start).toBeLessThan(500);
     expect(routePrefix(`${pathname}/y`, routeId)).toBe(undefined);
     expect(routePrefix('/x'.repeat(63) + '/y', routeId)).toBe('');
   });
