@@ -36,4 +36,15 @@ describe('the benchmark comparison', () => {
   it('flags no time that changed by less than the threshold', () => {
     expect(flagOf('time', [100, 100.5, 101, 101.5, 102], [103, 103.5, 104, 104.5, 105])).toBe('');
   });
+
+  it('flags a heap reading beyond its spread, however small its share', () => {
+    expect(flagOf('heap', [21342, 21342, 21342, 21342, 21353], [21358, 21358, 21358, 21358, 21369])).toBe('grew, review');
+    expect(flagOf('heap', [21358, 21358, 21358, 21358, 21369], [21342, 21342, 21342, 21342, 21353])).toBe('shrank');
+    expect(flagOf('heap', [-288, -288, -288, -288, -3216], [816, 816, 816, 816, 816])).toBe('grew, review');
+  });
+
+  it('flags no heap reading within its spread', () => {
+    expect(flagOf('heap', [-288, -288, -288, -288, -3216], [-288, -288, -288, -288, -288])).toBe('');
+    expect(flagOf('heap', [100, 104, 108, 112, 116], [106, 110, 114, 118, 122])).toBe('');
+  });
 });

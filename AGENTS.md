@@ -83,7 +83,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `docs/README.md` | public API reference — keep in sync with code |
 | `dist/` | generated build output — never hand-edit |
 | `vitest.config.ts` / `vitest.dist.config.ts` | test runner configs — one project per compile, plus `async` (see the rolldown filter workaround note inside) |
-| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample, and `compare.ts` reads each row against the base; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts`, `page.ts` (which mounts `Page.svelte`) and `kit.ts` measure its rows |
+| `bench/` | the benchmark: `run.ts` runs it, one process per project and sample, and `compare.ts` reads each row against the base; `counts.ts`, `sizes.ts`, `checker.ts` (with the `types/` probe), `times.ts`, `page.ts` (which mounts `Page.svelte`), `heap.ts` and `kit.ts` measure its rows |
 | `vitest.bench.config.ts` | the benchmark's runner config — one project per run, aliased to the tree it measures |
 | `BENCH.md` | the benchmark of the last release, written into its release commit by `publish.yml` |
 
@@ -560,10 +560,11 @@ green suite only proves what it tests. Every change goes through this cycle:
    unless the pull request carries the `bench-accepted` label (`bench-label.yml`
    re-runs the job when the label changes; where GitHub refuses the re-run, a
    push or a reopen of the pull request runs it anew). A size that
-   grew and a time beyond its spread are flagged for this review; the spread
-   leaves out the fastest and the slowest quarter of the samples, rounded
-   down, so a process that shared the machine with a busy neighbour neither
-   hides a change nor flags one. A hot path the rows do not cover gets a row
+   grew, a time beyond its spread and a heap reading that grew beyond its
+   spread are flagged for this review; the spread leaves out the lowest and
+   the highest quarter of the samples, rounded down, so a process that shared
+   the machine with a busy neighbour neither hides a change nor flags one.
+   A hot path the rows do not cover gets a row
    in the same pull request. Performance work goes where consumers spend the
    most time: the most used scenarios and flows (a `t`/`l` call, a page
    render, a navigation, a load) are optimized as far as they go, first. A

@@ -22,15 +22,18 @@ import { parseArgs } from 'node:util';
 
 import { change, flagOf, median, spreadOf, THRESHOLD } from './compare.ts';
 
-type Kind = 'count' | 'size' | 'time';
+type Kind = 'count' | 'size' | 'time' | 'heap';
 type Row = { id: string; kind: Kind; unit: string; value: number };
 type Subject = 'master' | 'head';
-type Project = 'counts' | 'times' | 'kit';
+type Project = 'counts' | 'times' | 'heap' | 'kit';
 type Measured = { kind: Kind; unit: string; values: number[] };
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'bench/out');
-const KINDS: Kind[] = ['count', 'size', 'time'];
+const KINDS: Kind[] = ['count', 'size', 'time', 'heap'];
+
+/** Whether a row of `kind` is read from samples of its own processes. */
+const sampled = (kind: Kind) => kind === 'time' || kind === 'heap';
 
 const { values: args } = parseArgs({
   options: {
@@ -97,13 +100,13 @@ const add = (subject: Subject, rows: Row[]) => rows.forEach(({ id, kind, unit, v
 // Counts and sizes are the same on every run, so one run of each side does.
 for (const subject of subjects) add(subject, run(subject, 'counts', 0));
 
-// Times alternate between the sides, each sample in a fresh process, so a
-// drift of the machine lands on both.
+// Times and heap readings alternate between the sides, each sample in a fresh
+// process, so a drift of the machine lands on both.
 for (let sample = 0; sample < samples; sample++) {
   const order = sample % 2 ? [...subjects].reverse() : subjects;
 
   for (const subject of order) {
-    for (const project of ['times', 'kit'] as const) add(subject, run(subject, project, sample));
+    for (const project of ['times', 'heap', 'kit'] as const) add(subject, run(subject, project, sample));
   }
 }
 
@@ -128,7 +131,8 @@ const compare = (id: string): Line => {
 
   const [from, to] = [median(master.values), median(head.values)];
   const share = change(from, to);
-  const delta = from === to ? '0' : `${to > from ? '+' : ''}${format(to - from, head.unit)}${Number.isFinite(share) ? ` (${to > from ? '+' : ''}${(100 * share).toFixed(1)}%)` : ''}`;
+  // A heap reading can sit at zero, where a share means nothing.
+  const delta = from === to ? '0' : `${to > from ? '+' : ''}${format(to - from, head.unit)}${Number.isFinite(share) && kind !== 'heap' ? ` (${to > from ? '+' : ''}${(100 * share).toFixed(1)}%)` : ''}`;
 
   return { id, kind, master, head, delta, flag: flagOf(kind, master.values, head.values) };
 };
@@ -147,7 +151,7 @@ const table = args.compare
   ? [
     '| Row | Kind | Master | Head | Delta | Spread (master; head) | Flag |',
     '| --- | --- | ---: | ---: | ---: | --- | --- |',
-    ...lines.map((line) => `| ${cell(line.id)} | ${line.kind} | ${value(line.master)} | ${value(line.head)} | ${line.delta} | ${line.kind === 'time' ? [line.master, line.head].map((entry) => (entry ? spread(entry) : 'n/a')).join('; ') : ''} | ${line.flag} |`),
+    ...lines.map((line) => `| ${cell(line.id)} | ${line.kind} | ${value(line.master)} | ${value(line.head)} | ${line.delta} | ${sampled(line.kind) ? [line.master, line.head].map((entry) => (entry ? spread(entry) : 'n/a')).join('; ') : ''} | ${line.flag} |`),
   ]
   : [
     '| Row | Kind | Value | Spread |',
@@ -163,10 +167,10 @@ const verdict = [
   ...missing.map(({ id }) => `- **Missing on head:** ${id}.`),
   grew.length ? `- **${grew.length} count${grew.length === 1 ? '' : 's'} grew.**` : '',
   compared && !failed.head.size ? '- The job fails on the comparison unless the PR carries the `bench-accepted` label.' : '',
-  review.length ? `- ${review.length} row${review.length === 1 ? '' : 's'} to review: a size that grew or a time beyond its spread by ${100 * THRESHOLD}% or more. Neither fails the job.` : '',
+  review.length ? `- ${review.length} row${review.length === 1 ? '' : 's'} to review: a size that grew, a time beyond its spread by ${100 * THRESHOLD}% or more, or a heap reading that grew beyond its spread. None of them fails the job.` : '',
 ].filter(Boolean);
 
-const environment = `Node ${process.version}, ${platform()} ${arch()}; times are medians of ${samples} process${samples === 1 ? '' : 'es'}${args.compare ? ' per side' : ''}, each the median of its rounds; a spread leaves out the fastest and the slowest quarter of them, rounded down.`;
+const environment = `Node ${process.version}, ${platform()} ${arch()}; times and heap readings are medians of ${samples} process${samples === 1 ? '' : 'es'}${args.compare ? ' per side' : ''}, a time each the median of its rounds; a spread leaves out the lowest and the highest quarter of them, rounded down.`;
 
 const report = [
   `<!-- bench:${name} -->`,
@@ -175,7 +179,7 @@ const report = [
   args.compare ? 'This branch against its base.' : 'This tree.',
   environment,
   '',
-  ...(verdict.length ? [...verdict, ''] : args.compare ? ['No count grew, and no size or time changed beyond its threshold.', ''] : []),
+  ...(verdict.length ? [...verdict, ''] : args.compare ? ['No count grew, and no size, time or heap reading changed beyond its threshold.', ''] : []),
   ...table,
   '',
 ].join('\n');
@@ -193,8 +197,8 @@ if (args.write) {
       '',
       blurb,
       '',
-      ...(kind === 'time' ? ['| Row | Median | Spread |', '| --- | ---: | --- |'] : ['| Row | Value |', '| --- | ---: |']),
-      ...rows.map((line) => `| ${cell(line.id)} | ${value(line.head)} |${kind === 'time' ? ` ${spread(line.head!)} |` : ''}`),
+      ...(sampled(kind) ? ['| Row | Median | Spread |', '| --- | ---: | --- |'] : ['| Row | Value |', '| --- | ---: |']),
+      ...rows.map((line) => `| ${cell(line.id)} | ${value(line.head)} |${sampled(kind) ? ` ${spread(line.head!)} |` : ''}`),
       '',
     ];
   };
@@ -208,7 +212,8 @@ if (args.write) {
     '',
     ...section('count', 'Counts', 'Calls, keys, effect runs and checker instantiations: the same on every machine. A pull request that grows one fails its benchmark job unless it carries the `bench-accepted` label.'),
     ...section('size', 'Sizes', 'Bytes: the same on every machine.'),
-    ...section('time', 'Times', 'Milliseconds, microseconds and bytes of heap, of one machine at one time: compare them only with figures measured beside them.'),
+    ...section('time', 'Times', 'Milliseconds and microseconds, of one machine at one time: compare them only with figures measured beside them.'),
+    ...section('heap', 'Heap', 'Bytes of heap retained, read in a process of their own without V8\'s compilers: they move by a few bytes from process to process, differ from one Node version to another, and a reading near zero, on either side of it, means nothing retained.'),
   ].join('\n'));
 }
 
