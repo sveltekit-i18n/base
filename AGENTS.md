@@ -629,6 +629,13 @@ exactly, so a dependency released after it forces another release of it.
   list what `master` holds since its last tag and every fix planned or in
   flight that touches it, and decide for each: release now, or defer. Show
   that table in chat; nothing is published until the user approves it.
+- **The plan is a table of every step.** Beside that table, the plan shows
+  every step the release takes, each with who takes it and the steps it waits
+  on: the issues to resolve, the pull requests to open and merge, the checks
+  below, each publish, and the update of every published document — the npm
+  pages, `docs/`, the site and the examples. It is ordered so that no package
+  is published twice: a package goes out only once no later step can change
+  it, and no step after its publish needs it changed.
 - **Leaves first.** `base`, then the parsers, the extensions and `typegen`,
   then `sveltekit-i18n` last. A package is not published while a package it
   depends on holds an unreleased change or a planned fix it needs, unless the
