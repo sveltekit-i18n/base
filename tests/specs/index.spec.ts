@@ -10188,7 +10188,7 @@ describe('type inference', () => {
     instance.t('common.plural');
 
     // A key that is a union has to satisfy every key it might be.
-    const eitherKey: 'common.no_placeholder' | 'common.placeholder' = 'common.placeholder';
+    const eitherKey = 'common.placeholder' as 'common.no_placeholder' | 'common.placeholder';
 
     instance.t(eitherKey, { value: 'a' });
     // @ts-expect-error missing payload behind a union of keys
