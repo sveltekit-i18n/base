@@ -516,8 +516,13 @@ differently.**
 - Don't "improve" adjacent code/formatting unrelated to the task.
 - Don't refactor what isn't broken.
 - Remove only the imports/vars/types **your** change orphaned.
-- Notice unrelated dead code or a bug? **Mention it in chat** — don't fix
-  silently in the same PR.
+- Notice unrelated dead code, a bug or a stale doc? Don't fix it in the same
+  PR, and don't leave it in chat or in the PR's notes alone, where it ends
+  with the PR. Once reproduced, a small fix that decides nothing gets a PR
+  of its own, through the whole cycle, right after the current one; anything
+  larger, or anything the user decides, gets an issue in the `lib` tracker
+  with its scenario. Both are opened without asking. The PR that found it
+  links either under `## Notes`. An impression not reproduced is neither.
 
 ## 4. Verify and review
 
@@ -699,8 +704,8 @@ exactly, so a dependency released after it forces another release of it.
 - **Every branch headed for `master` gets a PR.** Open it once the branch is
   pushed and green — that is the default, not something to ask about. Skip it
   only when the user says so, or when the branch is not ready to be reviewed.
-  Keep it narrowly scoped; list out-of-scope follow-ups under `## Notes` rather
-  than expanding silently.
+  Keep it narrowly scoped; link out-of-scope follow-ups (§3) under `## Notes`
+  rather than expanding silently.
 - Title ≤ 70 chars, describes the overarching scope. Body: a short summary +
   what was tested (real results: build/test/audit), and the linked issue via
   closing keywords (`Closes #N` / `Fixes #N`) when one exists.
@@ -713,8 +718,8 @@ exactly, so a dependency released after it forces another release of it.
 Update docs in the same PR that invalidates them. Scope: this file,
 `README.md`, `docs/README.md`, JSDoc in `types.ts`. A code change that
 contradicts a doc updates the doc (ideally the same commit/fixup). Remove a
-feature → remove its docs. Discover stale docs unrelated to your task → flag in
-chat (§3).
+feature → remove its docs. Discover stale docs unrelated to your task → handle
+them as §3 says.
 
 ## 10. Coding conventions
 
