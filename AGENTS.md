@@ -578,9 +578,14 @@ green suite only proves what it tests. Every change goes through this cycle:
 5. **Fix red → green** (§13), as fixups into the commit that introduced the
    defect (§6).
 6. **Review the fix.** A fix is new code: each round of fixups gets a review
-   of at least its own delta. Stop when a round confirms nothing; after three
-   rounds that still confirm something, stop and ask — findings that keep
-   coming back mean the design is wrong. A round of fixups that touches only
+   of at least its own delta, and the rounds go on until one confirms
+   nothing. From the third round that still confirms something, the findings
+   are first read together: findings that keep coming back in one place or
+   of one kind mean the design is wrong there, so that part goes back to the
+   design check (step 1) and the cycle continues from its outcome, without
+   waiting on the user. The user is asked only when the redesign would change
+   what this file leaves to them: the public surface, the PR's scope or an
+   invariant. A round of fixups that touches only
    prose (comments, JSDoc, docs, commit messages, the PR body) gets a
    self-check instead of another review round: the author checks each
    changed statement against the code, or reproduces it, on every version it
