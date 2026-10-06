@@ -19,17 +19,21 @@ const SUBJECTS: Record<string, string> = {
   flat1k: '1,000 flat keys',
   flat10k: '10,000 flat keys',
   namespaced10k: '10,000 keys in namespaces',
+  distinct1k: '1,000 keys, a payload of its own each',
 };
 
-/** What a call is, by its method and whether it passes a payload. */
-const describeCall = (call: ts.CallExpression, file: ts.SourceFile) => {
+/**
+ * What a call is, by its method and whether it passes a payload, or whether its
+ * key is outside the schema.
+ */
+const describeCall = (call: ts.CallExpression, file: ts.SourceFile, outside: boolean) => {
   const method = (call.expression as ts.PropertyAccessExpression).name.getText(file);
   const payload = call.arguments.length > (method === 'l' ? 2 : 1);
 
-  return `${method} ${payload ? 'with' : 'without'} a payload`;
+  return `${method} ${outside ? 'with a key outside the schema' : `${payload ? 'with' : 'without'} a payload`}`;
 };
 
-it('the instantiations of a call', () => {
+it('the instantiations and relations of a call', () => {
   const program = ts.createProgram({
     rootNames: [PROBE],
     options: {
@@ -61,17 +65,20 @@ it('the instantiations of a call', () => {
 
     const call = statement.expression;
     const subject = ((call.expression as ts.PropertyAccessExpression).expression as ts.Identifier).text;
-    const shape = `${describeCall(call, file)} (${SUBJECTS[subject]})`;
+    const outside = /^\s*\/\/ @ts-expect-error/m.test(file.text.slice(statement.getFullStart(), statement.getStart(file)));
+    const shape = `${describeCall(call, file, outside)} (${SUBJECTS[subject]})`;
     const before = program.getInstantiationCount();
+    const related = program.getRelationCacheSizes().assignable;
 
     checker.getResolvedSignature(call);
 
-    if (!warmed.has(shape)) {
+    if (!outside && !warmed.has(shape)) {
       warmed.add(shape);
       continue;
     }
 
     record(`instantiations, ${shape}`, 'count', 'instantiations', program.getInstantiationCount() - before);
+    if (outside) record(`relations, ${shape}`, 'count', 'relations', program.getRelationCacheSizes().assignable - related);
   }
 
   expect(ts.getPreEmitDiagnostics(program).map(({ messageText }) => ts.flattenDiagnosticMessageText(messageText, '\n'))).toEqual([]);
