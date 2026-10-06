@@ -1705,7 +1705,7 @@ to write.
 
 ### `loadTranslations(locale, route?, options?)`
 
-**Type:** `(locale: string, route?: string, options?: { activate?: boolean; preloaded?: Loader.Preloaded }) => Promise<void>`
+**Type:** `(locale: string, route?: string, options?: { activate?: boolean; preloaded?: Loader.Preloaded | undefined }) => Promise<void>`
 
 Loads translations for a locale and route (without [`basePath`](#basepath)),
 and activates the locale once they resolved. A locale nothing serves resolves without changing anything, the
@@ -1914,7 +1914,7 @@ failed came in the meantime ([see `loader`](#loader-required)).
 
 ### `setRoute(route, options?)`
 
-**Type:** `(route: string, options?: { preloaded?: Loader.Preloaded }) => Promise<void>`
+**Type:** `(route: string, options?: { preloaded?: Loader.Preloaded | undefined }) => Promise<void>`
 
 Updates the current route, without [`basePath`](#basepath), and loads
 route-scoped translations for the requested locale, if one is known. A loader's `redirect()` or `error()` below
