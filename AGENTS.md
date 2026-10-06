@@ -643,6 +643,14 @@ exactly, so a dependency released after it forces another release of it.
   then `sveltekit-i18n` last. A package is not published while a package it
   depends on holds an unreleased change or a planned fix it needs, unless the
   user deferred that fix by name.
+- **Bump the family first.** Before any publish, check every range the
+  package holds on the family — `devDependencies`, peer ranges,
+  `sveltekit-i18n`'s exact pins, the lockfiles, the site's and the examples'
+  — and any line of its docs or CHANGELOG naming the version it is tested
+  against. Each one behind the latest released version moves to it in a pull
+  request merged before the publish, so no package is published tested
+  against versions the family has moved past. A peer range is widened, never
+  narrowed.
 - **What npm shows is the version it shows.** Before each publish, go through
   what the tarball carries (`npm pack --dry-run`) — the README, which is the
   npm page, and every other document in it — and the docs those send readers
