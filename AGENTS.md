@@ -382,9 +382,9 @@ translation state, loading, caching, route matching, and preprocessing — but
   (`I18n<ParserParams, ParserOutput, TranslationSchema, LocaleUnion>`), not an
   intersection. The loader locales, `initLocale`, `fallbackLocale` and
   `translations` keys a config spells narrow the inputs (`setLocale`,
-  `loadTranslations`, `loadNamespace`, `invalidate`, `l`, assigning `locale`)
-  and the reads (`locale`, `locales`) alike; the translation tables stay
-  `string`-keyed. The union stays OPEN (`L | (string & {})`) — a completion
+  `loadTranslations`, `loadNamespace`, `preload`, `invalidate`, `l`, assigning
+  `locale`) and the reads (`locale`, `locales`) alike; the translation tables
+  stay `string`-keyed. The union stays OPEN (`L | (string & {})`) — a completion
   hint, never a constraint, since a locale can arrive from a URL, a cookie or
   an `Accept-Language` header — and that openness is what keeps a narrowed
   instance assignable to and from a plain `I18n`. One dynamic source degrades

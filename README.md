@@ -34,9 +34,9 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 
 Svelte 5 or newer, and one of Node 22+, Bun 1.2+ or Deno 2+. The package is
 ESM-only and imports no `node:` module, so every runtime that runs your
-SvelteKit build runs it. The [`/kit`](#sveltekit) subpath needs SvelteKit 2;
-the SvelteKit behaviour the docs describe is checked against 2.70 and the 3.0
-prerelease.
+SvelteKit build runs it. The [`/kit`](#sveltekit) subpath needs SvelteKit 2
+or 3; the SvelteKit behaviour the docs describe is checked against 2.70 and
+3.0.
 
 ## Installation
 
@@ -413,7 +413,7 @@ Load-triggering methods return the promise of the matching load — concurrent d
 - `loadConfig(config)` – (re)configure the instance
 - `addTranslations(translations)` – seed synchronous translations; the loaders of their namespaces still run and merge into them
 - `snapshot(options?)` – serialize what the active locale (and the fallback) holds; `{ records: true }` returns the envelope `hydrate()` restores, with the loaders that delivered, the active locale and the route, and no argument returns the data alone, shaped like `config.translations`, for a plain `hydrate({ translations })`
-- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for), its locale and its route; an envelope without records keeps the loaders of the namespaces its data names from running
+- `hydrate(envelope?)` – restore a server's snapshot: its data, its load records (so those loaders do not run again — one with `cache: false` only for the locale and route it was rendered for, until a `preload()` runs or `invalidate()` covers it), its locale and its route; an envelope without records keeps the loaders of the namespaces its data names from running
 - `invalidate(locale?, namespace?)` – mark loaded translations stale (one locale or all, one namespace or all); loaders run again on the next load trigger, and a loader still in flight for what was invalidated settles with whatever it returns or throws discarded — an activating trigger fetches it again before it activates, unless another loader of its load threw SvelteKit's control flow
 - `destroy()` – detach a per-request or per-component instance: in-flight loads settle discarded, further load and mutation calls are ignored, reads keep working
 
@@ -471,7 +471,7 @@ const config: Config.T<Params> = {
 };
 ```
 
-Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `loadNamespace`, `invalidate`, `l`, `locale`, `locales`):
+Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `loadNamespace`, `preload`, `invalidate`, `l`, `locale`, `locales`):
 
 ```typescript
 const i18n = new I18n({ parser: parser({ onReport: null }), initLocale: 'en', fallbackLocale: 'de' });
