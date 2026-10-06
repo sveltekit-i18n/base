@@ -580,7 +580,11 @@ green suite only proves what it tests. Every change goes through this cycle:
 6. **Review the fix.** A fix is new code: each round of fixups gets a review
    of at least its own delta. Stop when a round confirms nothing; after three
    rounds that still confirm something, stop and ask — findings that keep
-   coming back mean the design is wrong.
+   coming back mean the design is wrong. A round of fixups that touches only
+   prose (comments, JSDoc, docs, commit messages, the PR body) gets a
+   self-check instead of another review round: the author checks each
+   changed statement against the code, or reproduces it, on every version it
+   claims to hold for, and the cycle ends once that check finds nothing.
 7. **Run it in a real host** when a change touches how the package meets
    something its tests only simulate (SvelteKit's hooks and loads, Vite, a
    bundler): build and render one of `lib`'s examples against the local build
@@ -591,9 +595,10 @@ green suite only proves what it tests. Every change goes through this cycle:
 
 The user decides when a PR merges; the cycle decides when it is ready to ask.
 A PR is offered for merge only once the whole cycle has run on its final
-head: every step that applies is done, the last review round covered the last
-fix and confirmed nothing, and CI is green. The offer lists each step with its
-outcome — the design check, each review round and what it found, the
+head: every step that applies is done, the last review round (or the
+self-check after a prose-only round) covered the last fix and confirmed
+nothing, and CI is green. The offer lists each step with its outcome — the
+design check, each review round and self-check and what it found, the
 real-host run (or why it does not apply), CI — so the user never has to ask
 whether a review ran. A step not run is named as not run, and the PR is not
 called ready until it has.
