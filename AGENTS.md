@@ -627,6 +627,12 @@ exactly, so a dependency released after it forces another release of it.
   named wherever the examples are listed (`lib`'s `README.md`,
   `examples/README.md`, the site's examples page, `docs/`), and
   `examples.yml` builds it. No document states how many examples there are.
+- **Every package is benchmarked.** A package is published only once it has
+  a benchmark of its own: `npm run bench`, which `bench.yml` runs on its pull
+  requests, and a `BENCH.md` its `publish.yml` writes into the release
+  commit, so each published version records its results. The plan names each
+  package's benchmark, and a package without one gets one in the same plan,
+  before its publish — a new package before its first release.
 - **Close the loop.** After a publish, confirm the version on npm
   (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, the
   examples and the site, the lockfiles of the other repositories — as part of
