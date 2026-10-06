@@ -634,9 +634,10 @@ exactly, so a dependency released after it forces another release of it.
   that table in chat; nothing is published until the user approves it.
 - **The plan is a table of every step.** Beside that table, the plan shows
   every step the release takes, each with who takes it and the steps it waits
-  on: the issues to resolve, the pull requests to open and merge, the checks
-  below, each publish, and the update of every published document — the npm
-  pages, `docs/`, the site and the examples. It is ordered so that no package
+  on: the issues to resolve, the pull requests to open and merge, each bump
+  of a family range (below) as a step the publish it precedes waits on, the
+  checks below, each publish, and the update of every published document —
+  the npm pages, `docs/`, the site and the examples. It is ordered so that no package
   is published twice: a package goes out only once no later step can change
   it, and no step after its publish needs it changed.
 - **Leaves first.** `base`, then the parsers, the extensions and `typegen`,
