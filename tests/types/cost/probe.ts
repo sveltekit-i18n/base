@@ -11,6 +11,14 @@ type Probe<N extends string> = { [K in N as `ns.${K}`]: K extends '0' ? never : 
 type Small = Probe<Digit>;
 type Large = Probe<Digit | `${Digit}${Digit}${Digit}`>;
 
+// A payload of its own per key, as a generator writes them, each naming a
+// property of its own: a call over every key folds them into an intersection
+// that does not collapse, and relating it to one of them walks its members.
+type Distinct<N extends string> = { [K in N as `ns.${K}`]: { [P in `name${K}`]: string } };
+
+type Hundred = Distinct<`${Digit}${Digit}`>;
+type Thousand = Distinct<`${Digit}${Digit}${Digit}`>;
+
 const parser = { parse: (value: unknown) => `${value}` };
 
 // A wrapper package's spelling of `t`, through the public `Schema` helpers.
@@ -27,6 +35,8 @@ declare const wrapperLarge: Wrapper<Large>;
 declare const controlSmall: Control<Small>;
 declare const controlLarge: Control<Large>;
 declare const pair: 'ns.6' | 'ns.7';
+const hundred = new I18n({ parser, schema: {} as Hundred });
+const thousand = new I18n({ parser, schema: {} as Thousand });
 
 // The first call of each subject instantiates its signature; the calls after
 // it are the ones measured, each on a key no earlier call used, since the
@@ -39,6 +49,8 @@ large.t('ns.9', { name: 'x' });
 large.l('en', 'ns.9', { name: 'x' });
 wrapperLarge('ns.9', { name: 'x' });
 controlLarge('ns.9', { name: 'x' });
+hundred.t('ns.99', { name99: 'x' });
+thousand.t('ns.999', { name999: 'x' });
 
 small.t('ns.1', { name: 'x' });
 small.t('ns.0');
@@ -54,6 +66,12 @@ large.t(pair, { name: 'x' });
 large.l('en', 'ns.2', { name: 'x' });
 wrapperLarge('ns.3', { name: 'x' });
 controlLarge('ns.4', { name: 'x' });
+
+// A key outside the schema types the payload over every key of it.
+// @ts-expect-error The key is not in the schema.
+hundred.t('missing');
+// @ts-expect-error The key is not in the schema.
+thousand.t('missing');
 
 // The wrapper's spelling and `t` are one type.
 export const wrapped: Wrapper<Small> = small.t;

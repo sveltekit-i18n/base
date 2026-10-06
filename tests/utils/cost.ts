@@ -9,8 +9,9 @@ const COST = resolve(dirname(fileURLToPath(import.meta.url)), '../types/cost');
 type Target = 'source' | 'dist';
 
 /**
- * The instantiations each call of the probe costs, by its text. A count, not a
- * duration: one compiler version counts the same on every machine and runtime.
+ * The instantiations each call of the probe costs, and the assignability
+ * relations it records, by its text. Counts, not durations: one compiler
+ * version counts the same on every machine and runtime.
  */
 const measure = (target: Target) => {
   const config = ts.getParsedCommandLineOfConfigFile(resolve(COST, target === 'dist' ? 'tsconfig.dist.json' : 'tsconfig.json'), {}, {
@@ -27,6 +28,7 @@ const measure = (target: Target) => {
   if (!file) throw new Error('The probe is not in its program.');
 
   const counts: Record<string, number> = {};
+  const relations: Record<string, number> = {};
 
   // In source order, before anything else checks the file: each call pays for
   // what no earlier call instantiated.
@@ -34,21 +36,25 @@ const measure = (target: Target) => {
     if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) continue;
 
     const before = program.getInstantiationCount();
+    const related = program.getRelationCacheSizes().assignable;
 
     checker.getResolvedSignature(statement.expression);
     counts[statement.expression.getText(file)] = program.getInstantiationCount() - before;
+    relations[statement.expression.getText(file)] = program.getRelationCacheSizes().assignable - related;
   }
 
   const diagnostics = ts.getPreEmitDiagnostics(program).map(({ messageText }) => ts.flattenDiagnosticMessageText(messageText, '\n'));
 
-  return { counts, diagnostics };
+  return { counts, relations, diagnostics };
 };
 
 /**
  * What a call of `t` or `l` costs the checker, against `target`: the source
  * (`npm test`) or the shipped declarations (`npm run test:dist`). The probe
  * calls the same keys on a schema of 10 keys and one of 1,010, and a call has
- * to cost about the same on both.
+ * to cost about the same on both. A key outside a schema of 100 keys and one of
+ * 1,000, which types the payload over every key, records assignability
+ * relations linear in it.
  */
 export const describeCost = (target: Target) => describe(`the cost of a call, against the ${target}`, () => {
   let probe: ReturnType<typeof measure> | undefined;
@@ -73,5 +79,14 @@ export const describeCost = (target: Target) => describe(`the cost of a call, ag
     ]) {
       expect(counts[large], large).toBeLessThan(2 * counts[small]);
     }
+  }, 60_000);
+
+  it('records relations linear in the schema where a key outside it types the payload over every key', () => {
+    const { relations } = measured();
+
+    // Ten times the keys: a linear cost takes about ten times the relations,
+    // and a quadratic one, which relates the intersection of the payloads to
+    // each of them, about a hundred times.
+    expect(relations["thousand.t('missing')"]).toBeLessThan(20 * relations["hundred.t('missing')"]);
   }, 60_000);
 });
