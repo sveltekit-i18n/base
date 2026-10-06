@@ -6,7 +6,8 @@ import { afterAll } from 'vitest';
 /**
  * What a row measures, which decides how a difference is read:
  * - `count`: an algorithmic count — calls, keys rebuilt, effect runs,
- *   instantiations. The same on every machine, and a growth fails the job.
+ *   instantiations, relations. The same on every machine, and a growth fails
+ *   the job.
  * - `size`: bytes. The same on every machine, but nearly every change of
  *   runtime code grows one, so a growth is flagged for review.
  * - `time`: milliseconds, which vary from run to run: a difference counts only

@@ -210,7 +210,7 @@ if (args.write) {
     '',
     environment,
     '',
-    ...section('count', 'Counts', 'Calls, keys, effect runs and checker instantiations: the same on every machine. A pull request that grows one fails its benchmark job unless it carries the `bench-accepted` label.'),
+    ...section('count', 'Counts', 'Calls, keys, effect runs, and checker instantiations and relations: the same on every machine. A pull request that grows one fails its benchmark job unless it carries the `bench-accepted` label.'),
     ...section('size', 'Sizes', 'Bytes: the same on every machine.'),
     ...section('time', 'Times', 'Milliseconds and microseconds, of one machine at one time: compare them only with figures measured beside them.'),
     ...section('heap', 'Heap', 'Bytes of heap retained, read in a process of their own without V8\'s compilers: they move by a few bytes from process to process, differ from one Node version to another, and a reading near zero, on either side of it, means nothing retained.'),
