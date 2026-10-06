@@ -523,6 +523,11 @@ differently.**
   larger, or anything the user decides, gets an issue in the `lib` tracker
   with its scenario. Both are opened without asking. The PR that found it
   links either under `## Notes`. An impression not reproduced is neither.
+  Only a finding worth landing in a stable release counts: a defect a
+  consumer of a published package, its docs, the examples or the site can
+  meet — in behaviour, types or cost — or a gap in the repository's own
+  checks. A nit, a matter of taste, or friction of the agent's own tooling
+  or environment is neither; mention it in chat at most.
 
 ## 4. Verify and review
 
