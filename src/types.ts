@@ -407,8 +407,9 @@ export namespace Loader {
    * What `preload()` resolves to: a token for the next activating call of the
    * same locale and route, which takes it as `{ preloaded }` and shows what the
    * preload fetched instead of fetching it again. It serves one call, of the
-   * instance that made it. Hold it by reference: it carries no data, and a
-   * copy is no token.
+   * instance that made it: the first activating call that reads it spends it,
+   * whether or not it serves that call. Hold it by reference: it carries no
+   * data, and a copy is no token.
    */
   export type Preloaded = { readonly [preloaded]: true };
 

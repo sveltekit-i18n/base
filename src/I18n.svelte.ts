@@ -469,13 +469,19 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * the same locale and route. The call then evaluates no `cache` window — the
    * preload did — and shows what the preload fetched instead of fetching it
    * again, at once when nothing else is left to fetch, and otherwise with the
-   * rest, in one go. It fetches what the preload did not deliver, and anything
-   * of which an invalidation, a seed or another delivery replaced what the
-   * loader showed since. A token serves one call; another instance's, one of
-   * another locale or route, one used already and one older than a
+   * rest, in one go. It fetches what the preload did not deliver, and what it
+   * delivered to a loader that shows something else since — a seed or
+   * another delivery replaced what it showed — wherever the call has that
+   * loader to load anyway (one with `cache: false`, or one whose record an
+   * expiry dropped, say). A token serves one call: the first activating call
+   * that reads it spends it, whether or not it serves that call, even with
+   * nothing left to fetch; a call left without a locale to show — handed an
+   * empty one or one nothing serves, say — reads none. Another instance's,
+   * one of another locale or route, one spent already and one older than a
    * `loadConfig()` or an `invalidate()` are ignored, as is any with
-   * `{ activate: false }`. A window a later request found elapsed does not
-   * void it: the preload judged the window at its own request.
+   * `{ activate: false }`, which leaves it unspent. A window a later request
+   * found elapsed does not void it: the preload judged the window at its own
+   * request.
    */
   loadTranslations = (
     locale: Config.LocaleInput<LocaleUnion>,
@@ -508,7 +514,8 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * that locale and route, which shows what it fetched (see
    * `loadTranslations()`), and to `undefined` once the instance was destroyed
    * or when nothing serves the locale. A loader's `redirect()` or `error()`
-   * below 500 rejects it; one nobody awaits never becomes an unhandled
+   * below 500 rejects it, unless it shares its load with an activating call,
+   * whose outcome it then gets; one nobody awaits never becomes an unhandled
    * rejection.
    */
   preload = (locale: Config.LocaleInput<LocaleUnion>, route?: string): Promise<Loader.Preloaded | undefined> => untrack(() => {

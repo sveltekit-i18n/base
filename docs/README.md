@@ -286,7 +286,7 @@ and route params), so its throw is no access check: a route guards itself in
 its own `load`.
 
 What SvelteKit then does depends on where and when the load runs (checked
-against SvelteKit 2.70 and the 3.0 prerelease):
+against SvelteKit 2.70 and 3.0):
 
 - **In the root layout**, an `error()` renders SvelteKit's static
   `src/error.html`, not your `+error.svelte`, and a client navigation reloads
@@ -319,12 +319,15 @@ against SvelteKit 2.70 and the 3.0 prerelease):
   same call during SSR throws a plain `Error`. All of these reject the load like
   `error()`; a loader that wants them to fail soft catches a 4xx and throws an
   `Error` instead.
-- **Preloading a link** under SvelteKit 3 turns a loader's `error()` into an
-  unhandled rejection in production, whose reason is an `App.Error` object.
-  The `app.html` that `sv create` scaffolds turns hover preloading on for the
-  whole `<body>`, so give such links, or an element around them,
-  `data-sveltekit-preload-data="false"`; `"tap"` still preloads, on
-  `mousedown` and `touchstart`.
+- **Preloading a link** runs the route's loads ahead of the navigation. When
+  a loader throws `error()` there, SvelteKit drops what the preload loaded,
+  and the navigation, if it follows, renders the error; under SvelteKit 3 with
+  `kit.experimental.forkPreloads`, the preload instead leaves an unhandled
+  rejection whose reason is an `App.Error` object. The `app.html` that
+  `sv create` scaffolds turns hover preloading on for the whole `<body>`, so to
+  keep such a loader from running on hover, give its links, or an element
+  around them, `data-sveltekit-preload-data="false"`; `"tap"` still preloads,
+  on `mousedown` and `touchstart`.
 
 **Loading from local files:**
 
@@ -1764,14 +1767,19 @@ shows what that preload fetched instead of fetching it again — a loader with
 [`cache: false`](#cache-optional) included — at once when nothing else is left
 to fetch, and otherwise together with the rest, in one go. It evaluates no
 [`cache`](#cache) window, since the preload did. It still fetches what the
-preload did not deliver, and anything whose displayed data an
-[invalidation](#invalidatelocale-namespace), a seed or another delivery replaced
-since. A token serves one call. It is ignored — the call loads as it would
-without one — when it comes from another instance, names another locale or
-route, was used already, predates a [`loadConfig()`](#loadconfigconfig) or an
+preload did not deliver, and what it delivered to a loader that shows something
+else since — a seed or another delivery replaced what it showed — wherever the
+call has that loader to load anyway, such as one with `cache: false` or one
+whose record an expiry dropped meanwhile. A token serves one call: the first
+activating call that reads it spends it, whether or not it serves that call,
+even with nothing left to fetch; a call left without a locale to show — handed
+an empty one or one nothing serves, say — reads none. It is ignored — the call
+loads as it would without one — when it comes from another instance, names
+another locale or route, was spent already, predates a
+[`loadConfig()`](#loadconfigconfig) or an
 [`invalidate()`](#invalidatelocale-namespace), or is passed with
-`{ activate: false }`. A window a later request found elapsed does not void it:
-the preload judged the window at its own request.
+`{ activate: false }`, which leaves it unspent. A window a later request found
+elapsed does not void it: the preload judged the window at its own request.
 
 **Errors:** a loader that throws is caught and logged individually, so one
 broken loader does not fail the batch; only SvelteKit's `redirect()` and an
@@ -1821,7 +1829,9 @@ It resolves to `undefined` when the instance was destroyed or nothing serves
 the locale.
 
 A loader's `redirect()` or `error()` below 500 rejects it, as it would the
-navigation; a result nobody awaits never becomes an unhandled rejection.
+navigation — unless it shares its load with an activating call, whose outcome
+it then gets, as a [warm load](#loadtranslationslocale-route-options) does; a
+result nobody awaits never becomes an unhandled rejection.
 
 ```javascript
 // As the navigation is requested — a hover, say:
@@ -2505,15 +2515,16 @@ much: `data-sveltekit-preload-data="false"`.
   lives in `url.hash`, while loaders are matched against `url.pathname`, so a
   route-scoped loader never matches.
 - **A loader can still run at commit.** The commit fetches again what `load`
-  did not deliver: a loader that failed soft, one an
-  [invalidation](#invalidatelocale-namespace) or a seed covered between the
-  two, and a [`cache: false`](#cache-optional) loader whose fetch `load` only
-  shared, which started before the navigation was requested (the commit shows
-  that one, then refreshes it behind). A `redirect()` or an `error()`
-  thrown there is not followed: SvelteKit follows control flow thrown in
-  `load` only. The tab stays on its locale, and the next navigation with the
-  same answer switches again — one preloaded while that switch was under way
-  included.
+  did not deliver, such as a loader that failed soft, one an
+  [invalidation](#invalidatelocale-namespace) covered between the two, one the
+  commit has to load anyway (one with [`cache: false`](#cache-optional), say)
+  once a seed or another delivery replaced what it showed between the two,
+  or a `cache: false` loader whose fetch `load` only shared, which started
+  before the navigation was requested (the commit shows that one, then
+  refreshes it behind). A `redirect()` or an `error()` thrown there is not
+  followed: SvelteKit follows control flow thrown in `load` only. The tab stays
+  on its locale, and the next navigation with the same answer switches again —
+  one preloaded while that switch was under way included.
 
 ---
 
@@ -3098,10 +3109,11 @@ i18n.locale;  // 'en' | 'de' | 'cs' | 'sk' | (string & {}) | undefined
 ```
 
 The union narrows **inputs** — `setLocale()`, `loadTranslations()`,
-`loadNamespace()`, `invalidate()`, the first argument of `l()`, and assignment to
-[`locale`](#locale) — and the **reads** [`locale`](#locale) and
-[`locales`](#locales). The [translation tables](#translations--rawtranslations)
-are not narrowed: they stay plain `string`-keyed records.
+`loadNamespace()`, `preload()`, `invalidate()`, the first argument of `l()`,
+and assignment to [`locale`](#locale) — and the **reads** [`locale`](#locale)
+and [`locales`](#locales). The
+[translation tables](#translations--rawtranslations) are not narrowed: they
+stay plain `string`-keyed records.
 
 **The union is open** — `Config.LocaleInput<L>` is `L | (string & {})`, so it
 drives completion without closing the input. A locale can arrive from a URL, a
@@ -3347,6 +3359,12 @@ unless the instance is `loading`, something landed in it or invalidated what
 the page loads in between, or its [snapshot](#snapshotoptions) cannot record every loader
 the page selects: one failed soft, has no `id`, or feeds a namespace that
 holds a literal `__proto__` key or that the snapshot leaves out.
+
+### New
+
+- [`preload(locale, route?)`](#preloadlocale-route) — the request of a navigation that may never commit; it resolves to a token for the call that commits it.
+- [`{ preloaded }`](#loadtranslationslocale-route-options) on `loadTranslations()` and [`setRoute()`](#setrouteroute-options) — the commit shows what the preload fetched instead of fetching it again.
+- `Loader.Preloaded` — the type of that token.
 
 ---
 
