@@ -1,0 +1,11 @@
+{
+  // The shipped declarations, reached by package name through the `exports`
+  // map, under the options an app may add on top of `strict`. The source is
+  // not written for them, and a consumer compiles only the declarations.
+  "extends": "../registry/tsconfig.base.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["."]
+}

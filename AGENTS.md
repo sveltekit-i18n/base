@@ -77,6 +77,9 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `tests/specs/bench.spec.ts` | how the benchmark reads a row against the base (`bench/compare.ts`) |
 | `tests/specs/registry.spec.ts` | compiles the `tests/types/registry/` fixtures with `tsc` |
 | `tests/types/registry/` | type fixtures of the schema registry — programs of their own, outside `typecheck` |
+| `tests/specs/strict.spec.ts` | compiles the `tests/types/strict/` program with `tsc` |
+| `tests/types/strict/` | the shipped declarations under the options an app may add to `strict` (`exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`) — outside `typecheck` |
+| `tests/utils/tsc.ts` | `compile()`: runs `tsc` over a program under `tests/types/` |
 | `tests/specs/cost.spec.ts` | the checker's cost of a `t`/`l` call, counted in the `tests/types/cost/` probe |
 | `tests/types/cost/` | the probe program — outside `typecheck`, compiled in process by `tests/utils/cost.ts` |
 | `tests/data/` | `CONFIG` + JSON fixtures + `getTranslations()` |

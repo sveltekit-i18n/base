@@ -1,20 +1,10 @@
-import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const run = promisify(execFile);
-
-const REGISTRY = resolve(dirname(fileURLToPath(import.meta.url)), '../types/registry');
-// The compiler's own entry, run by the runtime running the suite. The
-// `node_modules/.bin` shim is an extensionless shell script on Windows, which
-// `execFile` cannot spawn at all; Deno runs a script only with permissions.
-const TSC = resolve(REGISTRY, '../../../node_modules/typescript/bin/tsc');
-const RUNTIME_ARGS = 'Deno' in globalThis ? ['run', '-A'] : [];
+import { compile as compileProject } from './tsc.js';
 
 type Target = 'source' | 'dist';
 
@@ -22,24 +12,8 @@ type Target = 'source' | 'dist';
  * Compiles one fixture program. Each is a program of its own, since a
  * registration types every instance in the program it is part of.
  */
-const compile = async (program: string, target: Target, ...options: string[]): Promise<string> => {
-  const project = resolve(REGISTRY, program, target === 'dist' ? 'tsconfig.dist.json' : 'tsconfig.json');
-
-  try {
-    await run(process.execPath, [...RUNTIME_ARGS, TSC, '-p', project, ...options]);
-
-    return '';
-  } catch (failure) {
-    const reported = `${(failure as { stdout?: string }).stdout ?? ''}`.trim();
-
-    // `tsc` reports on stdout and exits non-zero. A rejection carrying nothing
-    // is the compiler failing to run, and reading that as a clean compile
-    // would pass every case silently.
-    if (!reported) throw failure;
-
-    return reported;
-  }
-};
+const compile = (program: string, target: Target, ...options: string[]): Promise<string> =>
+  compileProject(join('registry', program, target === 'dist' ? 'tsconfig.dist.json' : 'tsconfig.json'), ...options);
 
 /**
  * The `SvelteKitI18n.Register` registry, compiled by `tsc` at

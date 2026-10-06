@@ -440,7 +440,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
    * and this route, it shows what that preload fetched — see
    * `loadTranslations()`.
    */
-  setRoute = (input: string, options?: { preloaded?: Loader.Preloaded }): Promise<void> => untrack(() => {
+  setRoute = (input: string, options?: { preloaded?: Loader.Preloaded | undefined }): Promise<void> => untrack(() => {
     if (this.#inert('setRoute')) return Promise.resolve();
 
     const route = withoutBasePath(input, this.#config?.basePath);
@@ -480,7 +480,7 @@ class I18nCore<ParserParams extends Parser.Params = any, ParserOutput = string, 
   loadTranslations = (
     locale: Config.LocaleInput<LocaleUnion>,
     route?: string,
-    { activate = true, preloaded }: { activate?: boolean; preloaded?: Loader.Preloaded } = {},
+    { activate = true, preloaded }: { activate?: boolean; preloaded?: Loader.Preloaded | undefined } = {},
   ): Promise<void> => untrack(() => {
     if (!locale || this.#inert('loadTranslations') || this.#unserved(locale)) return Promise.resolve();
 
