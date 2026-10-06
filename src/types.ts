@@ -655,9 +655,21 @@ export namespace Schema {
   /** Whether a key in `K` marks its payload optional; `boolean` when only some do. */
   type OptionalOf<S, K extends string> = K extends Keys<S> ? (undefined extends S[K] ? true : false) : never;
 
+  /**
+   * The payloads fold into their intersection by inference: `V` stands as the
+   * parameter in the false branch of a conditional deferred on `V` itself, so
+   * a union of functions contributes each parameter as a contravariant
+   * candidate, and those combine into their intersection. Once `V` is
+   * inferred, that conditional reads `unknown` or `never`, so the union is
+   * never related to the intersection itself. Matched against a function over
+   * the intersection instead, the union would relate the intersection to each
+   * payload, which for a key outside the schema, typed over every key, costs
+   * time about cubic in their number.
+   */
   type PayloadOf<S, K extends string> = [BoxedPayload<S, K>] extends [never]
     ? never
-    : BoxedPayload<S, K> extends (payload: infer V) => void ? V : never;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- both `infer V` declare one type parameter
+    : BoxedPayload<S, K> extends (infer V extends unknown ? unknown : (payload: infer V) => void) ? V : never;
 
   /**
    * The parser's own params minus the payload slot the schema takes over. A

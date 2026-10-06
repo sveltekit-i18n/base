@@ -10194,6 +10194,13 @@ describe('type inference', () => {
     // @ts-expect-error missing payload behind a union of keys
     instance.t(eitherKey);
 
+    // Keys that each take a payload take the intersection of their payloads.
+    const bothKeys = 'common.placeholder' as 'common.placeholder' | 'common.plural';
+
+    instance.t(bothKeys, { value: 'a', mode: 'few', count: 3 });
+    // @ts-expect-error a payload that satisfies only one of the keys
+    instance.t(bothKeys, { value: 'a' });
+
     // The slot is inert at runtime — the instance loads and translates as usual.
     await instance.loadTranslations('EN', '/');
     expect(instance.t('common.no_placeholder')).toBe('common.no_placeholder');

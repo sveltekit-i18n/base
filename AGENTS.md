@@ -834,7 +834,14 @@ not RCE/XSS.
   per key each time it is read; each measured call uses a key no earlier call
   used, since the checker caches a conditional type by its arguments; and a
   control that reads `keyof S` on every call proves the count still sees such
-  a read.
+  a read. A call that types the payload over every key (a key outside the
+  schema) grows with the schema however it is typed, so it is compared across
+  schemas of 100 and 1,000 keys whose payloads each name a property of their
+  own, by the assignability relations it records (`getRelationCacheSizes()`):
+  relating the intersection of such payloads to each of them records
+  relations quadratic in the keys, while the instantiations stay linear.
+  Payloads of one shape all match the intersection's first member, so there
+  only the time shows it.
 - Drive behavior through the **public API** (`new i18n(CONFIG)`, reactive
   properties, awaited method returns). Pure helpers may be imported directly
   from `src/` when that yields a more deterministic test (e.g. unit-testing
