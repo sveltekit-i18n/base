@@ -5,7 +5,7 @@
   "compilerOptions": {
     "paths": {
       "#kit-env": ["../../../src/kit/env.ts"],
-      "#kit-server": ["../../../src/kit/server.ts"],
+      "#kit-server": ["../../../src/kit/backend.ts"],
       "base-copy": ["../../../src/index.ts"]
     }
   }

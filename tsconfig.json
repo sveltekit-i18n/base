@@ -8,7 +8,7 @@
     // a target by condition; the source is what gets checked.
     "paths": {
       "#kit-env": ["./src/kit/env.ts"],
-      "#kit-server": ["./src/kit/server.ts"],
+      "#kit-server": ["./src/kit/backend.ts"],
       // The benchmark imports the package by name, which its runner aliases
       // to the tree it measures.
       "@sveltekit-i18n/base": ["./src/index.ts"],

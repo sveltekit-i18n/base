@@ -28,8 +28,8 @@
       "default": "./dist/kit/env.js"
     },
     "#kit-server": {
-      "browser": "./dist/kit/server.browser.js",
-      "default": "./dist/kit/server.js"
+      "browser": "./dist/kit/backend.browser.js",
+      "default": "./dist/kit/backend.js"
     }
   },
   "scripts": {
