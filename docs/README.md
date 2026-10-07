@@ -3427,6 +3427,50 @@ the page loads in between, or its [snapshot](#snapshotoptions) cannot record eve
 the page selects: one failed soft, has no `id`, or feeds a namespace that
 holds a literal `__proto__` key or that the snapshot leaves out.
 
+**A page render builds one instance.** In 3.2, the universal `load` of a page
+render hydrated the server `load`'s snapshot into a second instance, so every
+table was preprocessed twice per request. In 3.3 it takes over the instance the
+server `load` loaded, unless a loader has `cache: false`. A wrapper that copies
+`data.i18n` builds the second instance as before (see
+[Combining with your own code](#combining-with-your-own-code)).
+
+**A schema-typed `t` or `l` call costs the checker the same at any schema
+size.** In 3.2, a call on a key of the [`schema`](#schema) read every key of
+it; in 3.3 it costs about a hundred instantiations, at a thousand keys as at
+ten thousand. A key outside the schema, or one typed as a union of many of its
+keys, folds the payloads of all of them: in 3.2 that took time about cubic in
+the number of keys, which could stall an editor or `svelte-check` for seconds
+to minutes and, at a few thousand keys with a payload each, failed as too
+complex (TS2859). In 3.3 it costs instantiations linear in the keys: at a
+thousand keys with a payload each, under a second where 3.2 took about fifty.
+A function typed
+`<K extends Schema.Key<S>>(key: K, ...rest: Schema.Params<S, K, Parser.Params>) => …`,
+as a wrapper spells `t` (or `l`, with the locale first), and the instance's
+`t` or `l` are now assignable both ways; in 3.2 neither assignment compiled
+once the schema had two keys. Which calls typecheck is otherwise unchanged.
+
+**Large catalogues load in linear time.** In 3.2, merging a load into a
+locale's table copied every key merged so far, so a locale of 16,000 keys took
+tens of seconds to load; in 3.3 it takes milliseconds. A seed over a wide
+namespace and a [snapshot](#snapshotoptions) of a wide level holding a
+`__proto__` key are linear too. The tables are built differently for it: on
+Node and Deno, a table of up to about a thousand keys (a wider one was built
+so in 3.2 already) takes many times as long to list (`Object.keys`,
+`for...in`) and two to five times as long to serialize, and each instance
+holding the same keys, as a server builds one per request, retains two to four
+times the memory. Bun shows none of this.
+
+**A custom [`preprocess`](#preprocess) is called once per rebuilt locale.**
+In 3.2, a loader that delivered again also had `preprocess` called on its
+namespace's seeds, if any, and on the new delivery before the whole table,
+results it then discarded. In 3.3 it is called once per locale the delivery
+rebuilds, with the whole table.
+
+**A namespace holding `NaN` travels in the [snapshot](#snapshotoptions)** with
+its record. In 3.2 the snapshot took it for one that had lost a `__proto__`
+key: it warned, left it out of the plain `snapshot()` and dropped its loader's
+record, so a client hydrating it loaded the namespace again.
+
 ### New
 
 - [`preload(locale, route?)`](#preloadlocale-route) — the request of a navigation that may never commit; it resolves to a token for the call that commits it.
