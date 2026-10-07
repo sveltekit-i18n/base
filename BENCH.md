@@ -1,6 +1,6 @@
 # Benchmark
 
-What `npm run bench` measured on `@sveltekit-i18n/base` 3.3.1, written by the release that published it. A pull request compares its branch with its base in a comment; this file keeps the figures of each release beside its code.
+What `npm run bench` measured on `@sveltekit-i18n/base` 3.3.2, written by the release that published it. A pull request compares its branch with its base in a comment; this file keeps the figures of each release beside its code.
 
 Node v24.21.0, linux x64; times and heap readings are medians of 11 processes, a time each the median of its rounds; a spread leaves out the lowest and the highest quarter of them, rounded down.
 
@@ -57,38 +57,38 @@ Milliseconds and microseconds, of one machine at one time: compare them only wit
 
 | Row | Median | Spread |
 | --- | ---: | --- |
-| the first page in the browser without a hand-off, its first commit until settled (10,000 keys) | 1.52 ms | 1.46 ms to 1.55 ms |
-| t, a hit (10,000 keys) | 0.722 µs | 0.704 µs to 0.73 µs |
-| t, a missing key (10,000 keys) | 0.809 µs | 0.787 µs to 0.828 µs |
-| t, from fallbackLocale (10,000 keys) | 0.769 µs | 0.756 µs to 0.791 µs |
-| t, with params (10,000 keys) | 0.705 µs | 0.689 µs to 0.722 µs |
-| l, a hit (10,000 keys) | 1.08 µs | 1.08 µs to 1.1 µs |
-| l, a hit in a locale Intl rejects | 1.02 µs | 1.01 µs to 1.05 µs |
-| Object.keys of a loaded table of 200 keys | 4.22 µs | 4.16 µs to 4.29 µs |
-| new I18n, 2,000 loader descriptors of 5 locales each | 15.4 ms | 13.5 ms to 16.3 ms |
-| addTranslations, preprocess 'full' (10,000 nested keys) | 2.31 ms | 2.29 ms to 2.32 ms |
-| addTranslations, preprocess 'preserveArrays' (10,000 nested keys) | 2.33 ms | 2.29 ms to 2.37 ms |
-| addTranslations, preprocess 'none' (10,000 nested keys) | 0.0151 ms | 0.0141 ms to 0.0241 ms |
-| addTranslations, preprocess 'full' (100,000 nested keys) | 29 ms | 28.5 ms to 29.6 ms |
-| addTranslations, preprocess 'preserveArrays' (100,000 nested keys) | 30.6 ms | 29.5 ms to 31.4 ms |
-| addTranslations, preprocess 'none' (100,000 nested keys) | 0.0162 ms | 0.0154 ms to 0.0178 ms |
-| addTranslations, a seed over a flat namespace of 2,000 delivered keys | 5.37 ms | 5.34 ms to 5.41 ms |
-| a namespace delivered again, filled by 1 loader (beside 10,000 keys) | 3.26 ms | 3.24 ms to 3.28 ms |
-| a namespace delivered again, filled by 10 loaders (beside 10,000 keys) | 3.67 ms | 3.66 ms to 3.71 ms |
-| a namespace delivered again, filled by 50 loaders (beside 10,000 keys) | 11.7 ms | 11.7 ms to 12 ms |
-| loadTranslations, 100 namespaces | 1.01 ms | 0.994 ms to 1.01 ms |
-| setRoute, to new params among 200 routes | 0.133 ms | 0.132 ms to 0.134 ms |
-| a navigation to new params, a loader with cache: false beside a cached one | 0.13 ms | 0.126 ms to 0.149 ms |
-| setRoute, to new params among 200 routes of 50 locales (10,000 loaders) | 0.123 ms | 0.12 ms to 0.126 ms |
-| loadTranslations of a new instance, 100 namespaces of 100 locales (10,000 loaders) | 1.15 ms | 1.12 ms to 1.16 ms |
-| loadTranslations again, 100 namespaces of 100 locales (10,000 loaders) | 1.67 ms | 1.66 ms to 1.67 ms |
-| setLocale, between two loaded locales (10,000 keys) | 0.573 ms | 0.551 ms to 0.635 ms |
-| snapshot({ records: true }) (10,000 keys) | 1.69 ms | 1.67 ms to 1.72 ms |
-| snapshot({ records: true }), a locale and its fallback of 10 seeded namespaces of 5 keys | 68.9 µs | 68.7 µs to 70.2 µs |
-| snapshot(), a level of 2,000 keys holding an own __proto__ key | 0.686 ms | 0.671 ms to 1.07 ms |
-| hydrate() (10,000 keys) | 9.58 ms | 8.65 ms to 9.62 ms |
-| the server load, a page render (10,000 keys) | 21.1 ms | 20.8 ms to 21.2 ms |
-| the universal load, a page render after its server load (10,000 keys) | 0.28 ms | 0.269 ms to 0.284 ms |
+| the first page in the browser without a hand-off, its first commit until settled (10,000 keys) | 1.81 ms | 1.71 ms to 1.9 ms |
+| t, a hit (10,000 keys) | 0.742 µs | 0.726 µs to 0.753 µs |
+| t, a missing key (10,000 keys) | 0.807 µs | 0.784 µs to 0.822 µs |
+| t, from fallbackLocale (10,000 keys) | 0.792 µs | 0.772 µs to 0.802 µs |
+| t, with params (10,000 keys) | 0.713 µs | 0.698 µs to 0.73 µs |
+| l, a hit (10,000 keys) | 1.1 µs | 1.07 µs to 1.12 µs |
+| l, a hit in a locale Intl rejects | 1.04 µs | 1.02 µs to 1.06 µs |
+| Object.keys of a loaded table of 200 keys | 4.2 µs | 4.16 µs to 4.24 µs |
+| new I18n, 2,000 loader descriptors of 5 locales each | 15.3 ms | 15.2 ms to 15.6 ms |
+| addTranslations, preprocess 'full' (10,000 nested keys) | 2.46 ms | 2.39 ms to 2.5 ms |
+| addTranslations, preprocess 'preserveArrays' (10,000 nested keys) | 2.45 ms | 2.41 ms to 2.48 ms |
+| addTranslations, preprocess 'none' (10,000 nested keys) | 0.015 ms | 0.0139 ms to 0.0156 ms |
+| addTranslations, preprocess 'full' (100,000 nested keys) | 37.9 ms | 35.8 ms to 38.7 ms |
+| addTranslations, preprocess 'preserveArrays' (100,000 nested keys) | 37.2 ms | 36.1 ms to 39.2 ms |
+| addTranslations, preprocess 'none' (100,000 nested keys) | 0.0176 ms | 0.0163 ms to 0.0273 ms |
+| addTranslations, a seed over a flat namespace of 2,000 delivered keys | 5.46 ms | 5.38 ms to 5.72 ms |
+| a namespace delivered again, filled by 1 loader (beside 10,000 keys) | 3.49 ms | 3.44 ms to 3.79 ms |
+| a namespace delivered again, filled by 10 loaders (beside 10,000 keys) | 4.21 ms | 4.09 ms to 4.4 ms |
+| a namespace delivered again, filled by 50 loaders (beside 10,000 keys) | 13.9 ms | 13.3 ms to 13.9 ms |
+| loadTranslations, 100 namespaces | 1.03 ms | 1.02 ms to 1.04 ms |
+| setRoute, to new params among 200 routes | 0.137 ms | 0.136 ms to 0.14 ms |
+| a navigation to new params, a loader with cache: false beside a cached one | 0.132 ms | 0.128 ms to 0.133 ms |
+| setRoute, to new params among 200 routes of 50 locales (10,000 loaders) | 0.126 ms | 0.124 ms to 0.131 ms |
+| loadTranslations of a new instance, 100 namespaces of 100 locales (10,000 loaders) | 1.2 ms | 1.19 ms to 1.23 ms |
+| loadTranslations again, 100 namespaces of 100 locales (10,000 loaders) | 1.68 ms | 1.68 ms to 1.7 ms |
+| setLocale, between two loaded locales (10,000 keys) | 0.595 ms | 0.564 ms to 0.671 ms |
+| snapshot({ records: true }) (10,000 keys) | 1.75 ms | 1.72 ms to 1.84 ms |
+| snapshot({ records: true }), a locale and its fallback of 10 seeded namespaces of 5 keys | 70.8 µs | 70.7 µs to 71.2 µs |
+| snapshot(), a level of 2,000 keys holding an own __proto__ key | 0.684 ms | 0.681 ms to 1.1 ms |
+| hydrate() (10,000 keys) | 10.2 ms | 9.75 ms to 10.5 ms |
+| the server load, a page render (10,000 keys) | 23.1 ms | 22.8 ms to 23.3 ms |
+| the universal load, a page render after its server load (10,000 keys) | 0.312 ms | 0.308 ms to 0.318 ms |
 
 ## Heap
 
