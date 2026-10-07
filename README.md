@@ -366,7 +366,15 @@ const { t, locale, loading } = new I18n({
 });
 ```
 
-An extension may augment the instance in place, or replace the surface entirely (like the store adapter above). Official extensions live in the [extensions](https://github.com/sveltekit-i18n/extensions) repository; a custom extension is just a function:
+An extension may augment the instance in place, or replace the surface entirely (like the store adapter above). The official extensions live in the [extensions](https://github.com/sveltekit-i18n/extensions) repository:
+
+- [@sveltekit-i18n/extension-stores](https://github.com/sveltekit-i18n/extensions/tree/master/extension-stores) – replaces the instance with the Svelte-store surface of v2 (`$t`, `$locale`, `$loading`, …), the instance it received at `instance`
+- [@sveltekit-i18n/extension-html](https://github.com/sveltekit-i18n/extensions/tree/master/extension-html) – adds a `T` component that renders the markup a message carries as elements and Svelte components, from an allowlist, with no `{@html}`
+- [@sveltekit-i18n/extension-typed-access](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access) – keys as members of `t`: `i18n.t.home.title()` beside `i18n.t('home.title')`, typed from the [`schema`](#schema)
+
+Their order matters. `stores` returns no instance, so it goes after the other two: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and with `[html({ onReport: null }), stores]` the component is at `instance.T`. `html` after `typedAccess` adds `T` beside the tree, while before it `T` is typed at `instance.T` only. Each package's README has the details, and [lib's examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#extensions) run each one.
+
+A custom extension is just a function:
 
 ```javascript
 const withGreeting = (i18n) => Object.assign(i18n, {
@@ -486,6 +494,8 @@ i18n.setLocale('sv'); // still accepted — the union is a hint, not a constrain
 ```
 
 The locales survive only when the config reaches the constructor as a literal — inline, as above, or a separate object with `as const`. An annotated or separately widened config, and any config with one dynamic locale source (`loaders: locales.map(...)`), leaves them plain `string`. See [TypeScript](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#typescript) for both.
+
+Keys as members of `t` — `i18n.t.home.title()` beside `i18n.t('home.title')` — come from [@sveltekit-i18n/extension-typed-access](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access), an official [extension](#extensions) typed from the same schema. It reads the keys nested by segment that [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) registers beside the schema, as `tree`, and groups the keys itself without them; the core reads none of it.
 
 ## Related Packages
 
