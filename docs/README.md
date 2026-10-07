@@ -2692,8 +2692,10 @@ failed soft during the preload, say — cannot redirect: SvelteKit follows a
 during the call rejects it, and the call is [undone](#loader-required) and
 logged.
 
-The server's locale wins on every navigation and on `invalidateAll()`, so
-persist a client switch where your `handle` reads it (a cookie, say). A page
+The server's locale wins on every navigation and whenever the layout's `load`
+runs again — `invalidateAll()`, `refreshAll()` (SvelteKit 2.27 and later) and
+the refresh `use:enhance` makes after a successful form action — so persist a
+client switch where your `handle` reads it (a cookie, say). A page
 shown without a navigation — `preloadData()` and a shallow `goto()`
 (`pushState()` on SvelteKit 2), shallow routing — is never committed: an app
 that needs its translations calls `loadTranslations()` with the `commit` from
@@ -2741,7 +2743,9 @@ In the browser, load it as steps 3 and 4 do: the first pass calls
 `loadTranslations()`, and every later one [`preload()`](#preloadlocale-route)
 in `load`, with the commit in the layout's `$effect.pre`, so a hovered link does
 not switch it. On the server no effect runs, so every pass calls
-`loadTranslations()`.
+`loadTranslations()`. The instance exists before the first pass, so
+`+layout.js` keeps a module-level flag (`let started = false`) to tell that pass
+apart, and sets it on that pass in the browser only, as step 3 sets `client`.
 
 An instance with a shorter life than the app (a per-request one, or a
 component-scoped one) should be released with [`destroy()`](#destroy) when its
@@ -3426,6 +3430,25 @@ unless the instance is `loading`, something landed in it or invalidated what
 the page loads in between, or its [snapshot](#snapshotoptions) cannot record every loader
 the page selects: one failed soft, has no `id`, or feeds a namespace that
 holds a literal `__proto__` key or that the snapshot leaves out.
+
+**A hand-wired app should stop activating a preload.** SvelteKit runs the
+universal `load` for a preload too, and the `app.html` that `sv create`
+scaffolds preloads a link's page on hover. In 3.2, the
+[SSR recipe](#server-side-rendering) called `loadTranslations()` on every pass
+of that `load`, and 3.3.0 kept it, so hovering a link switched the instance to
+the route of a page the visitor may never open, and to the locale the server
+answered for it. In 3.3, [`preload()`](#preloadlocale-route) fetches a target
+without switching to it, and the recipe now uses it: only the pass that builds
+the instance calls `loadTranslations()`, every later one calls `preload()` and
+returns its token, and the layout hands that to `loadTranslations()` as the
+navigation commits
+([step 3](#3-build-the-instance-the-app-renders-with) and
+[step 4](#4-pass-it-down-and-commit-each-navigation)). An app wired from the
+earlier recipe, or a [singleton](#when-a-singleton-is-enough) whose `load`
+calls `loadTranslations()`, should make the same change; [`/kit`](#sveltekit)
+needs none. An instance piped through
+[`extension-stores`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-stores)
+carries `preload()` from extension-stores 3.2.
 
 **A page render builds one instance.** In 3.2, the universal `load` of a page
 render hydrated the server `load`'s snapshot into a second instance, so every
