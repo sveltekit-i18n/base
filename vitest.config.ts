@@ -1,10 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
-
-import pkg from './package.json' with { type: 'json' };
 
 export type Generate = 'server' | 'client';
 
@@ -12,11 +11,17 @@ export const SRC = fileURLToPath(new URL('./src/', import.meta.url));
 
 // The `imports` map points into dist/, where the consumer's bundler picks a
 // target by condition. The suite resolves each to the source it is built from,
-// by the conditions of the compile it runs in.
-const sourceImports = (generate: Generate, src: string) => Object.entries(pkg.imports).map(([find, { browser, default: fallback }]) => ({
-  find,
-  replacement: resolve(src, (generate === 'client' ? browser : fallback).replace(/^\.\/dist\//, '').replace(/\.js$/, '.ts')),
-}));
+// by the conditions of the compile it runs in. The map is the one of the tree
+// `src` belongs to: a tree the benchmark measures against this one may name
+// its files otherwise.
+export const sourceImports = (generate: Generate, src: string) => {
+  const { imports } = JSON.parse(readFileSync(resolve(src, '../package.json'), 'utf8')) as { imports: Record<string, { browser: string; default: string }> };
+
+  return Object.entries(imports).map(([find, { browser, default: fallback }]) => ({
+    find,
+    replacement: resolve(src, (generate === 'client' ? browser : fallback).replace(/^\.\/dist\//, '').replace(/\.js$/, '.ts')),
+  }));
+};
 
 // A suite runs once per way a consumer's bundler compiles the rune modules:
 // for the server, and for the browser, where deep `$state` hands back proxies

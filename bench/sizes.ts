@@ -8,7 +8,7 @@ import * as esbuild from 'esbuild';
 import { compileModule } from 'svelte/compiler';
 import { expect, it } from 'vitest';
 
-import { SRC } from '../vitest.config.js';
+import { sourceImports, SRC } from '../vitest.config.js';
 
 import { collect } from './collect.js';
 import { loaders, log, n, parser, table } from './data.js';
@@ -43,7 +43,7 @@ const bundle = async (entry: string) => {
     format: 'esm',
     platform: 'browser',
     external: ['svelte', 'svelte/*'],
-    alias: { '#kit-env': resolve(source, 'kit/env.browser.ts'), '#kit-server': resolve(source, 'kit/server.browser.ts') },
+    alias: Object.fromEntries(sourceImports('client', source).map(({ find, replacement }) => [find, replacement])),
     logLevel: 'silent',
     plugins: [{
       name: 'runes',
