@@ -1158,6 +1158,12 @@ declare namespace SvelteKitI18n {
 const i18n = new I18n(config); // typed by TranslationSchema
 ```
 
+The core reads `schema` alone. Another member of `Register` is another
+package's: [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen)
+also registers `tree`, the same keys nested by segment, which
+[`extension-typed-access`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access)
+reads (see [TypeScript](#typescript)).
+
 **Or state it per instance.** Only the type of the slot is read — nothing
 reads the value at runtime — so a config may carry an empty value, as long as
 it is typed. A schema stated this way is an explicit choice for that instance,
@@ -1408,8 +1414,26 @@ const minimal = (i18n) => ({
   declares that dependency with an `Extension.Operator` (see
   [TypeScript](#typescript)).
 
-Official extensions live in the
-[extensions](https://github.com/sveltekit-i18n/extensions) repository.
+**Official extensions** live in the
+[extensions](https://github.com/sveltekit-i18n/extensions) repository:
+
+- [`@sveltekit-i18n/extension-stores`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-stores)
+  — replaces the instance with the Svelte-store surface of v2 (`$t`,
+  `$locale`, `$loading`, …), the instance it received at `instance`.
+- [`@sveltekit-i18n/extension-html`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-html)
+  — adds a `T` component that renders the markup a message carries as
+  elements and Svelte components, from an allowlist, with no `{@html}`.
+- [`@sveltekit-i18n/extension-typed-access`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access)
+  — keys as members of `t`: `i18n.t.home.title()` beside
+  `i18n.t('home.title')`, typed from the [`schema`](#schema).
+
+Their order matters. `stores` returns no instance, so it goes after the other
+two: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and with
+`[html({ onReport: null }), stores]` the component is at `instance.T`. `html`
+after `typedAccess` adds `T` beside the tree, while before it `T` is typed at
+`instance.T` only. Each package's README has the details, and
+[lib's examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#extensions)
+run each one.
 
 ---
 
@@ -3126,6 +3150,15 @@ The library provides:
 - ✅ Typed translation keys and payloads, from a [`schema`](#schema) you supply
 - ❌ Generating that schema from your translation files — the slot ships, not the generator ([@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) is a separate package)
 
+Keys as members of `t` — `i18n.t.home.title()` beside `i18n.t('home.title')`
+— come from
+[`@sveltekit-i18n/extension-typed-access`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access),
+an official [extension](#extensions) typed from the same schema. It reads the
+keys nested by segment that
+[@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) registers
+beside the schema, as `tree`, and groups the keys itself without them; the core
+reads none of it.
+
 ### Parser params and output inference
 
 `new I18n(config)` infers both the parser's **params** (the rest parameters of
@@ -3681,5 +3714,7 @@ what it follows in the effect itself.
 - [Getting Started Guide](https://github.com/sveltekit-i18n/lib/tree/master/docs/GETTING_STARTED.md) – Step-by-step tutorial
 - [Architecture Overview](https://github.com/sveltekit-i18n/lib/tree/master/docs/ARCHITECTURE.md) – How it works
 - [Parsers](https://github.com/sveltekit-i18n/parsers) – Available parsers
+- [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
+- [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) – Generates the [`schema`](#schema) type from your translation files
 - [Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples) – Working code examples
 - [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md) – Recommended patterns
