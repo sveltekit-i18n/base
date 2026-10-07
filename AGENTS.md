@@ -527,10 +527,12 @@ differently.**
 - Notice unrelated dead code, a bug or a stale doc? Don't fix it in the same
   PR, and don't leave it in chat or in the PR's notes alone, where it ends
   with the PR. Once reproduced, a small fix that decides nothing gets a PR
-  of its own, through the whole cycle, right after the current one; anything
-  larger, or anything the user decides, gets an issue in the `lib` tracker
-  with its scenario. Both are opened without asking. The PR that found it
-  links either under `## Notes`. An impression not reproduced is neither.
+  of its own, through the whole cycle, stacked on the current one (§7) — or
+  off `master` when it lies in another repository or no branch is in
+  flight; anything larger, or anything the user decides, gets an issue in
+  the `lib` tracker with its scenario. Both are opened without asking. The
+  PR that found it links either under `## Notes`. An impression not
+  reproduced is neither.
   An issue takes the milestone of the release the current work lands in
   when that release would ship the defect, and the open line's (`3.x`)
   otherwise; the release plan (§4) lists what its milestone holds. Only a
@@ -737,6 +739,16 @@ exactly, so a dependency released after it forces another release of it.
   `git fetch origin && git switch master && git pull --ff-only`, then create the
   branch. Use a descriptive prefix: `fix/<slug>`, `feat/<slug>`,
   `chore/<slug>`, `docs/<slug>`.
+- **A finding's branch (§3) is the one exception: it stacks.** It starts
+  from the tip of the branch in flight, and its PR targets that branch, so
+  the PR shows its own commits only and merges after the one beneath. It is
+  never merged into that branch. When the branch beneath takes a fixup, the
+  stack follows it (`git rebase --onto <new tip> <old tip>`). Once the PR
+  beneath merges, or closes unmerged, retarget the stacked PR to `master`
+  first, then rebase it onto `master` the same way (a rebase merge rewrote
+  the commits beneath) and `git push --force-with-lease` — in that order, so
+  the push runs CI against `master`. It is offered for merge only once it
+  targets `master` and CI is green there.
 - Rebase on `master` before pushing a feature branch; on conflicts, **stop and
   ask** — resolution is judgment, not automation. Never merge `master` into a
   feature branch.
@@ -746,8 +758,9 @@ exactly, so a dependency released after it forces another release of it.
 - **Every branch headed for `master` gets a PR.** Open it once the branch is
   pushed and green — that is the default, not something to ask about. Skip it
   only when the user says so, or when the branch is not ready to be reviewed.
-  Keep it narrowly scoped; link out-of-scope follow-ups (§3) under `## Notes`
-  rather than expanding silently.
+  Keep it narrowly scoped; link the stacked PRs and issues of its findings
+  (§3) under `## Notes` rather than expanding silently. A stacked PR's body
+  opens with the PR it stacks on (`Stacked on #N`).
 - Title ≤ 70 chars, describes the overarching scope. Body: a short summary +
   what was tested (real results: build/test/audit), and the linked issue via
   closing keywords (`Closes #N` / `Fixes #N`) when one exists.
