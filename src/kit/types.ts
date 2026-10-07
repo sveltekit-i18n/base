@@ -72,8 +72,9 @@ export namespace Kit {
   /**
    * What `defineI18n()` returns. Each member is a plain function, so it can be
    * exported on its own. `handle` and `load` take events of `any` params: a
-   * member implemented by hand annotates its event (for `handle`,
-   * `Kit.RequestEvent`) to read them typed.
+   * member implemented by hand annotates its event to read them typed (for
+   * `handle` under SvelteKit 3,
+   * `Kit.RequestEvent<Partial<Record<string, Kit.ParamValue>>>`).
    */
   export type T<Instance = I18n> = {
     // Events of `any` params: SvelteKit 3's parsed ones pass, and so does
