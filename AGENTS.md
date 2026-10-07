@@ -17,7 +17,8 @@ breaking a published library over speed. For trivial tasks, use judgment.
 `@sveltekit-i18n/base` is the **core**, parser-agnostic engine of the
 [sveltekit-i18n](https://github.com/sveltekit-i18n/lib) ecosystem. It owns
 translation state, loading, caching, route matching, and preprocessing — but
-**not** message interpolation, which a pluggable parser provides. Four repos:
+**not** message interpolation, which a pluggable parser provides. Its
+repositories:
 
 - **`base`** (here) — core, parser-agnostic, zero runtime deps.
 - **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-curly`.
@@ -26,6 +27,11 @@ translation state, loading, caching, route matching, and preprocessing — but
   (Unicode MessageFormat 2), `parser-i18next` (i18next's syntax).
 - **`extensions`** — official extensions for the `config.extensions` pipe
   (e.g. `extension-stores`).
+- **`typegen`** — `@sveltekit-i18n/typegen`, the Vite plugin that generates
+  the translation schema that `config.schema` and `SvelteKitI18n.Register`
+  read.
+- **`sv`** — `@sveltekit-i18n/sv`, the Svelte CLI add-on that sets
+  sveltekit-i18n up in a SvelteKit project (`npx sv add @sveltekit-i18n`).
 
 ## Tech stack (ground truth — do not assume otherwise)
 
@@ -638,7 +644,8 @@ publish cannot be undone, and `sveltekit-i18n` pins `base` and `parser-curly`
 exactly, so a dependency released after it forces another release of it.
 
 - **Plan before any publish, patches included.** For every package of the
-  family (`base`, the parsers, the extensions, `typegen`, `sveltekit-i18n`),
+  family (`base`, the parsers, the extensions, `typegen`, `sveltekit-i18n`,
+  `sv`),
   list what `master` holds since its last tag and every fix planned or in
   flight that touches it (the issues of the release's milestone
   included), and decide for each: release now, or defer. Show that table
@@ -652,9 +659,11 @@ exactly, so a dependency released after it forces another release of it.
   is published twice: a package goes out only once no later step can change
   it, and no step after its publish needs it changed.
 - **Leaves first.** `base`, then the parsers, the extensions and `typegen`,
-  then `sveltekit-i18n` last. A package is not published while a package it
-  depends on holds an unreleased change or a planned fix it needs, unless the
-  user deferred that fix by name.
+  then `sveltekit-i18n`, and `sv` last: it installs the rest of the family at
+  the ranges of its own `devDependencies` (`parser-curly` through
+  `sveltekit-i18n`), so a release of any of them is a release of `sv`. A
+  package is not published while a package it depends on holds an unreleased
+  change or a planned fix it needs, unless the user deferred that fix by name.
 - **Bump the family first.** Before any publish, check every range the
   package holds on the family — `devDependencies`, peer ranges,
   `sveltekit-i18n`'s exact pins, the lockfiles, the site's and the examples'
@@ -680,7 +689,9 @@ exactly, so a dependency released after it forces another release of it.
   the publish, just as a mismatch is.
 - **Every package is shown in use.** The plan lists, for every package of
   the family, a `lib` example or the site's playground that runs it, and
-  for each release, the one that runs what the release adds. A package or a
+  for each release, the one that runs what the release adds; `sv` sets an
+  app up rather than running in one, so its own suite, which builds and
+  serves the apps it sets up, shows it in use. A package or a
   surface none of them runs gets one in the same plan, before its publish
   — a new extension or parser before its first release. A new example is
   named wherever the examples are listed (`lib`'s `README.md`,
@@ -693,9 +704,9 @@ exactly, so a dependency released after it forces another release of it.
   package's benchmark, and a package without one gets one in the same plan,
   before its publish — a new package before its first release.
 - **Close the loop.** After a publish, confirm the version on npm
-  (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, the
-  examples and the site, the lockfiles of the other repositories — as part of
-  the same plan.
+  (`npm view`), and update what follows it — `sveltekit-i18n`'s pins, `sv`'s
+  `devDependencies`, the examples and the site, the lockfiles of the other
+  repositories — as part of the same plan.
 
 ## 5. Commit on approval
 
