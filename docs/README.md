@@ -3544,9 +3544,11 @@ and `load` typed every param as a string, so under SvelteKit 3 one matcher
 that parses a param made `handle: Handle = i18n.handle`,
 `sequence(i18n.handle)` and a typed wrapper calling `load` fail to compile. In
 3.3.2 they take events of any params, so a member an app implements against
-`Kit.T` reads its event's params as `any` unless it annotates the event
-(for `handle`, `Kit.RequestEvent`). For `preferredLocale`, see
-[Which locale](#which-locale).
+`Kit.T` reads its event's params as `any` unless it annotates the event with
+the params SvelteKit 3 parses (for `handle`,
+`Kit.RequestEvent<Partial<Record<string, Kit.ParamValue>>>`, since
+`Kit.RequestEvent` alone still reads every param as a string). For
+`preferredLocale`, see [Which locale](#which-locale).
 
 ### New
 
