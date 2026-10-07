@@ -13,6 +13,7 @@ import type { Kit } from '../../src/kit/types.js';
 import Layout from '../components/Layout.svelte';
 import Outside from '../components/Outside.svelte';
 import { effectsRun } from '../utils/effect.svelte.js';
+import type * as SvelteKit3 from '../utils/kit3.js';
 import { cell, deep } from '../utils/state.svelte.js';
 
 const valueParser = { parse: (text: any, _params: any, _locale: any, key: string) => (text === undefined ? key : String(text)) };
@@ -114,6 +115,28 @@ describe('/kit', () => {
 
     expect(i18n.t('common.greeting')).toBe('common cs');
     expect(errors).toContain('[i18n]: Skipping a loader that cannot be read.');
+  });
+
+  it('types its hook and load for SvelteKit 3, whose matchers parse params', () => {
+    const { handle, load } = defineI18n({ parser: valueParser });
+
+    expectTypeOf(handle).toExtend<SvelteKit3.Handle>();
+    // A wrapper calls it; the server's data it keeps shows the generic
+    // overload took the event, which an assignment to `Load` would not.
+    expectTypeOf((event: SvelteKit3.ServerLoadEvent) => load(event)).returns.resolves.toEqualTypeOf<{ i18n: Kit.Payload }>();
+    expectTypeOf((event: SvelteKit3.LoadEvent & { data: { user: number } }) => load(event)).returns.resolves.toHaveProperty('user');
+  });
+
+  it('keeps compiling SvelteKit 2 code that implements a member against string params', async () => {
+    const event = serverEvent('/', { params: { lang: 'CS' } });
+    // A member implemented by hand, typed by context or by the default event.
+    const contextual: Kit.T['handle'] = async ({ event: { params } }) => new Response(params.lang?.toLowerCase());
+    const annotated = async ({ event: { params } }: { event: Kit.RequestEvent; resolve: Kit.Resolve }) => new Response(params.lang?.toLowerCase());
+    const overridden: Kit.T = { ...defineI18n({ parser: valueParser }), handle: annotated };
+    const options: Kit.Options = { preferredLocale: ({ params }) => params.lang?.toLowerCase() };
+
+    for (const handle of [contextual, overridden.handle]) expect(await (await handle({ event, resolve: () => new Response() })).text()).toBe('cs');
+    expect(options.preferredLocale?.(event)).toBe('cs');
   });
 
   describe.skipIf(BROWSER)('server half', () => {
@@ -330,6 +353,29 @@ describe('/kit', () => {
       }, { preferredLocale: (event) => event.cookies?.get('lang') });
 
       expect((await load(serverEvent('/', { lang: 'en', cookie: 'cs-Latn-CZ', isDataRequest: true }))).i18n.locale).toBe('cs');
+    });
+
+    it('skips a param a SvelteKit 3 matcher parsed to a number, which is no locale', async () => {
+      // A page render, which marks a locale preferredLocale gave.
+      const event = { ...serverEvent('/1', { lang: 'en' }), params: { id: 1 } };
+      const plain = (await setup({}, { preferredLocale: ({ params }) => params.id }).load(event)).i18n;
+
+      expect(plain.locale).toBe('en');
+      expect(plain).not.toHaveProperty('preferred');
+
+      // A custom sanitizeLocales gets its string form, which misses too.
+      const sanitizeLocales = vi.fn((locale: string) => locale.toLowerCase());
+      const custom = (await setup({ sanitizeLocales }, { preferredLocale: ({ params }) => params.id }).load(event)).i18n;
+
+      expect(custom.locale).toBe('en');
+      expect(custom).not.toHaveProperty('preferred');
+      expect(sanitizeLocales).toHaveBeenCalledWith('1');
+    });
+
+    it('hands preferredLocale the params as SvelteKit 3 parsed them, to an event typed for them', async () => {
+      const { load } = setup({}, { preferredLocale: ({ params }: Kit.Event<Partial<Record<string, Kit.ParamValue>>>) => (params.id === 1 ? 'cs' : undefined) });
+
+      expect(await load({ ...serverEvent('/1', { lang: 'en', isDataRequest: true }), params: { id: 1 } })).toEqual({ i18n: { locale: 'cs', route: '/1' } });
     });
 
     it('falls back to the first locale the config serves, the loaders\' before the translations\'', async () => {

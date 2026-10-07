@@ -1,9 +1,11 @@
 import { readdirSync } from 'node:fs';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import type { Kit } from '../../dist/exports/kit.js';
 import I18n, { type Loader } from '../../dist/index.js';
 import { read } from '../../src/utils.js';
 import { describeCost } from '../utils/cost.js';
+import type * as SvelteKit3 from '../utils/kit3.js';
 import { describeRegistry } from '../utils/registry.js';
 
 // The published artifact ships UNCOMPILED rune modules (`dist/I18n.svelte.js`)
@@ -112,6 +114,13 @@ describe('published artifact', () => {
     // The `imports` map picks the half by the `browser` condition.
     if (task.file.projectName === 'client') expect(() => handle({ event, resolve: () => new Response() })).toThrow('run on the server only');
     else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
+  });
+
+  // Checked by `tsc`, which `npm test` runs over the built declarations.
+  it('types its hook and load for SvelteKit 3, whose matchers parse params', () => {
+    expectTypeOf<Kit.T['handle']>().toExtend<SvelteKit3.Handle>();
+    expectTypeOf((load: Kit.T['load'], event: SvelteKit3.ServerLoadEvent) => load(event)).returns.resolves.toEqualTypeOf<{ i18n: Kit.Payload }>();
+    expectTypeOf((load: Kit.T['load'], event: SvelteKit3.LoadEvent & { data: { user: number } }) => load(event)).returns.resolves.toHaveProperty('user');
   });
 
   // SvelteKit reads a module's role off its path once the package's real path

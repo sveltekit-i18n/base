@@ -1,11 +1,11 @@
 import type { I18n } from '../I18n.svelte.js';
 import { logger } from '../logger.js';
 import { matchLocale, routePrefix, textDirection, withoutBasePath } from '../utils.js';
-import type { Negotiated, ServerHalf, Shared } from './internal.js';
+import type { Negotiated, Params, ServerHalf, Shared } from './internal.js';
 import type { Kit } from './types.js';
 
 export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: Shared): ServerHalf => {
-  const answer = (event: Kit.RequestEvent): Negotiated => negotiate(event, event.request.headers.get('accept-language'));
+  const answer = (event: Kit.RequestEvent<Params>): Negotiated => negotiate(event, event.request.headers.get('accept-language'));
 
   // The instance each page render loaded, under the payload it returned:
   // SvelteKit hands that very object to the universal load of the same
@@ -17,7 +17,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: S
   // A base path SvelteKit strips and `basePath` does not keeps every
   // route-scoped loader from matching, silently. Here, on the server only, so
   // the matcher stays out of the browser bundle.
-  const check = (event: Kit.Event): void => {
+  const check = (event: Kit.Event<Params>): void => {
     if (warned) return;
 
     const available = locales();
