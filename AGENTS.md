@@ -526,11 +526,14 @@ differently.**
   larger, or anything the user decides, gets an issue in the `lib` tracker
   with its scenario. Both are opened without asking. The PR that found it
   links either under `## Notes`. An impression not reproduced is neither.
-  Only a finding worth landing in a stable release counts: a defect a
-  consumer of a published package, its docs, the examples or the site can
-  meet — in behaviour, types or cost — or a gap in the repository's own
-  checks. A nit, a matter of taste, or friction of the agent's own tooling
-  or environment is neither; mention it in chat at most.
+  An issue takes the milestone of the release the current work lands in
+  when that release would ship the defect, and the open line's (`3.x`)
+  otherwise; the release plan (§4) lists what its milestone holds. Only a
+  finding worth landing in a stable release counts: a defect a consumer of
+  a published package, its docs, the examples or the site can meet — in
+  behaviour, types or cost — or a gap in the repository's own checks. A
+  nit, a matter of taste, or friction of the agent's own tooling or
+  environment is neither; mention it in chat at most.
 
 ## 4. Verify and review
 
@@ -630,8 +633,9 @@ exactly, so a dependency released after it forces another release of it.
 - **Plan before any publish, patches included.** For every package of the
   family (`base`, the parsers, the extensions, `typegen`, `sveltekit-i18n`),
   list what `master` holds since its last tag and every fix planned or in
-  flight that touches it, and decide for each: release now, or defer. Show
-  that table in chat; nothing is published until the user approves it.
+  flight that touches it (the issues of the release's milestone
+  included), and decide for each: release now, or defer. Show that table
+  in chat; nothing is published until the user approves it.
 - **The plan is a table of every step.** Beside that table, the plan shows
   every step the release takes, each with who takes it and the steps it waits
   on: the issues to resolve, the pull requests to open and merge, each bump
