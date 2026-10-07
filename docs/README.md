@@ -2462,6 +2462,13 @@ from `/cs/x` to a prerendered `/about` keeps `cs`. A default returned from
 `preferredLocale` says the URL names that locale; the default for a visitor
 whose cookie or header names none belongs in [`initLocale`](#initlocale).
 
+Under SvelteKit 3, a param matcher may parse a param, which then reaches
+`preferredLocale` parsed — a number, say — while the event's default type
+reads every param as a string. Annotate the event as
+`Kit.Event<Partial<Record<string, Kit.ParamValue>>>`
+(`import type { Kit } from '@sveltekit-i18n/base/kit'`) to see that, and
+return a string: a number is no locale, so it is skipped.
+
 ### What `data.i18n` is
 
 In `+layout.svelte`, `+page.svelte`, `page.data` and a universal `parent()`,
@@ -2495,6 +2502,11 @@ import { load as i18nLoad } from '#lib/i18n.js';
 
 export const load = async (event) => ({ ...(await i18nLoad(event)), theme: 'dark' });
 ```
+
+In TypeScript, type a wrapper with SvelteKit's `$types` (`LayoutServerLoad`,
+`LayoutLoad`). The `Kit` event types carry only what the wiring reads: no
+`locals` a server wrapper can count on, no `parent` or `fetch`, and a `data`
+that drops the server's fields from the layout's.
 
 Keep the spread: the universal branch returns the server's data along with the
 instance, and a wrapper that picks fields drops the rest. A server wrapper must
@@ -3527,11 +3539,21 @@ its record. In 3.2 the snapshot took it for one that had lost a `__proto__`
 key: it warned, left it out of the plain `snapshot()` and dropped its loader's
 record, so a client hydrating it loaded the namespace again.
 
+**`/kit` takes the params a SvelteKit 3 matcher parsed.** Up to 3.3.1, `handle`
+and `load` typed every param as a string, so under SvelteKit 3 one matcher
+that parses a param made `handle: Handle = i18n.handle`,
+`sequence(i18n.handle)` and a typed wrapper calling `load` fail to compile. In
+3.3.2 they take events of any params, so a member an app implements against
+`Kit.T` reads its event's params as `any` unless it annotates the event
+(for `handle`, `Kit.RequestEvent`). For `preferredLocale`, see
+[Which locale](#which-locale).
+
 ### New
 
 - [`preload(locale, route?)`](#preloadlocale-route) — the request of a navigation that may never commit; it resolves to a token for the call that commits it.
 - [`{ preloaded }`](#loadtranslationslocale-route-options) on `loadTranslations()` and [`setRoute()`](#setrouteroute-options) — the commit shows what the preload fetched instead of fetching it again.
 - `Loader.Preloaded` — the type of that token.
+- `Kit.ParamValue`, and a params type parameter on `Kit.Event` and the event types built on it — for the params a SvelteKit 3 matcher parsed.
 
 ---
 

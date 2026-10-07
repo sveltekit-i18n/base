@@ -7,7 +7,7 @@ import { I18n } from '../I18n.svelte.js';
 import { logError, loggerFactory, setLogger } from '../logger.js';
 import type { Config, Loader, Snapshot } from '../types.js';
 import { configLocales, matchLocale, paramsSignature, resolveLoaders, routeParams, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
-import type { Negotiated } from './internal.js';
+import type { Negotiated, Params } from './internal.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -48,7 +48,7 @@ type Configured = { locales: string[]; handOver: boolean; loaders: Loader.Resolv
 
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
-const isServerEvent = (event: Kit.ServerLoadEvent | Kit.UniversalLoadEvent): event is Kit.ServerLoadEvent => 'cookies' in event;
+const isServerEvent = (event: Kit.ServerLoadEvent<Params> | Kit.UniversalLoadEvent<Params>): event is Kit.ServerLoadEvent<Params> => 'cookies' in event;
 
 /**
  * Wires SvelteKit to an instance of `config`: a `handle` hook, the root
@@ -99,9 +99,10 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
 
   let reported = false;
 
-  const preferred = (event: Kit.Event): string | null | undefined => {
+  const preferred = (event: Kit.Event<Params>): string | null | undefined => {
     try {
-      return options.preferredLocale?.(event);
+      // Typed for string params; a param a matcher parsed misses as no locale.
+      return options.preferredLocale?.(event as Kit.Event);
     } catch (error) {
       if (!reported) logError('`preferredLocale` failed. Negotiating without it.', error);
 
@@ -129,7 +130,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     }
   };
 
-  const negotiate = (event: Kit.Event, ranges: string | readonly string[] | null | undefined): Negotiated => {
+  const negotiate = (event: Kit.Event<Params>, ranges: string | readonly string[] | null | undefined): Negotiated => {
     // First: it sets the config's logger, which `preferred` reports through.
     const available = locales();
     const chosen = matchLocale(visitorSanitized(preferred(event)), available);
@@ -223,7 +224,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     return (from === to ? !outcomes.some(Boolean) : !switching.reached) ? previous : tab.answer;
   };
 
-  const universalLoad = async (event: Kit.UniversalLoadEvent): Promise<Record<string, any>> => {
+  const universalLoad = async (event: Kit.UniversalLoadEvent<Params>): Promise<Record<string, any>> => {
     const route = event.url.pathname;
     const payload = event.data?.i18n as Kit.Payload | undefined;
     // A page render's own instance: the server branch loaded it for this very
@@ -275,7 +276,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     return { ...event.data, i18n: surface, [KEY]: pass };
   };
 
-  const load = ((event: Kit.ServerLoadEvent | Kit.UniversalLoadEvent) => (
+  const load = ((event: Kit.ServerLoadEvent<Params> | Kit.UniversalLoadEvent<Params>) => (
     isServerEvent(event) ? server.load(event) : universalLoad(event)
   )) as Kit.T['load'];
 
