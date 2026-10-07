@@ -2146,7 +2146,7 @@ hand-off](#server-side-rendering):
 
 ```javascript
 // Once, right after the instance is built
-i18n.hydrate(data.i18n);
+i18n.hydrate(data?.i18n);
 ```
 
 In a SvelteKit `load` that runs on every navigation, build the instance and
@@ -2603,6 +2603,8 @@ something the wiring does not do.
 // src/lib/translations/index.js
 import parser from '@sveltekit-i18n/parser-curly';
 
+export const DEFAULT_LOCALE = 'en';
+
 /** @type {import('@sveltekit-i18n/parser-curly').Config} */
 export const config = {
   parser: parser({ onReport: null }),
@@ -2615,12 +2617,12 @@ export const config = {
 ```javascript
 // src/routes/+layout.server.js
 import { I18n } from '@sveltekit-i18n/base';
-import { config } from '#lib/translations/index.js';
+import { DEFAULT_LOCALE, config } from '#lib/translations/index.js';
 
 export const load = async ({ url, locals }) => {
   const i18n = new I18n(config);
 
-  await i18n.loadTranslations(locals.locale, url.pathname);
+  await i18n.loadTranslations(locals.locale ?? DEFAULT_LOCALE, url.pathname);
 
   return { i18n: i18n.snapshot({ records: true }) };
 };
@@ -2629,23 +2631,26 @@ export const load = async ({ url, locals }) => {
 `locals.locale` is whatever your `handle` hook resolved from the cookie, the URL
 or the `Accept-Language` header — [`sanitizeLocales()`](#sanitizelocaleslocales)
 normalizes such a value the way the instance does.
+`DEFAULT_LOCALE` stands in when it resolved none.
 
 ### 3. Build the instance the app renders with
 
 ```javascript
 // src/routes/+layout.js
 import { I18n } from '@sveltekit-i18n/base';
-import { config } from '#lib/translations/index.js';
+import { DEFAULT_LOCALE, config } from '#lib/translations/index.js';
 
 // Assigned in the browser only — on the server this module-level binding
 // would be the shared state we are avoiding.
 let client;
 
 export const load = async ({ data, url }) => {
+  // `data` is null when no route matched: the error page renders through this
+  // load too, and on a static host that is every unknown URL.
   if (client) {
     // A later pass may be a preload, which shows nothing: the layout hands
     // its token to the call that commits the navigation.
-    const locale = data.i18n?.locale ?? client.locale;
+    const locale = data?.i18n?.locale ?? client.locale;
     const preloaded = await client.preload(locale, url.pathname);
 
     return { i18n: client, commit: { locale, route: url.pathname, preloaded } };
@@ -2653,11 +2658,11 @@ export const load = async ({ data, url }) => {
 
   const i18n = new I18n(config);
 
-  i18n.hydrate(data.i18n);
+  i18n.hydrate(data?.i18n);
 
   if (!import.meta.env.SSR) client = i18n;
 
-  await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
+  await i18n.loadTranslations(data?.i18n?.locale ?? DEFAULT_LOCALE, url.pathname);
 
   return { i18n };
 };
@@ -2691,7 +2696,10 @@ whatever the config declares stays where it is.
 Leave [`initLocale`](#initlocale) out of a config used this way. It starts its
 load inside the constructor, before the hand-off can be applied, so the loaders
 run regardless (and [`hydrate()`](#hydrateenvelope) warns) — the locale belongs
-in the `loadTranslations()` call above.
+in the `loadTranslations()` call above. `DEFAULT_LOCALE` is the locale of a
+pass the server sent nothing for — the error page on a static host. It is a
+constant rather than [`fallbackLocale`](#fallbacklocale), which would load its
+translations alongside every other locale's.
 
 ### 4. Pass it down, and commit each navigation
 
@@ -3598,17 +3606,19 @@ switch it to [`hydrate()`](#hydrateenvelope):
 i18n.addTranslations(data.translations);
 
 // 3.1 — the server returns { i18n: i18n.snapshot({ records: true }) }
-i18n.hydrate(data.i18n);
-await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
+i18n.hydrate(data?.i18n);
+await i18n.loadTranslations(data?.i18n?.locale ?? DEFAULT_LOCALE, url.pathname);
 
 // 3.1 — or, with the server returning { locale: i18n.locale, translations: i18n.snapshot() }
-i18n.hydrate({ translations: data.translations, locale: data.locale });
-await i18n.loadTranslations(data.locale ?? i18n.locale, url.pathname);
+i18n.hydrate({ translations: data?.translations, locale: data?.locale });
+await i18n.loadTranslations(data?.locale ?? DEFAULT_LOCALE, url.pathname);
 ```
 
 The locale handed over is the server instance's `locale`, not the raw value
 your `handle` negotiated: `hydrate()` writes it as it is.
 
+`DEFAULT_LOCALE` is the locale your config module exports for a pass without
+the server's data, as in [step 1 of the SSR recipe](#1-export-the-config-not-the-instance).
 The [SSR recipe](#3-build-the-instance-the-app-renders-with) shows the whole
 wiring, and [SvelteKit](#sveltekit) does it for you.
 
