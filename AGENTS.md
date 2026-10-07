@@ -63,7 +63,7 @@ translation state, loading, caching, route matching, and preprocessing — but
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
 | `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n` and the `Kit` types |
 | `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
-| `src/kit/server.ts` / `server.browser.ts` | the server half (`handle`, the server `load`) and the stub `#kit-server` resolves to under `browser` |
+| `src/kit/backend.ts` / `backend.browser.ts` | the server half (`handle`, the server `load`) and the stub `#kit-server` resolves to under `browser` |
 | `src/kit/env.ts` / `env.browser.ts` | `BROWSER`, resolved through `#kit-env` |
 | `src/kit/types.ts` | the `Kit` namespace — the event shapes it reads and the exports' types |
 | `src/kit/internal.ts` | the unpublished types between the factory and the server half |
@@ -460,7 +460,12 @@ translation state, loading, caching, route matching, and preprocessing — but
   `data.i18n`, `use()` and `get()` hand out what the extensions make of it. The server
   half and `BROWSER` resolve through the `imports` map (`#kit-server`,
   `#kit-env`) by the `browser` condition, so the exports are annotated from
-  `kit/types.ts`, never inferred through a `#kit-*` module.
+  `kit/types.ts`, never inferred through a `#kit-*` module. No shipped path
+  reads as a server-only or a remote module to SvelteKit, which judges a
+  module by its path once the package's real path lies outside the app root's
+  `node_modules` — within the app root for a server-only module (a vendored
+  copy, a workspace whose root is the app), anywhere for a remote one;
+  `dist.spec.ts` holds every shipped path to its patterns.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep

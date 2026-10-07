@@ -7,7 +7,7 @@
       "@sveltekit-i18n/base": ["../../../src/index.ts"],
       "@sveltekit-i18n/base/kit": ["../../../src/exports/kit.ts"],
       "#kit-env": ["../../../src/kit/env.ts"],
-      "#kit-server": ["../../../src/kit/server.ts"],
+      "#kit-server": ["../../../src/kit/backend.ts"],
       "base-copy": ["../../../dist/index.d.ts"]
     }
   }

@@ -1,3 +1,5 @@
+import { readdirSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 import I18n, { type Loader } from '../../dist/index.js';
 import { read } from '../../src/utils.js';
@@ -110,6 +112,20 @@ describe('published artifact', () => {
     // The `imports` map picks the half by the `browser` condition.
     if (task.file.projectName === 'client') expect(() => handle({ event, resolve: () => new Response() })).toThrow('run on the server only');
     else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
+  });
+
+  // SvelteKit reads a module's role off its path once the package's real path
+  // lies outside the app root's `node_modules`: it refuses a server-only
+  // module within the app root in the browser (a vendored copy, a workspace
+  // whose root is the app), and serves a remote one as an endpoint wherever it
+  // lies. The patterns of `@sveltejs/kit`'s `src/exports/vite/utils.js`.
+  it('ships no path SvelteKit takes for a server-only or a remote module', () => {
+    const kitPatterns = [/[/.]server\.[^/]+$/, /\/server\//, /[/.]remote\.[^/]+$/];
+    const shipped = readdirSync(new URL('../../dist/', import.meta.url), { recursive: true, encoding: 'utf8' })
+      .map((path) => `/dist/${path.replaceAll('\\', '/')}`);
+
+    expect(shipped).toContain('/dist/index.js');
+    expect(shipped.filter((path) => kitPatterns.some((pattern) => pattern.test(path)))).toEqual([]);
   });
 });
 

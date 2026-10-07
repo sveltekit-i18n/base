@@ -1,4 +1,4 @@
-import type { serverHalf as ServerHalf } from './server.js';
+import type { serverHalf as ServerHalf } from './backend.js';
 
 const serverOnly = (): never => {
   throw new Error('[i18n]: `handle` and the server branch of `load` run on the server only.');

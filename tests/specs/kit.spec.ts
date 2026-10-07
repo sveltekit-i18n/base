@@ -6,9 +6,9 @@ import { beforeEach, describe, expect, expectTypeOf, it, onTestFinished, vi } fr
 import { BROWSER } from '#kit-env';
 
 import { defineI18n } from '../../src/kit/define.svelte.js';
-import * as server from '../../src/kit/server.js';
+import * as server from '../../src/kit/backend.js';
 import type { Shared } from '../../src/kit/internal.js';
-import * as stub from '../../src/kit/server.browser.js';
+import * as stub from '../../src/kit/backend.browser.js';
 import type { Kit } from '../../src/kit/types.js';
 import Layout from '../components/Layout.svelte';
 import Outside from '../components/Outside.svelte';
