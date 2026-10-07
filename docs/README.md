@@ -1725,9 +1725,10 @@ export const load = async ({ url }) => {
 ```
 
 The instance above is a module-level singleton, which on the server is shared
-by every request in the process — see [SvelteKit](#sveltekit) for the
-per-request wiring, or [Server-Side Rendering](#server-side-rendering) to wire
-it by hand.
+by every request in the process, and this `load` activates it for a preload
+too — a page a hovered link leads to. See [SvelteKit](#sveltekit) for the
+wiring that does neither, or [Server-Side Rendering](#server-side-rendering)
+to wire it by hand.
 
 **`{ activate: false }`** only fills the tables. The requested locale, the
 current route and [`locale`](#locale) stay as they were, and the load does not
@@ -2590,15 +2591,20 @@ import { config } from '$lib/translations';
 let client;
 
 export const load = async ({ data, url }) => {
-  let i18n = client;
+  if (client) {
+    // A later pass may be a preload, which shows nothing: the layout hands
+    // its token to the call that commits the navigation.
+    const locale = data.i18n?.locale ?? client.locale;
+    const preloaded = await client.preload(locale, url.pathname);
 
-  if (!i18n) {
-    i18n = new I18n(config);
-
-    i18n.hydrate(data.i18n);
-
-    if (browser) client = i18n;
+    return { i18n: client, commit: { locale, route: url.pathname, preloaded } };
   }
+
+  const i18n = new I18n(config);
+
+  i18n.hydrate(data.i18n);
+
+  if (browser) client = i18n;
 
   await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
 
@@ -2607,16 +2613,26 @@ export const load = async ({ data, url }) => {
 ```
 
 This `load` runs on the server for the SSR pass and again in the browser on
-hydration. Both start from the server's state: the loaders that delivered on
-the server do not run a second time, and the locale is active before the first
-render. Only what the server did not load — the route-scoped translations of
-pages the visitor has not opened yet, the few namespaces the snapshot cannot
-hand over, and a loader that failed on the server — is fetched. A
-`redirect()` or an `error()` such a loader throws on that pass makes SvelteKit
-leave the page it rendered ([see `loader`](#loader-required)). Every later
-client-side navigation reuses the same instance, so its cache survives.
+hydration, and each of those passes builds the instance. Both start from the
+server's state: the loaders that delivered on the server do not run a second
+time, and the locale is active before the first render. Only what the server
+did not load — the few namespaces the snapshot cannot hand over, and a loader
+that failed on the server — is fetched. A `redirect()` or an `error()` such a loader
+throws on that pass makes SvelteKit leave the page it rendered
+([see `loader`](#loader-required)). With `ssr = false` this `load` does not run
+on the server — the server `load` of step 2 still does — and the first pass in
+the browser builds the instance from that snapshot.
 
-The hand-off is applied once, inside the branch that builds the instance —
+Every later pass runs in the browser and reuses the instance, so its cache
+survives — but it may be a preload. SvelteKit runs `load` for a preload too,
+and the `app.html` that `sv create` scaffolds preloads a link's page as the
+pointer hovers it, a page the visitor may never open. So only the pass that
+builds the instance activates, since no preload runs before it, and a later
+pass calls [`preload()`](#preloadlocale-route) instead: it fetches what the
+target needs without switching the locale or the route, and returns its token
+for the commit ([step 4](#4-pass-it-down-and-commit-each-navigation)).
+
+The hand-off is applied once, on the path that builds the instance —
 replaying it on a later navigation would mark loaders loaded again after an
 [`invalidate()`](#invalidatelocale-namespace). It is applied on top of the config, so
 whatever the config declares stays where it is.
@@ -2626,7 +2642,7 @@ load inside the constructor, before the hand-off can be applied, so the loaders
 run regardless (and [`hydrate()`](#hydrateenvelope) warns) — the locale belongs
 in the `loadTranslations()` call above.
 
-### 4. Pass it down through context
+### 4. Pass it down, and commit each navigation
 
 ```svelte
 <!-- src/routes/+layout.svelte -->
@@ -2636,10 +2652,36 @@ in the `loadTranslations()` call above.
   let { data, children } = $props();
 
   setContext('i18n', data.i18n);
+
+  // The effect runs as a navigation commits; never for a preload.
+  $effect.pre(() => {
+    const { i18n, commit } = data;
+
+    if (commit) i18n.loadTranslations(commit.locale, commit.route, { preloaded: commit.preloaded });
+  });
 </script>
 
 {@render children()}
 ```
+
+The effect switches to the locale and the route of the navigation that
+commits, and [`{ preloaded }`](#loadtranslationslocale-route-options) shows
+what the preload fetched instead of fetching it again, at once when nothing
+else is left to fetch. `$effect.pre` makes the call before the page updates, so
+the page then renders with it. The pass that built the instance returns no
+`commit`: it activated already. What the call still fetches — a loader that
+failed soft during the preload, say — cannot redirect: SvelteKit follows a
+`redirect()` or an `error()` thrown in `load` only, so one a loader throws
+during the call rejects it, and the call is [undone](#loader-required) and
+logged.
+
+The server's locale wins on every navigation and on `invalidateAll()`, so
+persist a client switch where your `handle` reads it (a cookie, say). A page
+shown without a navigation — `preloadData()` and `pushState()`, shallow
+routing — is never committed: an app that needs its translations calls
+`loadTranslations()` with the `commit` from `result.data` and, once the shallow
+page closes, calls it again with the active locale and the route of the page
+beneath.
 
 ```svelte
 <!-- any component -->
@@ -2661,7 +2703,9 @@ The shared-state problem exists only on the server. A module-level instance is
 safe when the server renders nothing visitor-specific:
 
 - the app is client-only (`export const ssr = false`), or
-- every request renders the same locale, and no loader throws a `redirect()`
+- every request renders the same locale, no loader's `routes` capture params
+  (concurrent requests would compete for whose params are shown), and no loader
+  throws a `redirect()`
   or an `error()` that depends on the visitor (a remote `query` that reads the
   session, say): concurrent requests share a load, so every one of them
   rejects with what the loader threw for one visitor.
@@ -2675,6 +2719,12 @@ import { I18n } from '@sveltekit-i18n/base';
 
 export const i18n = new I18n(config);
 ```
+
+In the browser, load it as steps 3 and 4 do: the first pass calls
+`loadTranslations()`, and every later one [`preload()`](#preloadlocale-route)
+in `load`, with the commit in the layout's `$effect.pre`, so a hovered link does
+not switch it. On the server no effect runs, so every pass calls
+`loadTranslations()`.
 
 An instance with a shorter life than the app (a per-request one, or a
 component-scoped one) should be released with [`destroy()`](#destroy) when its
