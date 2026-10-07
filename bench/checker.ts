@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { expect, it } from 'vitest';
 
-import { SRC } from '../vitest.config.js';
+import { sourceImports, SRC } from '../vitest.config.js';
 
 import { collect } from './collect.js';
 
@@ -46,8 +46,7 @@ it('the instantiations and relations of a call', () => {
       types: ['svelte'],
       paths: {
         '@sveltekit-i18n/base': [resolve(source, 'index.ts')],
-        '#kit-env': [resolve(source, 'kit/env.ts')],
-        '#kit-server': [resolve(source, 'kit/server.ts')],
+        ...Object.fromEntries(sourceImports('server', source).map(({ find, replacement }) => [find, [replacement]])),
       },
     },
   });
