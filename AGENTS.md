@@ -662,6 +662,15 @@ exactly, so a dependency released after it forces another release of it.
   to. Each statement describes the version being published, and each link
   resolves: no dead page or anchor, and no page describing another version.
   A mismatch is fixed before the publish, never in the next release.
+- **What npm shows is complete.** A statement that is true can still leave
+  something out, so the same documents are also checked for what they miss.
+  Hold them against everything the release brings: the issues of its
+  milestone, what `master` holds since the package's last tag, and what the
+  rest of the family released since then that a reader of them needs, such as
+  a new package, extension, parser, option, subpath or example. Each of those
+  is named where a reader looks for it: in the list of the family's packages,
+  in the section on its topic and in the upgrade notes. A gap is fixed before
+  the publish, just as a mismatch is.
 - **Every package is shown in use.** The plan lists, for every package of
   the family, a `lib` example or the site's playground that runs it, and
   for each release, the one that runs what the release adds. A package or a
