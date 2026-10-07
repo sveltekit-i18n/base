@@ -91,20 +91,26 @@ export const { handle, load, use, get } = defineI18n(config);
 
 ### 3. Wire it into SvelteKit
 
+`#lib` is the `imports` entry `sv create` scaffolds in a SvelteKit 3 app's
+`package.json`. A SvelteKit 2 app adds the same entry,
+`"imports": { "#lib/*": "./src/lib/*" }`, or imports from `$lib/i18n` — as
+it must on Vite 5 when `i18n` is a `.ts` file imported from a `.js` module or
+a plain `<script>`.
+
 ```javascript
 // src/hooks.server.js
-export { handle } from '$lib/i18n';
+export { handle } from '#lib/i18n.js';
 ```
 
 ```javascript
 // src/routes/+layout.server.js and src/routes/+layout.js — the same line in both
-export { load } from '$lib/i18n';
+export { load } from '#lib/i18n.js';
 ```
 
 ```svelte
 <!-- src/routes/+layout.svelte -->
 <script>
-  import { use } from '$lib/i18n';
+  import { use } from '#lib/i18n.js';
 
   let { data, children } = $props();
 
@@ -130,7 +136,7 @@ by hand.
 
 ```svelte
 <script>
-  import { get } from '$lib/i18n';
+  import { get } from '#lib/i18n.js';
 
   const i18n = get();
 </script>
@@ -242,13 +248,12 @@ Both `loaders` and a loader's `routes` accept readonly arrays, so a whole-config
 
 ### `basePath`
 
-The path the app is served under — SvelteKit's `kit.paths.base`. Every route handed in loses it on the way in, on a segment boundary only (under `/repo`, `/repo/about` is `/about`), so loader `routes` name the app's own paths. Set both from one environment variable:
+The path the app is served under — SvelteKit's `paths.base`. Every route handed in loses it on the way in, on a segment boundary only (under `/repo`, `/repo/about` is `/about`), so loader `routes` name the app's own paths. Set both from one environment variable:
 
 ```javascript
-// svelte.config.js: kit: { paths: { base: process.env.PUBLIC_BASE_PATH ?? '' } }
-import { PUBLIC_BASE_PATH } from '$env/static/public';
-
-basePath: PUBLIC_BASE_PATH
+// SvelteKit 3, vite.config.js: sveltekit({ paths: { base: process.env.VITE_BASE_PATH ?? '' } })
+// SvelteKit 2, svelte.config.js: kit: { paths: { base: process.env.VITE_BASE_PATH ?? '' } }
+basePath: import.meta.env.VITE_BASE_PATH
 ```
 
 See [`basePath`](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#basepath).

@@ -2,6 +2,13 @@
 
 Complete API reference for `@sveltekit-i18n/base`. This package provides core i18n functionality with support for custom parsers.
 
+The snippets import from `src/lib` through `#lib`, the entry `sv create`
+scaffolds in the `imports` field of a SvelteKit 3 app's `package.json`, and name
+the file's extension, which TypeScript needs to resolve such an import. A
+SvelteKit 2 app adds the same entry, `"imports": { "#lib/*": "./src/lib/*" }`,
+or imports from `$lib` instead, without the extension — as it must on Vite 5
+when a `.ts` file is imported from a `.js` module or a plain `<script>`.
+
 ## Table of Contents
 
 - [Configuration](#configuration)
@@ -675,7 +682,7 @@ const config = {
 
 **Type:** `string` (optional)
 
-The path the app is served under — SvelteKit's `kit.paths.base`, spelled as it
+The path the app is served under — SvelteKit's `paths.base`, spelled as it
 appears in `url.pathname`. The URL of every page carries it (`/repo/about` on
 GitHub Pages), while loader [`routes`](#routes-optional) name the app's own
 paths (`/about`), so without it a route-scoped loader never matches.
@@ -690,27 +697,36 @@ and the [snapshot](#snapshotoptions)'s route never carry it, and
 stored before the config that sets `basePath` keeps it, so after a
 [`loadConfig()`](#loadconfigconfig) that adds one, hand the route in again.
 
-Set both from one environment variable. Define it in `.env` even when it is
-empty (`PUBLIC_BASE_PATH=`), since `$env/static/public` exports only the
-variables it finds, and set a non-empty value in the environment of the build
-(the shell or the CI job), which is what `svelte.config.js` reads:
+Set both from one environment variable, defined where the build runs (the
+shell or the CI job): the SvelteKit config reads `process.env`, which `.env`
+does not reach. That config is the `sveltekit()` options in `vite.config.js` on
+SvelteKit 3 and `svelte.config.js` on SvelteKit 2:
 
 ```javascript
-// svelte.config.js
+// vite.config.js (SvelteKit 3)
+import { sveltekit } from '@sveltejs/kit/vite';
+
 export default {
-  kit: { paths: { base: process.env.PUBLIC_BASE_PATH ?? '' } },
+  plugins: [sveltekit({ paths: { base: process.env.VITE_BASE_PATH ?? '' } })],
+};
+
+// svelte.config.js (SvelteKit 2)
+export default {
+  kit: { paths: { base: process.env.VITE_BASE_PATH ?? '' } },
 };
 ```
 
 ```javascript
 // src/lib/i18n.js
-import { PUBLIC_BASE_PATH } from '$env/static/public';
-
 export const config = {
-  basePath: PUBLIC_BASE_PATH,
+  basePath: import.meta.env.VITE_BASE_PATH,
   loaders: [/* ... */],
 };
 ```
+
+`import.meta.env.VITE_*` reads the same on both majors, while SvelteKit 3
+exports from `$env/static/public` only what `src/env.ts` declares, and
+deprecates it.
 
 The [SvelteKit](#sveltekit) wiring warns once, on the server, when a prefix
 it cannot account for stands in front of the route SvelteKit matched, and
@@ -1558,7 +1574,7 @@ through `$derived` — each binding then stays in sync with the instance:
 
 ```svelte
 <script>
-  import { i18n } from '$lib/translations';
+  import { i18n } from '#lib/translations/index.js';
 
   const { loading, locale } = $derived(i18n);
 </script>
@@ -1588,7 +1604,7 @@ Translates `key` for the active locale.
 
 ```svelte
 <script>
-  import { i18n } from '$lib/translations';
+  import { i18n } from '#lib/translations/index.js';
 </script>
 
 <h1>{i18n.t('home.title')}</h1>
@@ -1625,7 +1641,7 @@ not advance when a loader throws SvelteKit's `redirect()` or an `error()` below
 
 ```svelte
 <script>
-  import { i18n } from '$lib/translations';
+  import { i18n } from '#lib/translations/index.js';
 </script>
 
 <p>Current language: {i18n.locale}</p>
@@ -1716,7 +1732,7 @@ route included, as it does for [`setLocale()`](#setlocalelocale).
 
 ```javascript
 // +layout.js
-import { i18n } from '$lib/translations';
+import { i18n } from '#lib/translations/index.js';
 
 export const load = async ({ url }) => {
   await i18n.loadTranslations('en', url.pathname);
@@ -2012,7 +2028,7 @@ Serializes what the instance currently holds for the **active locale** and the
 ```javascript
 // +layout.server.js — one instance per request
 import { I18n } from '@sveltekit-i18n/base';
-import { config } from '$lib/translations';
+import { config } from '#lib/translations/index.js';
 
 export const load = async ({ url, locals }) => {
   const i18n = new I18n(config);
@@ -2225,7 +2241,7 @@ Call it when a per-request or per-component instance goes out of scope:
 ```svelte
 <script>
   import { I18n } from '@sveltekit-i18n/base';
-  import { config } from '$lib/translations';
+  import { config } from '#lib/translations/index.js';
 
   const i18n = new I18n(config);
 
@@ -2265,18 +2281,18 @@ export const { handle, load, use, get } = defineI18n(config, {
 
 ```javascript
 // src/hooks.server.js
-export { handle } from '$lib/i18n';
+export { handle } from '#lib/i18n.js';
 ```
 
 ```javascript
 // src/routes/+layout.server.js and src/routes/+layout.js — the same line in both
-export { load } from '$lib/i18n';
+export { load } from '#lib/i18n.js';
 ```
 
 ```svelte
 <!-- src/routes/+layout.svelte -->
 <script>
-  import { use } from '$lib/i18n';
+  import { use } from '#lib/i18n.js';
 
   let { data, children } = $props();
 
@@ -2289,7 +2305,7 @@ export { load } from '$lib/i18n';
 ```svelte
 <!-- any component -->
 <script>
-  import { get } from '$lib/i18n';
+  import { get } from '#lib/i18n.js';
 
   const i18n = get();
 </script>
@@ -2342,13 +2358,13 @@ export { load } from '$lib/i18n';
 - **`get()`** returns the instance `use()` provided, in any component below the
   root layout; anywhere else, it throws.
 
-A re-export (`export { load } from '$lib/i18n'`) makes SvelteKit's static
+A re-export (`export { load } from '#lib/i18n.js'`) makes SvelteKit's static
 analysis of page options give up on that file and, in the root layout, on every
 route below it. Nothing changes at runtime; the build loses what it derives
 from `ssr`/`csr` set to `false` on a page — a page with `ssr = false` still has
 its server code bundled, and an app whose every page sets `csr = false` still
 gets a client build. An app that relies on either keeps the analysis with
-`import { load as i18nLoad } from '$lib/i18n'; export const load = i18nLoad;`.
+`import { load as i18nLoad } from '#lib/i18n.js'; export const load = i18nLoad;`.
 
 ### Which locale
 
@@ -2437,21 +2453,21 @@ layout that renames or overwrites `data.i18n` does not break it.
 ```javascript
 // src/hooks.server.js
 import { sequence } from '@sveltejs/kit/hooks';
-import { handle as i18nHandle } from '$lib/i18n';
+import { handle as i18nHandle } from '#lib/i18n.js';
 
 export const handle = sequence(i18nHandle, auth);
 ```
 
 ```javascript
 // src/routes/+layout.server.js
-import { load as i18nLoad } from '$lib/i18n';
+import { load as i18nLoad } from '#lib/i18n.js';
 
 export const load = async (event) => ({ ...(await i18nLoad(event)), user: event.locals.user });
 ```
 
 ```javascript
 // src/routes/+layout.js
-import { load as i18nLoad } from '$lib/i18n';
+import { load as i18nLoad } from '#lib/i18n.js';
 
 export const load = async (event) => ({ ...(await i18nLoad(event)), theme: 'dark' });
 ```
@@ -2563,7 +2579,7 @@ export const config = {
 ```javascript
 // src/routes/+layout.server.js
 import { I18n } from '@sveltekit-i18n/base';
-import { config } from '$lib/translations';
+import { config } from '#lib/translations/index.js';
 
 export const load = async ({ url, locals }) => {
   const i18n = new I18n(config);
@@ -2582,9 +2598,8 @@ normalizes such a value the way the instance does.
 
 ```javascript
 // src/routes/+layout.js
-import { browser } from '$app/environment';
 import { I18n } from '@sveltekit-i18n/base';
-import { config } from '$lib/translations';
+import { config } from '#lib/translations/index.js';
 
 // Assigned in the browser only — on the server this module-level binding
 // would be the shared state we are avoiding.
@@ -2604,7 +2619,7 @@ export const load = async ({ data, url }) => {
 
   i18n.hydrate(data.i18n);
 
-  if (browser) client = i18n;
+  if (!import.meta.env.SSR) client = i18n;
 
   await i18n.loadTranslations(data.i18n?.locale ?? i18n.locale, url.pathname);
 
@@ -2647,11 +2662,13 @@ in the `loadTranslations()` call above.
 ```svelte
 <!-- src/routes/+layout.svelte -->
 <script>
-  import { setContext } from 'svelte';
+  import { setContext, untrack } from 'svelte';
 
   let { data, children } = $props();
 
-  setContext('i18n', data.i18n);
+  // Read once: in the browser, every later pass returns the instance the
+  // first one built.
+  setContext('i18n', untrack(() => data.i18n));
 
   // The effect runs as a navigation commits; never for a preload.
   $effect.pre(() => {
@@ -2677,11 +2694,11 @@ logged.
 
 The server's locale wins on every navigation and on `invalidateAll()`, so
 persist a client switch where your `handle` reads it (a cookie, say). A page
-shown without a navigation — `preloadData()` and `pushState()`, shallow
-routing — is never committed: an app that needs its translations calls
-`loadTranslations()` with the `commit` from `result.data` and, once the shallow
-page closes, calls it again with the active locale and the route of the page
-beneath.
+shown without a navigation — `preloadData()` and a shallow `goto()`
+(`pushState()` on SvelteKit 2), shallow routing — is never committed: an app
+that needs its translations calls `loadTranslations()` with the `commit` from
+`result.data` and, once the shallow page closes, calls it again with the active
+locale and the route of the page beneath.
 
 ```svelte
 <!-- any component -->
@@ -3578,7 +3595,7 @@ what it follows in the effect itself.
 ### New
 
 - [`@sveltekit-i18n/base/kit`](#sveltekit) — `defineI18n()` wires a SvelteKit app: `handle`, `load`, `use()` and `get()`.
-- [`basePath`](#basepath) — strips SvelteKit's `kit.paths.base` from every route handed in.
+- [`basePath`](#basepath) — strips SvelteKit's `paths.base` from every route handed in.
 - [Several locales and namespaces](#several-locales-and-namespaces) — one loader descriptor for many pairs.
 - [Route params](#route-params) — named capture groups reach the loader as `params`.
 - [`cache: false`](#cache-optional) on a loader — for a source that does its own caching.
