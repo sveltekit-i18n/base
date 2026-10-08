@@ -783,7 +783,10 @@ exactly, so a dependency released after it forces another release of it.
   opens with the PR it stacks on (`Stacked on #N`).
 - Title ≤ 70 chars, describes the overarching scope. Body: a short summary +
   what was tested (real results: build/test/audit), and the linked issue via
-  closing keywords (`Closes #N` / `Fixes #N`) when one exists.
+  closing keywords (`Closes #N` / `Fixes #N`) when one exists. An issue in
+  another repository's tracker — the `lib` tracker, from any other
+  repository — is closed by the qualified form,
+  `Closes sveltekit-i18n/lib#N`; any other wording only mentions it.
 - **Keep PR meta in lockstep with the branch.** After every push, re-check that
   the title, summary, test results, and "in/out of scope" still match the diff.
   Drift is a defect, not a follow-up.
