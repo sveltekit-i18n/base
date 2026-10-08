@@ -739,16 +739,25 @@ exactly, so a dependency released after it forces another release of it.
   `git fetch origin && git switch master && git pull --ff-only`, then create the
   branch. Use a descriptive prefix: `fix/<slug>`, `feat/<slug>`,
   `chore/<slug>`, `docs/<slug>`.
-- **A finding's branch (§3) is the one exception: it stacks.** It starts
-  from the tip of the branch in flight, and its PR targets that branch, so
-  the PR shows its own commits only and merges after the one beneath. It is
-  never merged into that branch. When the branch beneath takes a fixup, the
-  stack follows it (`git rebase --onto <new tip> <old tip>`). Once the PR
-  beneath merges, or closes unmerged, retarget the stacked PR to `master`
-  first, then rebase it onto `master` the same way (a rebase merge rewrote
-  the commits beneath) and `git push --force-with-lease` — in that order, so
-  the push runs CI against `master`. It is offered for merge only once it
-  targets `master` and CI is green there.
+- **A finding's branch (§3) is the one exception: it stacks**, and so does
+  work the user asks to stack. It starts from the tip of the branch in
+  flight, and its PR targets that branch, so the PR shows its own commits
+  only and merges after the one beneath. It is never merged into that
+  branch. Once its PR is open, it joins a native GitHub stack: the stack of
+  the PR beneath (`POST /repos/{owner}/{repo}/stacks/{number}/add`), or a
+  new one of both, bottom first (`POST /repos/{owner}/{repo}/stacks`). A
+  stack lives in one repository and never spans forks. Merging a PR of a
+  stack merges every open PR beneath it too, so a stack merges from the
+  bottom, one PR at a time. When the branch beneath takes a fixup, the stack
+  follows it (`git rebase --onto <new tip> <old tip>`). Once the PR beneath
+  merges, GitHub retargets the next one to `master` and rebases it: fetch
+  and reset the local branch to what it pushed before working on it again.
+  Should a stacked PR still target the branch of a PR beneath that merged or
+  closed unmerged, retarget it to `master` first, then rebase it onto
+  `master` the same way (a rebase merge rewrote the commits beneath) and
+  `git push --force-with-lease` — in that order, so the push runs CI against
+  `master`. It is offered for merge only once it targets `master` and CI is
+  green there.
 - Rebase on `master` before pushing a feature branch; on conflicts, **stop and
   ask** — resolution is judgment, not automation. Never merge `master` into a
   feature branch.
