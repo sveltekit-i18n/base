@@ -546,7 +546,11 @@ differently.**
   a published package, its docs, the examples or the site can meet — in
   behaviour, types or cost — or a gap in the repository's own checks. A
   nit, a matter of taste, or friction of the agent's own tooling or
-  environment is neither; mention it in chat at most.
+  environment is neither; mention it in chat at most. Nor is a defect in a
+  package outside the `sveltekit-i18n` organization (SvelteKit, Vite,
+  `@sveltejs/sv-utils`, a parser's dependency): it gets no issue in the
+  tracker, and is named in chat and, when the work opens a PR, under its
+  `## Notes`.
 
 ## 4. Verify and review
 
