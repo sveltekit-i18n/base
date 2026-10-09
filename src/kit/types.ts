@@ -39,9 +39,10 @@ export namespace Kit {
    */
   export type Payload = Omit<Snapshot.Envelope, 'translations'> & Partial<Pick<Snapshot.Envelope, 'translations'>> & {
     /**
-     * Set on a page render when `preferredLocale` gave the locale. A
-     * prerendered page's data is that render, so a navigation to one takes
-     * its locale only when the build's `preferredLocale` gave it.
+     * Set on a page render when the URL's translated pathname or
+     * `preferredLocale` gave the locale. A prerendered page's data is that
+     * render, so a navigation to one takes its locale only when the build's
+     * pathname or `preferredLocale` gave it.
      */
     preferred?: true;
   };
@@ -61,13 +62,37 @@ export namespace Kit {
      * With a server load it runs in the browser only on a root error page
      * rendered without the server's data (an unknown URL a static host answers
      * with its fallback page): a navigation to a prerendered page takes the
-     * locale it gave at build time, and otherwise keeps the tab's.
+     * locale the translated pathname or it gave at build time, and otherwise
+     * keeps the tab's.
      *
      * @example
      * preferredLocale: (event) => event.cookies?.get('lang')
      */
     preferredLocale?: (event: Event) => string | null | undefined;
+    /**
+     * Translated pathnames, as `translatePathnames()` makes them of a table.
+     * `reroute` serves a localized pathname from the route of its canonical
+     * one, and a URL whose pattern belongs to one locale gives the locale,
+     * before `preferredLocale`. A value of another kind, or of a version
+     * of this package that binds it otherwise, is logged and translates
+     * nothing.
+     *
+     * @example
+     * pathnames: translatePathnames({ '/about': { de: '/de/ueber-uns', cs: '/cs/o-nas' } })
+     */
+    pathnames?: Pathnames;
   };
+
+  /**
+   * What `translatePathnames()` returns, for `Options['pathnames']`. Opaque:
+   * the key is a type-only brand, which no pathname pattern can be, so two
+   * copies of the package meet.
+   */
+  export type Pathnames = { readonly '~translatePathnames': true };
+
+  /** The locale an instance takes: what its `locale` property holds, or any string. */
+  // `Exclude`, not `NonNullable`: `NonNullable<string & {}>` reduces to `string`, which absorbs the literals.
+  export type LocaleOf<Instance> = Instance extends { locale: infer L } ? (Exclude<L, null | undefined> extends string ? Exclude<L, null | undefined> : string) : string;
 
   /**
    * What `defineI18n()` returns. Each member is a plain function, so it can be
@@ -76,7 +101,7 @@ export namespace Kit {
    * `handle` under SvelteKit 3,
    * `Kit.RequestEvent<Partial<Record<string, Kit.ParamValue>>>`).
    */
-  export type T<Instance = I18n> = {
+  export type T<Instance = I18n, Locale extends string = LocaleOf<Instance>> = {
     // Events of `any` params: SvelteKit 3's parsed ones pass, and so does
     // SvelteKit 2 code that implements a member against string params, which
     // `ParamValue` params would reject.
@@ -100,5 +125,32 @@ export namespace Kit {
     use: (data: () => object | null | undefined) => Instance;
     /** The instance `use()` provided, in any component below the root layout. */
     get: () => Instance;
+    /**
+     * SvelteKit's `reroute` hook, exported from `src/hooks.ts`: the canonical
+     * pathname of a translated one, `basePath` kept, or `undefined` for a
+     * pathname `pathnames` does not translate. A pure function of the URL, as
+     * SvelteKit caches it per URL for the life of the tab.
+     */
+    reroute: (input: { url: Pick<URL, 'pathname'> }) => string | undefined;
+    /**
+     * The canonical path of a URL, without `basePath` and with its search and
+     * hash, and the locale its translated pathname belongs to, when it
+     * belongs to one. A search or a hash SvelteKit hides is left out: the
+     * search while prerendering, the hash in a `load`.
+     *
+     * @example
+     * delocalize(new URL('https://example.com/de/ueber-uns?q=1')) // { path: '/about?q=1', locale: 'de' }
+     */
+    delocalize: (url: Pick<URL, 'pathname' | 'search' | 'hash'>) => { path: string; locale?: Locale };
+    /**
+     * `path`, canonical or translated to any locale, translated to `locale`,
+     * without `basePath`, percent-encoded and with its search and hash. A
+     * path the table does not translate to `locale` comes back canonical, and
+     * a locale the table does not name, or none, leaves `path` as it is.
+     *
+     * @example
+     * localizePath('/de/ueber-uns', 'cs') // '/cs/o-nas'
+     */
+    localizePath: (path: string, locale: Locale | null | undefined) => string;
   };
 }

@@ -67,12 +67,13 @@ repositories:
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
 | `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `matchLocale`, `textDirection`, `toDotNotation`, `serialize`, `fetchTranslation`, `testRoute`) |
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
-| `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n` and the `Kit` types |
+| `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n`, `translatePathnames` and the `Kit` types |
 | `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
 | `src/kit/backend.ts` / `backend.browser.ts` | the server half (`handle`, the server `load`) and the stub `#kit-server` resolves to under `browser` |
 | `src/kit/env.ts` / `env.browser.ts` | `BROWSER`, resolved through `#kit-env` |
 | `src/kit/types.ts` | the `Kit` namespace — the event shapes it reads and the exports' types |
-| `src/kit/internal.ts` | the unpublished types between the factory and the server half |
+| `src/kit/internal.ts` | the unpublished types between the factory, the server half and the translated pathnames |
+| `src/kit/pathnames.ts` | `translatePathnames`, the value `options.pathnames` takes: the matcher behind `reroute`, `delocalize`, `localizePath` and the canonical pathname the wiring loads |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite |
@@ -402,8 +403,8 @@ repositories:
   `'cookies' in event`; the server branch reads `url` before any return (a
   load re-runs on a navigation only for what it read) and sends the tables on
   a page render only, the locale and the route on a data request, and marks a
-  page render whose locale `preferredLocale` gave (`preferred: true`), never a
-  data request; when a server `load` exists, `preferredLocale` runs in the
+  page render whose locale the translated pathname or `preferredLocale` gave
+  (`preferred: true`), never a data request; when a server `load` exists, `preferredLocale` runs in the
   browser only on a root error page SvelteKit renders without its data (the
   universal event says nothing of whether one exists). The server
   builds an instance per page render, and the universal branch of that render
@@ -439,7 +440,7 @@ repositories:
   client `setLocale()` stands until the answer changes; an answer given before
   the active locale changed changes nothing, and neither does one read from a
   prerendered file (a later pass carrying the tables) unless the build's
-  `preferredLocale` gave its locale (`payload.preferred`). The locale a commit is still
+  pathname or `preferredLocale` gave its locale (`payload.preferred`). The locale a commit is still
   switching to (`tab.switching`) counts as the active one while the active
   locale is still the one it switched from — for the comparison and for the
   warm target — so the wiring's own switch is no client change, while a client
@@ -472,6 +473,24 @@ repositories:
   `node_modules` — within the app root for a server-only module (a vendored
   copy, a workspace whose root is the app), anywhere for a remote one;
   `dist.spec.ts` holds every shipped path to its patterns.
+- **Translated pathnames are a pure map of the URL.** `options.pathnames`
+  takes what `translatePathnames(table)` returns: a frozen object holding,
+  under a registry-wide, versioned symbol, the binding the wiring calls with
+  its config, so `define.svelte.ts` never imports `pathnames.ts` and an app
+  that never imports `translatePathnames` ships none of the matcher; any
+  other value but `undefined` and `null` is logged once and translates
+  nothing. The symbol's version is a contract between copies of the package:
+  it changes whenever the binding's `Setup` or `Translation` does. The table compiles, on
+  first use and once per `defineI18n()`, into a trie per direction, matched as SvelteKit
+  ranks its routes (static, then param, then rest, leftmost first) by walks
+  that visit each node once, never by a regex. `reroute` reads the pathname alone and stays
+  a pure function of the URL, as the browser caches it per URL; the wiring hands the core the
+  canonical pathname (`canonical`, the base path kept, through
+  `serverHalf` too), so loader `routes` and the base-path warning read the
+  canonical route, and a pathname that belongs to one locale is the first
+  negotiation candidate, marked `preferred`. Segments compare decoded and come
+  out percent-encoded, an empty segment matches nothing, and none of the
+  functions throws: a pathname is visitor input.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep
@@ -879,6 +898,10 @@ not RCE/XSS.
   `routePrefix`, behind the `/kit` prefix warning, runs no regex on the
   pathname, decides each segment and pattern pair once and leaves a pathname
   of more than 64 segments alone.
+  The translated pathnames run no regex on it in `reroute` and `delocalize`,
+  which walk one trie and visit each of its nodes once; `localizePath` walks
+  the canonical trie once and the localized one once more per match it
+  tries, and runs only regexes of one character class, which are linear.
 
 ## 12. Comments & language
 
