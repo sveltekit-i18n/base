@@ -4,10 +4,10 @@ import { BROWSER } from '#kit-env';
 import { serverHalf } from '#kit-server';
 
 import { I18n } from '../I18n.svelte.js';
-import { logError, loggerFactory, setLogger } from '../logger.js';
+import { logError, logger, loggerFactory, setLogger } from '../logger.js';
 import type { Config, Loader, Snapshot } from '../types.js';
-import { configLocales, matchLocale, paramsSignature, resolveLoaders, routeParams, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
-import type { Negotiated, Params } from './internal.js';
+import { configLocales, matchLocale, paramsSignature, quietlySanitized, resolveLoaders, routeParams, sanitizeLocales, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
+import { TRANSLATION, type Negotiated, type Params, type Setup, type Translation } from './internal.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -48,17 +48,29 @@ type Configured = { locales: string[]; handOver: boolean; loaders: Loader.Resolv
 
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
+const UNTRANSLATED: Translation = { canonical: (pathname) => ({ pathname }), localizePath: (path) => path };
+
+/** `url[property]`, or nothing where SvelteKit hides it: the search while prerendering, the hash in a `load`. */
+const visible = (url: Pick<URL, 'search' | 'hash'>, property: 'search' | 'hash'): string => {
+  try {
+    return url[property];
+  } catch {
+    return '';
+  }
+};
+
 const isServerEvent = (event: Kit.ServerLoadEvent<Params> | Kit.UniversalLoadEvent<Params>): event is Kit.ServerLoadEvent<Params> => 'cookies' in event;
 
 /**
  * Wires SvelteKit to an instance of `config`: a `handle` hook, the root
- * layout's `load`, and `use()` / `get()` for components. The server builds an
- * instance per request; the browser keeps one per tab.
+ * layout's `load`, `use()` / `get()` for components, and the translated
+ * pathnames of `options.pathnames`. The server builds an instance per
+ * request; the browser keeps one per tab.
  */
 export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, any>>(
   config: C,
   options: Kit.Options = {},
-): Kit.T<InstanceType<typeof I18n<C>>> => {
+): Kit.T<InstanceType<typeof I18n<C>>, Config.LocaleInput<Config.LocalesFromConfig<C>>> => {
   // The constructor would start an `initLocale` load of its own, next to the
   // negotiated one; here `initLocale` is a negotiation candidate instead. The
   // wiring drives the core itself, whatever the extensions make of it.
@@ -130,10 +142,47 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     }
   };
 
+  let translated: Translation | undefined;
+
+  // Bound on first use, after the config's logger is set, so what is wrong
+  // with `options.pathnames` reports through it.
+  const translation = (): Translation => {
+    if (translated) return translated;
+
+    const { pathnames } = options as { pathnames?: unknown };
+
+    if (pathnames === undefined || pathnames === null) return (translated = UNTRANSLATED);
+
+    locales();
+
+    const warn = (message: string): void => logger.warn(`\`pathnames\` ${message}.`);
+    const setup: Setup = {
+      basePath: config.basePath,
+      sanitize: (locale) => sanitize(locale)[0] ?? locale,
+      normalize: (locale) => (sanitize === sanitizeLocales ? quietlySanitized(locale) : visitorSanitized(locale) ?? locale),
+      served: locales,
+      warn,
+    };
+
+    try {
+      const bind = typeof pathnames === 'object' ? (pathnames as Record<symbol, unknown>)[TRANSLATION] : undefined;
+      const bound = typeof bind === 'function' ? (bind as (setup: Setup) => Partial<Translation> | undefined)(setup) : undefined;
+
+      if (typeof bound?.canonical === 'function' && typeof bound.localizePath === 'function') return (translated = bound as Translation);
+    } catch { /* reported below */ }
+
+    warn('takes what `translatePathnames(table)` of a compatible version of the package returns. No pathname is translated');
+
+    return (translated = UNTRANSLATED);
+  };
+
   const negotiate = (event: Kit.Event<Params>, ranges: string | readonly string[] | null | undefined): Negotiated => {
-    // First: it sets the config's logger, which `preferred` reports through.
+    // First: it sets the config's logger, which `preferred` and the
+    // pathnames report through.
     const available = locales();
-    const chosen = matchLocale(visitorSanitized(preferred(event)), available);
+    // A translated pathname of one locale is the visitor's choice of it.
+    const pinned = translation().canonical(event.url.pathname).locale;
+    const chosen = (pinned === undefined ? undefined : matchLocale(pinned, available)) ?? matchLocale(visitorSanitized(preferred(event)), available);
 
     if (chosen !== undefined) return { locale: chosen, preferred: true };
 
@@ -145,7 +194,9 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     };
   };
 
-  const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, handOver: () => resolved().handOver });
+  const canonical = (pathname: string): string => translation().canonical(pathname).pathname;
+
+  const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, canonical, handOver: () => resolved().handOver });
 
   // Browser only: the tab's instance, the server's answer at the last commit,
   // the switch under way, what the last commit waits on, how many commits
@@ -225,7 +276,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   };
 
   const universalLoad = async (event: Kit.UniversalLoadEvent<Params>): Promise<Record<string, any>> => {
-    const route = event.url.pathname;
+    const route = canonical(event.url.pathname);
     const payload = event.data?.i18n as Kit.Payload | undefined;
     // A page render's own instance: the server branch loaded it for this very
     // payload, which SvelteKit hands over as it was returned.
@@ -389,5 +440,20 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     return surface;
   };
 
-  return { handle: server.handle, load, use, get } as unknown as Kit.T<InstanceType<typeof I18n<C>>>;
+  const reroute: Kit.T['reroute'] = ({ url }) => {
+    const pathname = canonical(url.pathname);
+
+    return pathname === url.pathname ? undefined : pathname;
+  };
+
+  const delocalize: Kit.T['delocalize'] = (url) => {
+    const { pathname, locale } = translation().canonical(url.pathname);
+    const path = `${withoutBasePath(pathname, config.basePath)}${visible(url, 'search')}${visible(url, 'hash')}`;
+
+    return locale === undefined ? { path } : { path, locale };
+  };
+
+  const localizePath: Kit.T['localizePath'] = (path, locale) => translation().localizePath(path, locale);
+
+  return { handle: server.handle, load, use, get, reroute, delocalize, localizePath } as unknown as Kit.T<InstanceType<typeof I18n<C>>, Config.LocaleInput<Config.LocalesFromConfig<C>>>;
 };

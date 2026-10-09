@@ -4,7 +4,7 @@ import { matchLocale, routePrefix, textDirection, withoutBasePath } from '../uti
 import type { Negotiated, Params, ServerHalf, Shared } from './internal.js';
 import type { Kit } from './types.js';
 
-export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: Shared): ServerHalf => {
+export const serverHalf = ({ create, negotiate, locales, basePath, canonical, handOver }: Shared): ServerHalf => {
   const answer = (event: Kit.RequestEvent<Params>): Negotiated => negotiate(event, event.request.headers.get('accept-language'));
 
   // The instance each page render loaded, under the payload it returned:
@@ -16,12 +16,13 @@ export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: S
 
   // A base path SvelteKit strips and `basePath` does not keeps every
   // route-scoped loader from matching, silently. Here, on the server only, so
-  // the matcher stays out of the browser bundle.
-  const check = (event: Kit.Event<Params>): void => {
+  // the matcher stays out of the browser bundle. SvelteKit matched the route
+  // by the canonical pathname of a translated one.
+  const check = (event: Kit.Event<Params>, pathname: string): void => {
     if (warned) return;
 
     const available = locales();
-    const found = routePrefix(event.url.pathname, event.route.id);
+    const found = routePrefix(pathname, event.route.id);
 
     if (!found) return;
 
@@ -47,7 +48,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: S
       // negotiates here; a function replacement is inserted as it is.
       const negotiated = (): string => {
         if (lang === undefined) {
-          check(event);
+          check(event, canonical(event.url.pathname));
           lang = answer(event).locale ?? '';
         }
 
@@ -82,9 +83,9 @@ export const serverHalf = ({ create, negotiate, locales, basePath, handOver }: S
     load: async (event) => {
       // Read before anything returns: SvelteKit re-runs a load on a
       // navigation only for what it read.
-      const route = event.url.pathname;
+      const route = canonical(event.url.pathname);
 
-      check(event);
+      check(event, route);
 
       const { locale, preferred } = answer(event);
 

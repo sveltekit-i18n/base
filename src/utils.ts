@@ -129,6 +129,11 @@ export const sanitizeLocales = mapLocales((locale) => {
   return sanitized.locale;
 });
 
+// What the default sanitizer makes of a locale, without its warning: for a
+// locale handed in on every call, which may be a visitor's, so it is never
+// remembered.
+export const quietlySanitized = (locale: string): Config.Locale => (recallSanitizedLocale(locale) ?? sanitizeLocale(locale)).locale;
+
 // The normalization `config.sanitizeLocales` asks for. A custom transform is
 // consumer code and every table is keyed by what it returns, so a throwing or
 // empty-handed one degrades to the locale as authored.

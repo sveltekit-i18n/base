@@ -18,6 +18,7 @@ when a `.ts` file is imported from a `.js` module or a plain `<script>`.
 - [Utilities](#utilities)
 - [The parser contract](#the-parser-contract)
 - [TypeScript](#typescript)
+- [Upgrading from 3.3](#upgrading-from-33)
 - [Upgrading from 3.2](#upgrading-from-32)
 - [Upgrading from 3.1](#upgrading-from-31)
 - [Upgrading from 3.0](#upgrading-from-30)
@@ -2284,7 +2285,8 @@ is idempotent — calling it twice is a no-op.
 server builds an instance per request, hands it to the browser, and the browser
 keeps one instance per tab, following every navigation. What the server
 loaded is not fetched again in the browser, and no visitor sees another
-visitor's locale.
+visitor's locale. Three more serve each page at a pathname of its locale:
+see [Translated pathnames](#translated-pathnames).
 
 ### Setup
 
@@ -2396,19 +2398,21 @@ Each pass negotiates against the locales the config serves — the loaders'
 locales and the keys of [`translations`](#translations) — and takes the first
 candidate that matches, [`en-GB` falling back to `en`](#matchlocalerequested-available):
 
-1. `preferredLocale(event)`, the visitor's choice: a cookie, a route param, a
+1. the locale of a [translated pathname](#translated-pathnames), when the
+   URL's pathname belongs to one;
+2. `preferredLocale(event)`, the visitor's choice: a cookie, a route param, a
    profile in `locals`;
-2. the `Accept-Language` header; in an app without a server `load`, the
+3. the `Accept-Language` header; in an app without a server `load`, the
    browser's `navigator.languages`;
-3. [`initLocale`](#initlocale);
-4. [`fallbackLocale`](#fallbacklocale);
-5. the first locale the config serves: the loaders' locales in the order the
+4. [`initLocale`](#initlocale);
+5. [`fallbackLocale`](#fallbacklocale);
+6. the first locale the config serves: the loaders' locales in the order the
    config lists them, then the keys of `translations`.
 
 `initLocale` and `fallbackLocale` are [sanitized](#sanitizelocales) as the
 config's locales are, and so is what `preferredLocale` returns when
 `sanitizeLocales` is a function; header ranges are matched as sent, apart from
-case. The defaults (3–5) do not read the header, so a range the visitor
+case. The defaults (4–6) do not read the header, so a range the visitor
 refused (`q=0`) does not keep one of them out. A config that serves at least
 one locale therefore always settles on one; only a config that serves none
 renders the page with no active locale. Set `initLocale` to choose the locale
@@ -2427,8 +2431,8 @@ skipped, and one that throws is logged once and skipped. With a server `load`,
 it runs in the browser only on a root error page SvelteKit renders without the
 server's data, such as an unknown URL a static host answers with its fallback
 page, and there too the event has no `cookies`. A navigation to a prerendered
-page takes the locale `preferredLocale` gave that page at build time, and
-otherwise keeps the tab's.
+page takes the locale its translated pathname or `preferredLocale` gave that
+page at build time, and otherwise keeps the tab's.
 
 The server's answer rules. `i18n.setLocale('cs')` in the browser switches the
 tab, and the switch stands across navigations until the server answers
@@ -2468,6 +2472,216 @@ reads every param as a string. Annotate the event as
 `Kit.Event<Partial<Record<string, Kit.ParamValue>>>`
 (`import type { Kit } from '@sveltekit-i18n/base/kit'`) to see that, and
 return a string: a number is no locale, so it is skipped.
+
+### Translated pathnames
+
+`pathnames` serves each page at a pathname of its own per locale —
+`/cs/o-nas` for `/about` — from one route tree, with no `[lang]` segment in
+it. It takes what `translatePathnames(table)` returns, where, per canonical
+pathname, the table lists the pathname each locale serves it at:
+
+```javascript
+// src/lib/i18n.js
+import { defineI18n, translatePathnames } from '@sveltekit-i18n/base/kit';
+
+export const { handle, load, use, get, reroute, delocalize, localizePath } = defineI18n(config, {
+  preferredLocale: (event) => event.cookies?.get('lang'),
+  pathnames: translatePathnames({
+    '/about': { en: '/about', cs: '/cs/o-nas' },
+    '/products/[id]': { en: '/products/[id]', cs: '/cs/produkty/[id]' },
+    '/[...rest]': { en: '/[...rest]', cs: '/cs/[...rest]' },
+  }),
+});
+```
+
+An app that imports no `translatePathnames` ships none of the matcher, and
+its `reroute`, `delocalize` and `localizePath` translate nothing. A value
+`translatePathnames()` did not make — the plain table, the function itself,
+or what a version of the package that binds it otherwise made — is logged
+through [`log`](#loglevel) once, at first use, and translates nothing;
+`undefined` and `null` translate nothing silently.
+
+```javascript
+// src/hooks.js — the universal hooks, which run on the server and in the browser
+export { reroute } from '#lib/i18n.js';
+```
+
+[`reroute`](https://svelte.dev/docs/kit/hooks#Universal-hooks-reroute) serves
+a translated pathname from the route of its canonical one: `/cs/produkty/42`
+renders `src/routes/products/[id]`. Without the hook, a translated pathname
+reaches no route.
+
+- **Patterns** use SvelteKit's route syntax, limited to static segments,
+  `[param]` and a trailing `[...rest]`; every pattern of an entry names the
+  same params. A translated pattern is the whole pathname, so it carries the
+  locale's prefix when it has one. Both sides are written without
+  [`basePath`](#basepath), which must be set when the app has one, or no
+  pathname matches.
+- **A pathname matches its most specific pattern**, as SvelteKit ranks its
+  routes — a static segment before a param, a param before a rest, the
+  leftmost segment first — whatever the order of the table. A pathname the
+  table does not match passes through unchanged. A trailing slash is kept,
+  and a pathname with an empty segment (`/cs//x`) matches nothing.
+- **The locale of the URL.** A pathname whose pattern belongs to one locale
+  gives that locale, before `preferredLocale` (see [Which
+  locale](#which-locale)). With the catch-all above, `/about` and every other
+  unprefixed pathname are English and every `/cs/…` pathname Czech; without
+  it, a pathname the table does not match, or one whose pattern several
+  locales share, leaves the locale to `preferredLocale` and the header.
+- **Loaders match the canonical pathname.** Their [`routes`](#routes-optional)
+  are written once, for `/products/[id]`, never per locale. `page.route.id`
+  and `params` are the canonical route's too, while `page.url` and
+  `event.url` keep the pathname the visitor requested.
+- **The table is checked when first used**, once per `defineI18n()`, so one
+  `translatePathnames()` result can serve several: an entry it cannot read — a
+  pattern outside the syntax, two entries naming the same pathnames, a
+  translated pattern that names other params, or one two entries claim — is
+  logged through [`log`](#loglevel) and skipped. A locale the config serves
+  no translations for is logged, and its pathnames are served all the same.
+
+`localizePath(path, locale)` translates a path, canonical or already
+translated to any locale, to `locale`: `localizePath('/products/42', 'cs')`
+is `/cs/produkty/42`, and so is `localizePath('/products/42?tab=2', 'cs')`
+with its search. An entry that leaves `locale` out falls through to the next
+pattern that matches; a path nothing translates to `locale` comes back
+canonical, and a locale the table does not name, or none, leaves the path as
+it is. `delocalize(url)` gives the canonical path of a URL, with its search
+and hash and without `basePath`, and the locale its pathname belongs to; a
+search or a hash SvelteKit hides — the search while prerendering, the hash in
+a `load` — is left out:
+
+```svelte
+<!-- a locale switcher -->
+<script lang="ts">
+  import { resolve } from '$app/paths';
+  import { page } from '$app/state';
+  import type { Path } from '$app/types';
+  import { delocalize, get, localizePath } from '#lib/i18n.js';
+
+  const i18n = get();
+
+  const href = (path: string) => resolve(path.slice(1) as Path);
+</script>
+
+{#each i18n.locales as locale (locale)}
+  <a href={href(localizePath(delocalize(page.url).path, locale))} hreflang={locale}>{locale}</a>
+{/each}
+
+<a href={href(localizePath('/about', i18n.locale))}>{i18n.t('nav.about')}</a>
+```
+
+Both return a path without `basePath`, so `resolve()` adds it. Given without
+its leading slash, the path is read as a pathname, never as a route ID, so a
+search such as `?sort[by]=name` passes as it is. Its type admits only the
+app's own pathnames, which a translated one is not, hence the cast. In
+SvelteKit 2, whose `resolve()` reads every path as a route ID, write
+`` `${base}${path}` `` with `base` from `$app/paths` instead.
+
+Switch the locale by navigating to its pathname, as the switcher does: the
+locale a translated pathname belongs to is the server's answer, so a
+navigation to another locale's pathname switches. A `setLocale()` in the
+browser stands across the navigations whose pathname keeps that answer.
+
+- **One page, one pathname per locale.** With the catch-all above,
+  `/cs/about` serves the about page in Czech too, beside `/cs/o-nas`. A
+  `handle` can redirect such a pathname to its locale's own; the target
+  depends on the URL alone, so a permanent redirect is safe to cache. It
+  reaches only the pages rendered on request: SvelteKit answers a pathname
+  it reroutes to a prerendered page with that page's file, before `handle`
+  runs. A remote function's request can carry the URL of the page that
+  called it (a command's, an enhanced form's and that of a prerender
+  function run on request, and on SvelteKit 2 a query's too), so a remote
+  request is left alone, or a remote function called on such a page would
+  never run.
+
+  ```javascript
+  // src/hooks.server.js
+  import { redirect } from '@sveltejs/kit';
+  import { sequence } from '@sveltejs/kit/hooks';
+  import { config, delocalize, handle as i18nHandle, localizePath } from '#lib/i18n.js';
+
+  const base = config.basePath ?? '';
+
+  export const handle = sequence(({ event, resolve }) => {
+    const { path, locale } = delocalize(event.url);
+    const pathname = event.url.pathname.slice(base.length) || '/';
+
+    if (
+      locale !== undefined &&
+      !event.isDataRequest &&
+      !event.isRemoteRequest &&
+      localizePath(pathname, locale) !== pathname
+    ) {
+      redirect(308, `${base}${localizePath(path, locale)}`);
+    }
+
+    return resolve(event);
+  }, i18nHandle);
+  ```
+
+- **`hreflang` alternates** name each locale's pathname of the page. A page
+  the table does not translate comes back canonical for several locales,
+  and identical alternates say nothing, so the root layout keeps only
+  distinct ones, and none on an error page:
+
+  ```svelte
+  <!-- src/routes/+layout.svelte -->
+  <script lang="ts">
+    import { resolve } from '$app/paths';
+    import { page } from '$app/state';
+    import type { Path } from '$app/types';
+    import { delocalize, localizePath, use } from '#lib/i18n.js';
+
+    let { data, children } = $props();
+
+    const i18n = use(() => data);
+
+    const alternates = $derived.by(() => {
+      if (page.error) return [];
+
+      const { path } = delocalize(page.url);
+      const paths = i18n.locales.map((locale) => [locale, localizePath(path, locale)]);
+
+      return paths.filter(([, href]) => paths.filter(([, other]) => other === href).length === 1);
+    });
+  </script>
+
+  <svelte:head>
+    {#each alternates as [locale, href] (locale)}
+      <link rel="alternate" hreflang={locale} href={new URL(resolve(href.slice(1) as Path), page.url.href).href} />
+    {/each}
+  </svelte:head>
+
+  {@render children()}
+  ```
+
+- **A prerendered page is prerendered at each of its pathnames.** SvelteKit
+  answers a request it reroutes to a prerendered pathname with that file,
+  rendered in the canonical pathname's locale. Its crawler reaches a
+  translated pathname only through a link, such as the switcher's, so list
+  the ones nothing links to in `prerender.entries` of SvelteKit's config.
+  The `hreflang` alternates of a prerendered page name the origin it was
+  rendered at: set it in `paths.origin` (`prerender.origin` in SvelteKit 2),
+  or they name `http://sveltekit-prerender`.
+- **Your own code sees the requested URL.** A redirect, a canonical link or
+  an analytics path built from `page.url` or `event.url` names the
+  translated pathname; `delocalize()` gives the canonical one. SvelteKit runs
+  no `reroute` for a remote function's request. Where that request carries
+  the URL of the page that called it (a command's, an enhanced form's and
+  that of a prerender function run on request, and on SvelteKit 2 a query's
+  too), `getRequestEvent()` inside the function names whatever route that
+  translated pathname matches, usually none, and
+  `delocalize(getRequestEvent().url)` gives the canonical path. A form
+  submitted without JavaScript is a request of the page, which SvelteKit
+  reroutes, so it names the canonical route.
+- **`reroute` must stay a function of the URL.** The browser caches its
+  answer per URL for the life of the tab; the table is read at the first use
+  of each `defineI18n()` it serves, and must not change after `translatePathnames()` is called, so
+  the answer never changes.
+- **The route tree has no `[lang]` segment.** A `[lang]` or `[[lang]]` tree
+  beside the table serves each of its pages at another pathname too. The
+  [hash router](#pitfalls) is not supported: its route lives in the hash,
+  which `reroute` does not read.
 
 ### What `data.i18n` is
 
@@ -2523,7 +2737,7 @@ instance.
 | Hydration | — | the tab's instance, from the same snapshot, active before the first render | `use()` provides it |
 | Navigation | negotiates, returns the locale and the route | preloads the target locale for the new route | `use()` switches and sets the route at commit, showing what the preload fetched |
 | Preload | the same | the same | none: a preload shows nothing |
-| Navigation to a prerendered page | — (the build's page render) | preloads the locale `preferredLocale` gave at build time, or else the tab's | `use()` switches to that locale at commit, or keeps the tab's |
+| Navigation to a prerendered page | — (the build's page render) | preloads the locale its translated pathname or `preferredLocale` gave at build time, or else the tab's | `use()` switches to that locale at commit, or keeps the tab's |
 
 Each preload runs `load`, which preloads the target locale's translations for
 the link's route, and the navigation that commits it shows what that load
@@ -2541,16 +2755,19 @@ much: `data-sveltekit-preload-data="false"`.
   `handle` still fills `%lang%` and `%dir%` from `Accept-Language`, so
   `<html lang>` can name another locale than the page renders. Put the locale in the URL, or add
   the server `load`.
-- **A prerendered page has no visitor.** It renders the locale
-  `preferredLocale` finds in the URL, or else the default (`initLocale`,
-  `fallbackLocale`, the first locale served). A
-  client navigation to one takes the locale `preferredLocale` gave at build
-  time, and otherwise keeps the tab's, so a cookie-first `preferredLocale` that
+- **A prerendered page has no visitor.** It renders the locale of its
+  [translated pathname](#translated-pathnames), or the one `preferredLocale`
+  finds in the URL, or else the default (`initLocale`, `fallbackLocale`, the
+  first locale served). A client navigation to one takes the locale its
+  pathname or `preferredLocale` gave at build time, and otherwise keeps the
+  tab's, so a cookie-first `preferredLocale` that
   falls back to the URL follows the URL there. A query string (`?lang=`) does
   not reach a prerendered page and the build's hostname is not the visitor's,
   so a locale read from either is not supported on one.
-- **With a `reroute` hook,** loaders match the path the visitor requested, not
-  the one SvelteKit rerouted to.
+- **With a `reroute` hook of your own,** loaders match the path the visitor
+  requested, not the one SvelteKit rerouted to. The one `defineI18n()`
+  returns hands them the canonical pathname (see [Translated
+  pathnames](#translated-pathnames)).
 - **A negotiated response varies by visitor.** The page and its `__data.json`
   depend on `Accept-Language` and on whatever `preferredLocale` reads, and
   `/kit` sets no `Vary` header, since it cannot know what that is. Before
@@ -3448,6 +3665,19 @@ letting the constructor's inference stand.
 
 For type-safe translation keys, supply a [`schema`](#schema); the wider
 TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md#typescript-patterns).
+
+---
+
+## Upgrading from 3.3
+
+A 3.3 config loads in 3.4 as it is, and `/kit` behaves as it did until its
+options state `pathnames`.
+
+### New
+
+- [`pathnames`](#translated-pathnames) in the options of `defineI18n()`, which takes what the new `translatePathnames()` of `/kit` returns, and `reroute`, `delocalize` and `localizePath` among what it returns — each page served at a pathname of its locale, from one route tree.
+- A second type parameter on `Kit.T`, the locale its `delocalize` and `localizePath` take and give, and `Kit.LocaleOf`, which reads it off an instance.
+- `Kit.Pathnames`, the type of what `translatePathnames()` returns.
 
 ---
 

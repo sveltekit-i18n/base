@@ -30,13 +30,14 @@ it('the SSR hand-off', async () => {
 });
 
 /**
- * What a browser bundle of `entry` ships, minified: compiled from the source
- * as a consumer's bundler compiles it, since the package ships its rune
- * modules uncompiled. `svelte` is the consumer's, so it is left out.
+ * What a browser bundle of `entry`, or of the `names` an app imports from it,
+ * ships, minified: compiled from the source as a consumer's bundler compiles
+ * it, since the package ships its rune modules uncompiled. `svelte` is the
+ * consumer's, so it is left out.
  */
-const bundle = async (entry: string) => {
+const bundle = async (entry: string, names?: string) => {
   const { outputFiles: [output] } = await esbuild.build({
-    entryPoints: [resolve(source, entry)],
+    ...(names ? { stdin: { contents: `export { ${names} } from ${JSON.stringify(resolve(source, entry))};`, resolveDir: source } } : { entryPoints: [resolve(source, entry)] }),
     bundle: true,
     minify: true,
     write: false,
@@ -69,4 +70,10 @@ it('the browser bundle', async () => {
     record(`browser bundle of ${name}, minified`, 'size', 'B', contents.length);
     record(`browser bundle of ${name}, minified and gzipped`, 'size', 'B', gzipSync(contents).length);
   }
+
+  // An app without translated pathnames imports `defineI18n` alone.
+  const wiring = await bundle('exports/kit.ts', 'defineI18n');
+
+  record('browser bundle of defineI18n alone, minified', 'size', 'B', wiring.length);
+  record('browser bundle of defineI18n alone, minified and gzipped', 'size', 'B', gzipSync(wiring).length);
 });

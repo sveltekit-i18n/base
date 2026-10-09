@@ -25,6 +25,7 @@ Core i18n functionality for SvelteKit with support for custom message parsers. T
 ✅ **Custom data sources** – Load translations from anywhere (files, APIs, databases)  
 ✅ **Module-based** – Translations load only for visited pages  
 ✅ **Route-aware** – Automatic loading based on SvelteKit routes  
+✅ **Translated pathnames** – `/cs/o-nas` for `/about`, from one route tree  
 ✅ **Component-scoped** – Multiple translation instances with custom definitions  
 ✅ **Extensible** – Pipe the instance through [extensions](#extensions) to reshape or augment its surface  
 ✅ **TypeScript** – Locales inferred from your config, keys and payloads from a [`schema`](#schema)  
@@ -131,6 +132,9 @@ the browser, so nothing loads twice and no visitor sees another's locale. See
 [SvelteKit](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#sveltekit) for the details and
 [Server-Side Rendering](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#server-side-rendering) for wiring it
 by hand.
+[Translated pathnames](https://github.com/sveltekit-i18n/base/blob/master/docs/README.md#translated-pathnames)
+serve each page at a pathname of its locale, through the `reroute` hook
+`defineI18n()` returns.
 
 ### 4. Use in components
 

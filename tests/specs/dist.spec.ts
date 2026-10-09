@@ -1,4 +1,7 @@
 import { readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+import { build } from 'esbuild';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { Kit } from '../../dist/exports/kit.js';
@@ -114,6 +117,28 @@ describe('published artifact', () => {
     // The `imports` map picks the half by the `browser` condition.
     if (task.file.projectName === 'client') expect(() => handle({ event, resolve: () => new Response() })).toThrow('run on the server only');
     else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
+  });
+
+  it('leaves the translated pathnames out of an app that does not import translatePathnames', async () => {
+    const bundled = async (names: string) => {
+      const { metafile } = await build({
+        stdin: { contents: `export { ${names} } from '@sveltekit-i18n/base/kit';`, resolveDir: fileURLToPath(new URL('../..', import.meta.url)) },
+        // Not the repository's: its `paths` lead to the source.
+        tsconfigRaw: '{}',
+        bundle: true,
+        write: false,
+        format: 'esm',
+        platform: 'browser',
+        external: ['svelte', 'svelte/*'],
+        metafile: true,
+        logLevel: 'silent',
+      });
+
+      return Object.values(metafile.outputs).flatMap(({ inputs }) => Object.keys(inputs).filter((input) => input.endsWith('dist/kit/pathnames.js')));
+    };
+
+    expect(await bundled('defineI18n')).toEqual([]);
+    expect(await bundled('defineI18n, translatePathnames')).toEqual(['dist/kit/pathnames.js']);
   });
 
   // Checked by `tsc`, which `npm test` runs over the built declarations.
