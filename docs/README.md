@@ -2543,17 +2543,31 @@ reaches no route.
   translated pattern that names other params, or one two entries claim — is
   logged through [`log`](#loglevel) and skipped. A locale the config serves
   no translations for is logged, and its pathnames are served all the same.
+  On the server, a translated pattern that takes a canonical pathname of
+  another page is logged too, as `'/contact': { cs: '/help' }` does beside an
+  entry `'/help'`, or `'/pair/[x]/[y]': { cs: '/pair/[y]/[x]' }` of its own
+  pages: that page is never served at that pathname. A pathname whose page
+  captures a segment in a rest param is left out, or every catch-all would be
+  logged.
 
-`localizePath(path, locale)` translates a path, canonical or already
-translated to any locale, to `locale`: `localizePath('/products/42', 'cs')`
-is `/cs/produkty/42`, and so is `localizePath('/products/42?tab=2', 'cs')`
-with its search. An entry that leaves `locale` out falls through to the next
-pattern that matches; a path nothing translates to `locale` comes back
-canonical, and a locale the table does not name, or none, leaves the path as
-it is. `delocalize(url)` gives the canonical path of a URL, with its search
-and hash and without `basePath`, and the locale its pathname belongs to; a
-search or a hash SvelteKit hides — the search while prerendering, the hash in
-a `load` — is left out:
+`localizePath(path, locale)` translates a canonical path to `locale`:
+`localizePath('/products/42', 'cs')` is `/cs/produkty/42`, and so is
+`localizePath('/products/42?tab=2', 'cs')` with its search. A pathname it
+translates to leads back to the same page. An entry that leaves `locale` out
+falls through to the next pattern that matches, and a pathname of `locale`
+alone wins over one several locales share. A path nothing translates to
+`locale` comes back as it is, percent-encoded, unless another page takes its
+pathname: then it comes back as another locale's pathname of its page, when
+the page has one. No locale leaves the path as it is.
+
+A translated pathname is no canonical path: `localizePath('/cs/o-nas', 'en')`
+is `/cs/cs/o-nas`, the Czech pathname of the page the catch-all serves at the
+canonical path `/cs/o-nas`, which the Czech about page takes. Nor is `page.url.pathname`, which names the
+pathname requested. `delocalize(url)` gives the canonical path of a URL, with its search and hash
+and without `basePath`, and the locale its pathname belongs to; a search or a
+hash SvelteKit hides — the search while prerendering, the hash in a `load` —
+is left out, and a locale's root comes back as `/`, without a trailing slash.
+A link to the page shown, in another locale, goes through both:
 
 ```svelte
 <!-- a locale switcher -->
@@ -2609,25 +2623,26 @@ browser stands across the navigations whose pathname keeps that answer.
 
   export const handle = sequence(({ event, resolve }) => {
     const { path, locale } = delocalize(event.url);
-    const pathname = event.url.pathname.slice(base.length) || '/';
 
-    if (
-      locale !== undefined &&
-      !event.isDataRequest &&
-      !event.isRemoteRequest &&
-      localizePath(pathname, locale) !== pathname
-    ) {
-      redirect(308, `${base}${localizePath(path, locale)}`);
+    if (locale !== undefined && !event.isDataRequest && !event.isRemoteRequest) {
+      const href = localizePath(path, locale);
+      const pathname = event.url.pathname.slice(base.length) || '/';
+
+      // SvelteKit settles the trailing slash before `handle` runs, so the
+      // pathnames are compared without it.
+      if (href.split(/[?#]/)[0].replace(/\/$/, '') !== pathname.replace(/\/$/, '')) {
+        redirect(308, `${base}${href}`);
+      }
     }
 
     return resolve(event);
   }, i18nHandle);
   ```
 
-- **`hreflang` alternates** name each locale's pathname of the page. A page
-  the table does not translate comes back canonical for several locales,
-  and identical alternates say nothing, so the root layout keeps only
-  distinct ones, and none on an error page:
+- **`hreflang` alternates** name each locale's pathname of the page. A
+  pathname several locales share, or one of another locale, says nothing of
+  the locale it is named for, so the root layout keeps only the alternates
+  whose pathname belongs to their locale, and none on an error page:
 
   ```svelte
   <!-- src/routes/+layout.svelte -->
@@ -2645,15 +2660,18 @@ browser stands across the navigations whose pathname keeps that answer.
       if (page.error) return [];
 
       const { path } = delocalize(page.url);
-      const paths = i18n.locales.map((locale) => [locale, localizePath(path, locale)]);
 
-      return paths.filter(([, href]) => paths.filter(([, other]) => other === href).length === 1);
+      return i18n.locales.flatMap((locale) => {
+        const url = new URL(resolve(localizePath(path, locale).slice(1) as Path), page.url.href);
+
+        return delocalize(url).locale === locale ? [[locale, url.href]] : [];
+      });
     });
   </script>
 
   <svelte:head>
     {#each alternates as [locale, href] (locale)}
-      <link rel="alternate" hreflang={locale} href={new URL(resolve(href.slice(1) as Path), page.url.href).href} />
+      <link rel="alternate" hreflang={locale} {href} />
     {/each}
   </svelte:head>
 
@@ -2763,10 +2781,23 @@ each of them [translated pathnames](#translated-pathnames) of its own. The
 [`hreflang` alternates](#translated-pathnames) are built the same way, with
 `localizeHref(path, locale)` and no `from`, which names each listed locale's
 origin, the one the map spells, from whatever host renders the page; it
-carries `basePath`, so it takes no `resolve()`:
+carries `basePath`, so it takes no `resolve()`. A pathname that belongs to
+no locale belongs to its host's first, so an alternate is kept when either
+is its own:
 
-```svelte
-<link rel="alternate" hreflang={locale} href={new URL(localizeHref(path, locale), page.url.href).href} />
+```javascript
+const alternates = $derived.by(() => {
+  if (page.error) return [];
+
+  const { path } = delocalize(page.url);
+
+  return i18n.locales.flatMap((locale) => {
+    const url = new URL(localizeHref(path, locale), page.url.href);
+    const { locale: own, domain } = delocalize(url);
+
+    return (own ?? domain) === locale ? [[locale, url.href]] : [];
+  });
+});
 ```
 
 A link to another host is a full page load, which SvelteKit makes of any
@@ -2777,25 +2808,23 @@ link that leaves the origin, so switch the locale by such a link (or
 - **Redirect a locale to its host.** A pathname of another host's locale
   renders the host's own locale; a `handle` can send it where it belongs. The
   target names the host the map spells, never the request's, and a host
-  never redirects to itself. It localizes the pathname as requested, which
-  `localizeHref` reads back to its page as `delocalize` does:
+  never redirects to itself. It localizes the canonical path of the URL, with
+  its search, which `delocalize` leaves out while prerendering, where reading
+  it throws:
 
   ```javascript
   // src/hooks.server.js
   import { redirect } from '@sveltejs/kit';
   import { sequence } from '@sveltejs/kit/hooks';
-  import { config, delocalize, handle as i18nHandle, localizeHref } from '#lib/i18n.js';
-
-  const base = config.basePath ?? '';
+  import { delocalize, handle as i18nHandle, localizeHref } from '#lib/i18n.js';
 
   export const handle = sequence(({ event, resolve }) => {
     if (!event.isDataRequest && !event.isRemoteRequest) {
-      const { locale, domain } = delocalize(event.url);
-      const href = localizeHref(event.url.pathname.slice(base.length) || '/', locale ?? domain, event.url);
+      const { path, locale, domain } = delocalize(event.url);
+      const href = localizeHref(path, locale ?? domain, event.url);
 
-      // The search is read on a redirect alone: reading it while prerendering
-      // throws. SvelteKit 2 takes no third argument.
-      if (/^https?:/.test(href)) redirect(308, `${href}${event.url.search}`, { external: true });
+      // SvelteKit 2 takes no third argument.
+      if (/^https?:/.test(href)) redirect(308, href, { external: true });
     }
 
     return resolve(event);
@@ -3831,7 +3860,7 @@ options state `pathnames` or `domains`.
 
 ### New
 
-- [`pathnames`](#translated-pathnames) in the options of `defineI18n()`, which takes what the new `translatePathnames()` of `/kit` returns, and `reroute`, `delocalize` and `localizePath` among what it returns — each page served at a pathname of its locale, from one route tree.
+- [`pathnames`](#translated-pathnames) in the options of `defineI18n()`, which takes what the new `translatePathnames()` of `/kit` returns, and `reroute`, `delocalize`, which gives a URL's canonical path, and `localizePath`, which translates one, among what it returns — each page served at a pathname of its locale, from one route tree.
 - A second type parameter on `Kit.T`, the locale its `delocalize`, `localizePath` and `localizeHref` take and give, and `Kit.LocaleOf`, which reads it off an instance.
 - `Kit.Pathnames`, the type of what `translatePathnames()` returns.
 - [`domains`](#domains) in the options of `defineI18n()`, which takes what the new `localeDomains()` of `/kit` returns, and `localizeHref` among what it returns — a locale served at a domain of its own. `delocalize` gives the first locale of the URL's host as `domain`, and takes a URL's `hostname` for it.

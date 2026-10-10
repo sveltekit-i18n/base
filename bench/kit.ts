@@ -77,15 +77,14 @@ it('translated pathnames', () => {
     const translated = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/${LOCALES[i % 5]}/strana${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`)));
     const missed = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/elsewhere/${i}`)));
     const canonical = cycle(Array.from({ length: 64 }, (_, i) => `/page${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`));
-    const localized = cycle(Array.from({ length: 64 }, (_, i) => `/cs/strana${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`));
 
-    expect([reroute({ url: new URL('https://x.test/de/strana1/42') }), localizePath('/page1/42', 'cs'), localizePath('/cs/strana1/42', 'de')]).toEqual(['/page1/42', '/cs/strana1/42', '/de/strana1/42']);
+    expect([reroute({ url: new URL('https://x.test/de/strana1/42') }), localizePath('/page1/42', 'cs'), localizePath(delocalize(new URL('https://x.test/cs/strana1/42')).path, 'de')]).toEqual(['/page1/42', '/cs/strana1/42', '/de/strana1/42']);
 
     record(`reroute, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: translated() })));
     record(`delocalize, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => delocalize(translated())));
     record(`reroute, a pathname no entry translates (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: missed() })));
     record(`localizePath, a canonical path to a locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(canonical(), 'de')));
-    record(`localizePath, a translated path to another locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(localized(), 'de')));
+    record(`localizePath of delocalize, a translated pathname to another locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(delocalize(translated()).path, 'de')));
   }
 
   // The first call compiles the table: the first load of a tab and of a server process pays for it.

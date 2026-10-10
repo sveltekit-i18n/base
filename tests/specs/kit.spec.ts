@@ -3060,12 +3060,11 @@ describe('/kit', () => {
       expect(localizePath('/cs/o-nas', null)).toBe('/cs/o-nas');
     });
 
-    it('keeps the trailing slash of a locale\'s root', () => {
-      const { localizePath } = translated();
+    it('reads a locale\'s root with its trailing slash as the root, which has none', () => {
+      const { delocalize, localizePath } = translated();
 
-      expect(localizePath('/cs/', 'cs')).toBe('/cs/');
-      expect(localizePath('/cs', 'cs')).toBe('/cs');
-      expect(localizePath('/', 'cs')).toBe('/cs');
+      expect(delocalize(url('/cs/'))).toEqual({ path: '/', locale: 'cs' });
+      expect(localizePath(delocalize(url('/cs/')).path, 'cs')).toBe('/cs');
     });
 
     it('never localizes a path to one a more specific pattern takes for another page', () => {
@@ -3145,8 +3144,7 @@ describe('/kit', () => {
       const { localizePath, reroute } = setup({ loaders: [{ locale: 'en', namespace: 'common', loader: () => Promise.resolve({}) }, { locale: 'de', namespace: 'common', loader: () => Promise.resolve({}) }] }, { pathnames: translatePathnames({ '/home': { en: '/', de: '/de' } }) });
 
       expect(reroute({ url: url('/') })).toBe('/home');
-      expect(localizePath('/de', 'en')).toBe('/');
-      expect(localizePath('/de/', 'en')).toBe('/');
+      expect(localizePath('/home', 'en')).toBe('/');
       expect(localizePath('/home/', 'en')).toBe('/');
       expect(localizePath('/home/', 'de')).toBe('/de/');
     });
@@ -3159,27 +3157,69 @@ describe('/kit', () => {
       expect(reroute({ url: url('/info') })).toBe('/about');
     });
 
-    it('localizes a canonical or a translated path, a locale an entry leaves out falling through', () => {
-      const { localizePath } = translated();
+    it('localizes a canonical path, a locale an entry leaves out falling through', () => {
+      const { delocalize, localizePath } = translated();
 
       expect(localizePath('/about', 'cs')).toBe('/cs/o-nas');
-      expect(localizePath('/cs/o-nas', 'en')).toBe('/about');
-      expect(localizePath('/cs/o-nas', 'cs')).toBe('/cs/o-nas');
+      expect(localizePath('/about', 'en')).toBe('/about');
       expect(localizePath('/products/42?ref=x#reviews', 'cs')).toBe('/cs/produkty/42?ref=x#reviews');
-      expect(localizePath('/cs/produkty/novy', 'en')).toBe('/products/new');
+      expect(localizePath('/products/new', 'cs')).toBe('/cs/produkty/novy');
       expect(localizePath('/kontakt', 'cs')).toBe('/cs/kontakt');
-      expect(localizePath('/cs/kontakt', 'en')).toBe('/kontakt');
       expect(localizePath('/files/a/b', 'cs')).toBe('/cs/soubory/a/b');
+      // A page of another locale's URL is switched through `delocalize`.
+      expect(localizePath(delocalize(url('/cs/produkty/novy')).path, 'en')).toBe('/products/new');
+      // A translated path is the canonical path of the page the catch-all serves there.
+      expect(localizePath('/cs/o-nas', 'cs')).toBe('/cs/cs/o-nas');
       // A locale the table does not name, and a path that is no absolute one.
       expect(localizePath('/about', 'de')).toBe('/about');
       expect(localizePath('about', 'cs')).toBe('about');
       expect(localizePath('?q=1', 'cs')).toBe('?q=1');
     });
 
-    it('comes back canonical for a locale no pattern of the path names', () => {
-      const { localizePath } = setup({}, { pathnames: translatePathnames({ '/about': { cs: '/cs/o-nas' }, '/team': { en: '/team' } }) });
+    it('localizes a canonical path that a pattern of another locale matches too', () => {
+      const { delocalize, localizePath, reroute } = setup({}, { pathnames: translatePathnames({ '/a/b': { cs: '/b/c' }, '/b/[...r]': { en: '/a/[...r]' } }) });
 
-      expect(localizePath('/cs/o-nas', 'en')).toBe('/about');
+      expect(delocalize(url('/b/c'))).toEqual({ path: '/a/b', locale: 'cs' });
+      expect(localizePath('/a/b', 'cs')).toBe('/b/c');
+      expect(reroute({ url: url(localizePath('/b/b', 'en')) })).toBe('/b/b');
+    });
+
+    it('prefers a pathname that reads back in the locale it localizes to', () => {
+      const { delocalize, localizePath } = setup({}, { pathnames: translatePathnames({ '/a/[x]': { cs: '/[x]/b' }, '/a/[...r]': { en: '/b/[...r]', cs: '/cs/c/[...r]' }, '/b': { cs: '/b/a' } }) });
+
+      expect(delocalize(url('/b/b'))).toEqual({ path: '/a/b', locale: 'en' });
+      expect(localizePath('/a/b', 'cs')).toBe('/cs/c/b');
+      expect(delocalize(url('/cs/c/b'))).toEqual({ path: '/a/b', locale: 'cs' });
+    });
+
+    it('prefers a pathname of the locale alone to one several locales share', () => {
+      const { delocalize, localizePath } = setup({}, { pathnames: translatePathnames({ '/c/[...r]': { cs: '/b/[...r]', de: '/b/[...r]' }, '/[x]/b/a': { de: '/c/[x]' } }) });
+
+      expect(localizePath('/c/b/a', 'de')).toBe('/c/c');
+      expect(delocalize(url('/c/c'))).toEqual({ path: '/c/b/a', locale: 'de' });
+      expect(localizePath('/c/b/a', 'cs')).toBe('/b/b/a');
+    });
+
+    it('links a page whose canonical pathname serves another to a pathname of another locale', () => {
+      const { delocalize, localizePath } = setup({}, { pathnames: translatePathnames({ '/c': { en: '/' }, '/[...r]': { en: '/c/a/[...r]', de: '/[...r]' } }) });
+
+      expect(delocalize(url('/'))).toEqual({ path: '/c', locale: 'en' });
+      expect(localizePath('/', 'cs')).toBe('/c/a');
+      expect(delocalize(url('/c/a'))).toEqual({ path: '/', locale: 'en' });
+    });
+
+    it('reads an escaped slash as part of its segment when it decides whether a path serves its own page', () => {
+      const { reroute, localizePath } = setup({}, { pathnames: translatePathnames({ '/a/b': { cs: '/a%2Fb' }, '/[x]': { de: '/de/[x]' } }) });
+
+      expect(reroute({ url: url('/a%2Fb') })).toBe('/a/b');
+      expect(localizePath('/a%2Fb', 'en')).toBe('/de/a%2Fb');
+      expect(reroute({ url: url('/de/a%2Fb') })).toBe('/a%2Fb');
+    });
+
+    it('stays canonical for a locale no pattern of the path names', () => {
+      const { delocalize, localizePath } = setup({}, { pathnames: translatePathnames({ '/about': { cs: '/cs/o-nas' }, '/team': { en: '/team' } }) });
+
+      expect(localizePath(delocalize(url('/cs/o-nas')).path, 'en')).toBe('/about');
       expect(localizePath('/about', 'en')).toBe('/about');
     });
 
@@ -3267,9 +3307,54 @@ describe('/kit', () => {
         '[i18n]: `pathnames` skips \'/[slug]/x\': \'/[id]/x\' names the same pathnames.',
         '[i18n]: `pathnames` skips \'/support\' in \'cs\': \'/help\' translates to \'/cs/pomoc\' too.',
         '[i18n]: `pathnames` skips \'/pair/[x]/[y]\' in \'cs\': \'/paar/[y]/[x]\' names the params of \'/paar/[x]/[y]\' in another order.',
-        '[i18n]: `pathnames` serves \'/contact\' at \'/help\', which is a pathname of its own.',
+        ...(BROWSER ? [] : ['[i18n]: `pathnames` serves \'/contact\' in \'cs\' at \'/help\', which takes a pathname of \'/help\'.']),
         '[i18n]: `pathnames` translates to \'fr\', which the config serves no translations for.',
       ]);
+    });
+
+    it.skipIf(BROWSER)('warns of a localized pattern that takes a pathname of another page, on the server', () => {
+      const touch = (table: Record<string, Record<string, string>>) => {
+        const { reroute, warnings } = setup({}, { pathnames: translatePathnames(table) });
+
+        reroute({ url: url('/') });
+
+        return warnings.filter((warning) => warning.includes('which takes'));
+      };
+
+      expect(touch({ '/a/b': { cs: '/b/c' }, '/b/[...r]': { en: '/a/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` serves \'/b/[...r]\' in \'en\' at \'/a/[...r]\', which takes a pathname of \'/a/b\'.',
+      ]);
+      expect(touch({ '/pair/[x]/[y]': { cs: '/pair/[y]/[x]', de: '/paar/[x]/[y]' } })).toEqual([
+        '[i18n]: `pathnames` serves \'/pair/[x]/[y]\' in \'cs\' at \'/pair/[y]/[x]\', which takes a pathname of \'/pair/[x]/[y]\'.',
+      ]);
+      expect(touch({ '/c': { en: '/' }, '/[...r]': { en: '/c/a/[...r]', de: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` serves \'/c\' in \'en\' at \'/\', which takes a pathname of \'/[...r]\'.',
+      ]);
+      expect(touch({ '/a/b': { cs: '/b/c' }, '/[...r]': { cs: '/cs/[...r]' } })).toEqual([]);
+      expect(touch(pathnames)).toEqual([]);
+      expect(touch({ '/a': {}, '/b': {}, '/x/[...r]': { cs: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` serves \'/x/[...r]\' in \'cs\' at \'/[...r]\', which takes pathnames of \'/a\', \'/b\' and \'/x/[...r]\'.',
+      ]);
+      expect(touch({ '/[c]/a': {}, '/[c]/b': {}, '/[c]/c': {}, '/[c]/d': {}, '/x/[...r]': { cs: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` serves \'/x/[...r]\' in \'cs\' at \'/[...r]\', which takes pathnames of \'/x/[...r]\', \'/[c]/a\', \'/[c]/b\' and 2 more.',
+      ]);
+    });
+
+    it.skipIf(BROWSER)('searches a table whose patterns start with a param beside many static ones without a blow-up', () => {
+      const table: Record<string, Record<string, string>> = {};
+
+      for (let i = 0; i < 3_000; i += 1) {
+        table[`/page${i}`] = { en: `/en-strana${i}`, cs: `/cs-strana${i}`, de: `/de-strana${i}` };
+        table[`/[city]/service${i}`] = { en: `/[city]/en-sluzba${i}`, cs: `/[city]/cs-sluzba${i}`, de: `/[city]/de-sluzba${i}` };
+      }
+
+      const { reroute, warnings } = setup({}, { pathnames: translatePathnames(table) });
+      const start = performance.now();
+
+      expect(reroute({ url: url('/cs-strana7') })).toBe('/page7');
+      // Pairing each param-led pattern with every static took seconds; the walk takes a fraction of one.
+      expect(performance.now() - start).toBeLessThan(4_000);
+      expect(warnings.filter((warning) => warning.includes('which takes'))).toEqual([]);
     });
 
     it('skips a pattern it cannot encode or name, and compiles the table once', () => {
@@ -3611,12 +3696,13 @@ describe('/kit', () => {
     });
 
     it('translates the path of a link to another host', () => {
-      const { localizeHref } = hosted({ pathnames: translatePathnames({ '/about': { en: '/about', cs: '/o-nas', de: '/ueber-uns' } }) });
+      const { delocalize, localizeHref } = hosted({ pathnames: translatePathnames({ '/about': { en: '/about', cs: '/o-nas', de: '/ueber-uns' } }) });
+      const switched = (from: string, locale: string) => localizeHref(delocalize(new URL(from)).path, locale, new URL(from));
 
       expect(localizeHref('/about', 'cs', new URL('https://example.com/'))).toBe('https://example.cz/o-nas');
-      expect(localizeHref('/ueber-uns', 'cs', new URL('https://example.com/'))).toBe('https://example.cz/o-nas');
-      expect(localizeHref('/o-nas', 'de', new URL('https://example.cz/'))).toBe('https://example.com/ueber-uns');
-      expect(localizeHref('/o-nas', 'en', new URL('https://example.com/'))).toBe('/about');
+      expect(switched('https://example.com/ueber-uns', 'cs')).toBe('https://example.cz/o-nas');
+      expect(switched('https://example.cz/o-nas', 'de')).toBe('https://example.com/ueber-uns');
+      expect(switched('https://example.com/o-nas', 'en')).toBe('/about');
     });
 
     it('logs what is wrong with the map once, at first use, and serves the rest', () => {

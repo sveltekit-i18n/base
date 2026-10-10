@@ -1,3 +1,4 @@
+import { BROWSER } from '#kit-env';
 import { TRANSLATION, type Canonical, type Setup, type Translation } from './internal.js';
 import type { Kit } from './types.js';
 
@@ -32,6 +33,13 @@ const decodeSegment = (segment: string): string => {
   } catch {
     return segment;
   }
+};
+// Segment by segment, as the walks read them: an escaped slash stays inside its segment.
+const samePath = (a: string, b: string): boolean => {
+  const left = a.split('/');
+  const right = b.split('/');
+
+  return left.length === right.length && left.every((segment, index) => segment === right[index] || decodeSegment(segment) === decodeSegment(right[index]));
 };
 
 // What a pathname holds raw: the unreserved characters, the sub-delimiters,
@@ -179,6 +187,93 @@ const fill = ({ segments, rest }: Pattern, values: Map<string, string>, trailing
   return trailing && path !== '/' ? `${path}/` : path;
 };
 
+/**
+ * The pages each localized pattern takes a pathname of: the pathnames a
+ * pattern matches that are pages of the canonical trie, which no rest of it
+ * captures, and that the localized trie reads as another one. Both tries are
+ * walked together, a node of each per depth: a static segment meets its own
+ * static and a param, a param meets every static and a param, with a value no
+ * static spells, and a rest every node below. Each pathname laid out so is
+ * read through both tries, as `reroute` reads it.
+ */
+const overlaps = (localized: Node<Claim>, canonical: Node<Entry>): Map<Claim, Set<Entry>> => {
+  const statics = new Set<string>();
+  const gather = (node: Node<unknown>): void => {
+    node.statics?.forEach((child, segment) => {
+      statics.add(segment);
+      gather(child);
+    });
+
+    if (node.param) gather(node.param);
+  };
+
+  gather(localized);
+  gather(canonical);
+
+  let count = 0;
+  const value = (): string => {
+    let next: string;
+
+    do next = `_${count++}`; while (statics.has(next));
+
+    return next;
+  };
+  const found = new Map<Claim, Set<Entry>>();
+  const segments: string[] = [];
+
+  const read = (): void => {
+    const page = walk(canonical, segments, () => true);
+
+    if (!page || page.rest !== '') return;
+
+    const claim = walk(localized, segments, () => true);
+
+    if (!claim || fill(claim.value.entry.canonical, captured(claim.value.pattern, claim), false) === `/${segments.join('/')}`) return;
+
+    const pages = found.get(claim.value) ?? new Set();
+
+    found.set(claim.value, pages.add(page.value));
+  };
+  const step = (segment: string, next: () => void): void => {
+    segments.push(segment);
+    next();
+    segments.pop();
+  };
+  const below = (page: Node<Entry>): void => {
+    if (page.end || page.rest) read();
+
+    page.statics?.forEach((child, segment) => step(encodeStatic(segment)!, () => below(child)));
+
+    if (page.param) step(value(), () => below(page.param!));
+  };
+  const pair = (claim: Node<Claim>, page: Node<Entry>): void => {
+    if (claim.end && (page.end || page.rest)) read();
+
+    if (claim.rest) below(page);
+
+    if (page.param) claim.statics?.forEach((child, segment) => step(encodeStatic(segment)!, () => pair(child, page.param!)));
+
+    // Of two static levels, the narrower is the one looked up.
+    if (claim.statics && page.statics) {
+      const [narrow, wide] = claim.statics.size <= page.statics.size ? [claim.statics, page.statics] : [page.statics, claim.statics];
+
+      narrow.forEach((_, segment) => {
+        if (wide.has(segment)) step(encodeStatic(segment)!, () => pair(claim.statics!.get(segment)!, page.statics!.get(segment)!));
+      });
+    }
+
+    if (claim.param) {
+      page.statics?.forEach((child, segment) => step(encodeStatic(segment)!, () => pair(claim.param!, child)));
+
+      if (page.param) step(value(), () => pair(claim.param!, page.param!));
+    }
+  };
+
+  pair(localized, canonical);
+
+  return found;
+};
+
 // `String()` of an object runs its own conversion, which can throw.
 const quoted = (value: unknown): string => `'${value !== null && (typeof value === 'object' || typeof value === 'function') ? Object.prototype.toString.call(value) : String(value)}'`;
 
@@ -191,7 +286,6 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
   // What only the compile reads stays out of the tries, which live as long as the wiring.
   const claims = new Map<string, { claim: Claim; spelled: string; order: string }>();
   const available = new Set(served().map((locale) => locale.toLowerCase()));
-  const entries: { entry: Entry; shape: string }[] = [];
 
   if (!table || typeof table !== 'object') warn('is not an object. No pathname is translated');
 
@@ -213,7 +307,6 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
     const entry: Entry = { key, canonical: parsed.pattern, targets: new Map() };
 
     at.node[at.slot] = entry;
-    entries.push({ entry, shape: parsed.shape });
 
     for (const [locale, value] of Object.entries(spelled as Record<string, unknown>)) {
       const target = parse(value);
@@ -254,12 +347,19 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
     }
   }
 
-  // A localized pattern that is another entry's canonical one takes that
-  // entry's own pathnames, unless that entry translates to them itself.
-  for (const { entry, shape } of entries) {
-    const claim = claims.get(shape)?.claim;
+  // The browser reads the table the server has warned of already.
+  if (!BROWSER) {
+    try {
+      const spelled = new Map([...claims.values()].map((claimed) => [claimed.claim, claimed.spelled]));
 
-    if (claim && claim.entry !== entry) warn(`serves ${quoted(claim.entry.key)} at ${quoted(entry.key)}, which is a pathname of its own`);
+      for (const [claim, pages] of overlaps(localized, canonical)) {
+        const keys = [...pages].slice(0, 3).map((page) => quoted(page.key));
+        const more = pages.size - keys.length;
+        const named = pages.size === 1 ? `a pathname of ${keys[0]}` : `pathnames of ${more ? keys.join(', ') : keys.slice(0, -1).join(', ')} and ${more ? `${more} more` : keys[keys.length - 1]}`;
+
+        warn(`serves ${quoted(claim.entry.key)} in ${claim.locales.map(quoted).join(', ')} at ${quoted(spelled.get(claim))}, which takes ${named}`);
+      }
+    } catch { /* a table too deep to search is translated all the same */ }
   }
 
   if (unserved.size) warn(`translates to ${[...unserved].map(quoted).join(', ')}, which the config serves no translations for`);
@@ -334,9 +434,6 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
         // spelling of one goes through the sanitizer.
         const named = locale.toLowerCase();
         const wanted = locales.has(named) ? named : normalize(locale).toLowerCase();
-
-        if (!locales.has(wanted)) return path;
-
         const end = path.search(/[?#]/);
         const pathname = encodePath(end < 0 ? path : path.slice(0, end));
         const suffix = end < 0 ? '' : path.slice(end);
@@ -344,26 +441,49 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
 
         if (!parts) return path;
 
-        const from = delocalized(pathname)?.path ?? pathname;
-        const source = split(from) ?? parts;
-        let localized: string | undefined;
-
-        // A more specific pattern can take the path a match fills for
-        // another page, so a match is taken only where it leads back.
-        const leadsBack = (found: Found<Entry>): boolean => {
-          const target = found.value.targets.get(wanted);
-
-          if (!target) return false;
+        // A more specific pattern can take the path a match fills for another
+        // page, so a match counts only where it leads back to the same page.
+        const lead = (found: Found<Entry>, target: Pattern | undefined): { localized: string; locale?: string } | undefined => {
+          if (!target) return undefined;
 
           const values = captured(found.value.canonical, found);
-
-          localized = fill(target, values, parts.trailing);
+          const localized = fill(target, values, parts.trailing);
+          const back = delocalized(localized);
 
           // The root keeps no trailing slash, so neither does the way back from it.
-          return delocalized(localized)?.path === fill(found.value.canonical, values, parts.trailing && localized !== '/');
+          return back?.path === fill(found.value.canonical, values, parts.trailing && localized !== '/') ? { localized, locale: back.locale } : undefined;
         };
+        let pinned: string | undefined;
+        let shared: string | undefined;
 
-        return walk(root, source.segments, leadsBack) ? `${localized}${suffix}` : `${from}${suffix}`;
+        // A pathname that reads as the wanted locale wins over one every
+        // locale it names shares, which the visitor's locale would read it as.
+        if (locales.has(wanted)) {
+          walk(root, parts.segments, (found) => {
+            const led = lead(found, found.value.targets.get(wanted));
+
+            if (led?.locale === undefined) shared ??= led?.localized;
+            else if (led.locale.toLowerCase() === wanted) pinned = led.localized;
+
+            return pinned !== undefined;
+          });
+        }
+
+        const localized = pinned ?? shared;
+
+        if (localized !== undefined) return `${localized}${suffix}`;
+
+        // Short of the wanted locale, a path that serves its own page stays,
+        // and one another page is served at takes any locale's pathname of it.
+        const own = delocalized(pathname);
+
+        if (!own || samePath(own.path, pathname)) return `${pathname}${suffix}`;
+
+        let other: string | undefined;
+
+        walk(root, parts.segments, (found) => [...found.value.targets.values()].some((target) => (other = lead(found, target)?.localized) !== undefined));
+
+        return `${other ?? pathname}${suffix}`;
       } catch {
         return path;
       }
@@ -381,13 +501,16 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * specific pattern, as SvelteKit ranks its routes, whatever the table's
  * order, and a locale an entry leaves out falls through to the next pattern
  * that matches. A pathname the table does not name passes through unchanged.
+ * On the server, the compile warns of a localized pattern that takes a
+ * canonical pathname of another page, which that page is then never served
+ * at.
  *
  * The table is read when `defineI18n()`'s wiring first needs it, and
  * compiled then, once per `defineI18n()`. A pathname is visitor input: no
  * function of the wiring throws on one, `reroute` and `delocalize` run no
  * regex on it and walk one trie, and `localizePath` only regexes of one
- * character class, which are linear, and walks the localized trie once more
- * per match it tries.
+ * character class, which are linear, walks the canonical trie twice at most
+ * and the localized one once more per pathname it tries.
  *
  * @example
  * defineI18n(config, {
