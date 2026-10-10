@@ -541,7 +541,11 @@ differently.**
   reproduced is neither.
   An issue takes the milestone of the release the current work lands in
   when that release would ship the defect, and the open line's (`3.x`)
-  otherwise; the release plan (§4) lists what its milestone holds. Only a
+  otherwise; the release plan (§4) lists what its milestone holds. It is
+  opened with its labels as well, from those the tracker has: its kind
+  (`bug`, `enhancement`, `documentation`) and every package or area it lies
+  in (`base`, `lib`, `parsers`, `extensions`, `sv`, `examples`,
+  `typescript`). Only a
   finding worth landing in a stable release counts: a defect a consumer of
   a published package, its docs, the examples or the site can meet — in
   behaviour, types or cost — or a gap in the repository's own checks. A
