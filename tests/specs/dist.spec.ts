@@ -119,7 +119,7 @@ describe('published artifact', () => {
     else expect(await load(event)).toEqual({ i18n: { locale: 'en', route: '/' } });
   });
 
-  it('leaves the translated pathnames out of an app that does not import translatePathnames', async () => {
+  it('leaves the translated pathnames and the domains out of an app that does not import their factories', async () => {
     const bundled = async (names: string) => {
       const { metafile } = await build({
         stdin: { contents: `export { ${names} } from '@sveltekit-i18n/base/kit';`, resolveDir: fileURLToPath(new URL('../..', import.meta.url)) },
@@ -134,11 +134,12 @@ describe('published artifact', () => {
         logLevel: 'silent',
       });
 
-      return Object.values(metafile.outputs).flatMap(({ inputs }) => Object.keys(inputs).filter((input) => input.endsWith('dist/kit/pathnames.js')));
+      return Object.values(metafile.outputs).flatMap(({ inputs }) => Object.keys(inputs).filter((input) => /dist\/kit\/(pathnames|domains)\.js$/.test(input)));
     };
 
     expect(await bundled('defineI18n')).toEqual([]);
     expect(await bundled('defineI18n, translatePathnames')).toEqual(['dist/kit/pathnames.js']);
+    expect(await bundled('defineI18n, localeDomains')).toEqual(['dist/kit/domains.js']);
   });
 
   // Checked by `tsc`, which `npm test` runs over the built declarations.

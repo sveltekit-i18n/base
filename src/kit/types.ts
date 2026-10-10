@@ -47,7 +47,8 @@ export namespace Kit {
     preferred?: true;
   };
 
-  export type Options = {
+  /** The options of `defineI18n()`, whose `domains` complete the locales `Locale` names. */
+  export type Options<Locale extends string = string> = {
     /**
      * The visitor's choice, read from the event: a cookie, a route param, a
      * profile in `locals`. It is tried before `Accept-Language` (without a
@@ -81,6 +82,18 @@ export namespace Kit {
      * pathnames: translatePathnames({ '/about': { de: '/de/ueber-uns', cs: '/cs/o-nas' } })
      */
     pathnames?: Pathnames;
+    /**
+     * A locale per domain, as `localeDomains()` makes them of a map. A host
+     * the map lists negotiates among its own locales, with its first as the
+     * last resort, and `localizeHref` links a locale another host serves
+     * with that host's origin. A host it does not list negotiates as without
+     * `domains`. A value of another kind, or of a version of this package
+     * that binds it otherwise, is logged and serves no locale at a domain.
+     *
+     * @example
+     * domains: localeDomains({ 'https://example.com': ['en', 'de'], 'https://example.cz': 'cs' })
+     */
+    domains?: Domains<Locale>;
   };
 
   /**
@@ -89,6 +102,13 @@ export namespace Kit {
    * copies of the package meet.
    */
   export type Pathnames = { readonly '~translatePathnames': true };
+
+  /**
+   * What `localeDomains()` returns, for `Options['domains']`. Opaque, as
+   * `Pathnames` is; the locale it lists types the map's values, and it fits
+   * the options of any config whose locales accept it.
+   */
+  export type Domains<Locale extends string = string> = { readonly '~localeDomains': true; readonly '~locale'?: Locale };
 
   /** The locale an instance takes: what its `locale` property holds, or any string. */
   // `Exclude`, not `NonNullable`: `NonNullable<string & {}>` reduces to `string`, which absorbs the literals.
@@ -134,14 +154,15 @@ export namespace Kit {
     reroute: (input: { url: Pick<URL, 'pathname'> }) => string | undefined;
     /**
      * The canonical path of a URL, without `basePath` and with its search and
-     * hash, and the locale its translated pathname belongs to, when it
-     * belongs to one. A search or a hash SvelteKit hides is left out: the
-     * search while prerendering, the hash in a `load`.
+     * hash, the locale its translated pathname belongs to, when it belongs to
+     * one, and the first locale of its host, when `domains` lists the host. A
+     * search or a hash SvelteKit hides is left out: the search while
+     * prerendering, the hash in a `load`.
      *
      * @example
-     * delocalize(new URL('https://example.com/de/ueber-uns?q=1')) // { path: '/about?q=1', locale: 'de' }
+     * delocalize(new URL('https://example.com/de/ueber-uns?q=1')) // { path: '/about?q=1', locale: 'de', domain: 'en' }
      */
-    delocalize: (url: Pick<URL, 'pathname' | 'search' | 'hash'>) => { path: string; locale?: Locale };
+    delocalize: (url: Pick<URL, 'pathname' | 'search' | 'hash'> & Partial<Pick<URL, 'hostname'>>) => { path: string; locale?: Locale; domain?: Locale };
     /**
      * `path`, canonical or translated to any locale, translated to `locale`,
      * without `basePath`, percent-encoded and with its search and hash. A
@@ -152,5 +173,17 @@ export namespace Kit {
      * localizePath('/de/ueber-uns', 'cs') // '/cs/o-nas'
      */
     localizePath: (path: string, locale: Locale | null | undefined) => string;
+    /**
+     * The href of `path` in `locale`: `localizePath(path, locale)` with
+     * `basePath`, and the origin `domains` gives `locale` when another host
+     * serves it. Given the URL of the page it links from in `from`, it adds
+     * the origin only where the link leaves that page's host, and none from
+     * a host `domains` does not list (a dev server, a preview). A path that
+     * does not start with a single `/` comes back as `localizePath` gives it.
+     *
+     * @example
+     * localizeHref('/about', 'cs', page.url) // 'https://example.cz/about' from example.com, '/about' from example.cz
+     */
+    localizeHref: (path: string, locale: Locale | null | undefined, from?: Pick<URL, 'hostname'> | null) => string;
   };
 }

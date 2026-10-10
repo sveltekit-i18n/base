@@ -2286,7 +2286,8 @@ server builds an instance per request, hands it to the browser, and the browser
 keeps one instance per tab, following every navigation. What the server
 loaded is not fetched again in the browser, and no visitor sees another
 visitor's locale. Three more serve each page at a pathname of its locale:
-see [Translated pathnames](#translated-pathnames).
+see [Translated pathnames](#translated-pathnames). One more links a locale
+served at a domain of its own: see [Domains](#domains).
 
 ### Setup
 
@@ -2408,6 +2409,10 @@ candidate that matches, [`en-GB` falling back to `en`](#matchlocalerequested-ava
 5. [`fallbackLocale`](#fallbacklocale);
 6. the first locale the config serves: the loaders' locales in the order the
    config lists them, then the keys of `translations`.
+
+On a host [`domains`](#domains) lists, the pass negotiates against the
+locales of that host instead, takes the same first three candidates, and
+falls back to the host's first locale in place of 4–6.
 
 `initLocale` and `fallbackLocale` are [sanitized](#sanitizelocales) as the
 config's locales are, and so is what `preferredLocale` returns when
@@ -2662,7 +2667,8 @@ browser stands across the navigations whose pathname keeps that answer.
   the ones nothing links to in `prerender.entries` of SvelteKit's config.
   The `hreflang` alternates of a prerendered page name the origin it was
   rendered at: set it in `paths.origin` (`prerender.origin` in SvelteKit 2),
-  or they name `http://sveltekit-prerender`.
+  or they name `http://sveltekit-prerender`. An app served at several
+  [domains](#domains) sets neither, and builds them with `localizeHref`.
 - **Your own code sees the requested URL.** A redirect, a canonical link or
   an analytics path built from `page.url` or `event.url` names the
   translated pathname; `delocalize()` gives the canonical one. SvelteKit runs
@@ -2682,6 +2688,156 @@ browser stands across the navigations whose pathname keeps that answer.
   beside the table serves each of its pages at another pathname too. The
   [hash router](#pitfalls) is not supported: its route lives in the hash,
   which `reroute` does not read.
+
+### Domains
+
+`domains` serves a locale at a domain of its own — `example.cz` in Czech,
+`example.com` in English and German. It takes what `localeDomains(map)`
+returns, where, per origin, the map lists the locale or the locales its host
+serves, its own first; a locale belongs to one origin:
+
+```javascript
+// src/lib/i18n.js
+import { defineI18n, localeDomains } from '@sveltekit-i18n/base/kit';
+
+export const { handle, load, use, get, delocalize, localizeHref } = defineI18n(config, {
+  domains: localeDomains({
+    'https://example.com': ['en', 'de'],
+    'https://example.cz': 'cs',
+  }),
+});
+```
+
+An app that imports no `localeDomains` ships none of it, and its
+`localizeHref` adds no origin. A value `localeDomains()` did not make is
+logged through [`log`](#loglevel) once, at first use, and serves no locale at
+a domain; `undefined` and `null` do that silently. It combines with
+[`pathnames`](#translated-pathnames): a domain's locale needs no prefix in
+its pathnames (`'/about': { en: '/about', de: '/de/ueber-uns', cs: '/o-nas' }`).
+
+- **A host the map lists negotiates among its own locales.** A translated
+  pathname, `preferredLocale` and the header count only for a locale the host
+  serves, and the host's first locale is the last resort (see [Which
+  locale](#which-locale)), so `example.cz` renders Czech whatever the visitor's
+  header, cookie or pathname names. A host the map does not list — a dev
+  server, a preview deployment, `www.`, the origin SvelteKit prerenders at —
+  negotiates among every locale served, as without `domains`.
+- **A host is matched by its name.** Its case, one trailing dot, the scheme
+  and the port are ignored, so a request behind a proxy that reports `http`,
+  and a dev server's `:5173`, still match. An internationalized name is
+  written as it reads, `https://příklad.cz`; `URL` reads both it and its
+  `xn--` form alike.
+- **The map is checked when first used**, once per `defineI18n()`: a key that
+  is no `http` or `https` origin (credentials before the host, or a path, a
+  search or a hash after it), a host two keys name, a value that is no locale or list of
+  locales, a locale two hosts list and a locale the config serves no
+  translations for are logged and skipped. A served locale no host lists is
+  logged, and served at every host the map does not list.
+
+`localizeHref(path, locale, from?)` is the href of `path` in `locale`:
+`localizePath(path, locale)` with [`basePath`](#basepath), and the origin the
+map spells for `locale` when another host serves it. Given the URL of the
+page it links from, it adds the origin only where the link leaves that page's
+host, and none from a host the map does not list, so a dev server or a
+preview never links to production. Without `from`, every locale the map
+lists gets its origin, which `hreflang` alternates and a sitemap want. A path
+that does not start with a single `/` comes back as `localizePath` gives it.
+`delocalize(url)` gives the first locale of the URL's host too, as `domain`:
+
+```svelte
+<!-- a locale switcher -->
+<script lang="ts">
+  import { page } from '$app/state';
+  import { delocalize, get, localizeHref } from '#lib/i18n.js';
+
+  const i18n = get();
+</script>
+
+{#each i18n.locales as locale (locale)}
+  <a href={localizeHref(delocalize(page.url).path, locale, page.url)} hreflang={locale}>{locale}</a>
+{/each}
+```
+
+Locales that share a host are told apart by their pathnames alone, so give
+each of them [translated pathnames](#translated-pathnames) of its own. The
+[`hreflang` alternates](#translated-pathnames) are built the same way, with
+`localizeHref(path, locale)` and no `from`, which names each listed locale's
+origin, the one the map spells, from whatever host renders the page; it
+carries `basePath`, so it takes no `resolve()`:
+
+```svelte
+<link rel="alternate" hreflang={locale} href={new URL(localizeHref(path, locale), page.url.href).href} />
+```
+
+A link to another host is a full page load, which SvelteKit makes of any
+link that leaves the origin, so switch the locale by such a link (or
+`location.href`), never by `goto()`, which refuses another origin, nor by
+`setLocale()`, which stands on a host that does not serve that locale.
+
+- **Redirect a locale to its host.** A pathname of another host's locale
+  renders the host's own locale; a `handle` can send it where it belongs. The
+  target names the host the map spells, never the request's, and a host
+  never redirects to itself. It localizes the pathname as requested, which
+  `localizeHref` reads back to its page as `delocalize` does:
+
+  ```javascript
+  // src/hooks.server.js
+  import { redirect } from '@sveltejs/kit';
+  import { sequence } from '@sveltejs/kit/hooks';
+  import { config, delocalize, handle as i18nHandle, localizeHref } from '#lib/i18n.js';
+
+  const base = config.basePath ?? '';
+
+  export const handle = sequence(({ event, resolve }) => {
+    if (!event.isDataRequest && !event.isRemoteRequest) {
+      const { locale, domain } = delocalize(event.url);
+      const href = localizeHref(event.url.pathname.slice(base.length) || '/', locale ?? domain, event.url);
+
+      // The search is read on a redirect alone: reading it while prerendering
+      // throws. SvelteKit 2 takes no third argument.
+      if (/^https?:/.test(href)) redirect(308, `${href}${event.url.search}`, { external: true });
+    }
+
+    return resolve(event);
+  }, i18nHandle);
+  ```
+
+  `www.` is no host of the map; redirect it to its domain at the proxy or in
+  the same `handle`.
+- **Every request keeps its own host.** Set no `paths.origin` in SvelteKit 3:
+  `adapter-node` then serves every request at that one origin, and SvelteKit
+  answers a form or a remote function posted from another domain with 403.
+  Nor set adapter-node's `ORIGIN` in SvelteKit 2; behind a proxy, set
+  `HOST_HEADER` (and `PROTOCOL_HEADER`) instead.
+- **A prerendered file is served at its pathname on every host**, before
+  `handle` runs, in the locale it was rendered in at the prerendering origin.
+  Keep that origin out of the map (set no `paths.origin`, nor
+  `prerender.origin` in SvelteKit 2): at a host the map lists, a page renders
+  that host's locales alone, and the redirect above fails the build at a page
+  of another host's locale. Prerender only a page whose pathname gives its
+  locale, which takes a [translated pathname](#translated-pathnames) of its
+  own per locale, and list the pathnames of each domain in
+  `prerender.entries`: the crawler follows no link to another origin.
+- **A shared cache keys on the host.** A page and its `__data.json` depend on
+  the host they were requested at, and a cache in front of the app must keep
+  them apart: nginx's default `proxy_cache_key`, for one, names the upstream,
+  not the visitor's host.
+- **A cookie belongs to one domain.** What `preferredLocale` reads at
+  `example.com` does not reach `example.cz`, and counts only for a locale the
+  host serves.
+- **In development,** `localhost` is no host of the map, so it serves every
+  locale. To try the domains locally, map `*.localhost` hosts, which browsers
+  resolve and Vite serves without `server.allowedHosts`:
+
+  ```javascript
+  const domains = import.meta.env.DEV
+    ? { 'http://com.localhost:5173': ['en', 'de'], 'http://cz.localhost:5173': 'cs' }
+    : { 'https://example.com': ['en', 'de'], 'https://example.cz': 'cs' };
+
+  export const { handle, load, use, get, delocalize, localizeHref } = defineI18n(config, {
+    domains: localeDomains(domains),
+  });
+  ```
 
 ### What `data.i18n` is
 
@@ -3671,13 +3827,15 @@ TypeScript patterns live in [Best Practices](https://github.com/sveltekit-i18n/l
 ## Upgrading from 3.3
 
 A 3.3 config loads in 3.4 as it is, and `/kit` behaves as it did until its
-options state `pathnames`.
+options state `pathnames` or `domains`.
 
 ### New
 
 - [`pathnames`](#translated-pathnames) in the options of `defineI18n()`, which takes what the new `translatePathnames()` of `/kit` returns, and `reroute`, `delocalize` and `localizePath` among what it returns — each page served at a pathname of its locale, from one route tree.
-- A second type parameter on `Kit.T`, the locale its `delocalize` and `localizePath` take and give, and `Kit.LocaleOf`, which reads it off an instance.
+- A second type parameter on `Kit.T`, the locale its `delocalize`, `localizePath` and `localizeHref` take and give, and `Kit.LocaleOf`, which reads it off an instance.
 - `Kit.Pathnames`, the type of what `translatePathnames()` returns.
+- [`domains`](#domains) in the options of `defineI18n()`, which takes what the new `localeDomains()` of `/kit` returns, and `localizeHref` among what it returns — a locale served at a domain of its own. `delocalize` gives the first locale of the URL's host as `domain`, and takes a URL's `hostname` for it.
+- A type parameter on `Kit.Options`, the locale its `domains` take, and `Kit.Domains`, the type of what `localeDomains()` returns.
 
 ---
 
