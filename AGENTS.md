@@ -922,8 +922,8 @@ not RCE/XSS.
   of more than 64 segments alone.
   The translated pathnames run no regex on it in `reroute` and `delocalize`,
   which walk one trie and visit each of its nodes once; `localizePath` walks
-  the canonical trie once and the localized one once more per match it
-  tries, and runs only regexes of one character class, which are linear.
+  the canonical trie twice at most and the localized one once more per
+  pathname it tries, and runs only regexes of one character class, which are linear.
 
 ## 12. Comments & language
 

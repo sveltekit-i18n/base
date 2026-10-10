@@ -157,20 +157,26 @@ export namespace Kit {
      * hash, the locale its translated pathname belongs to, when it belongs to
      * one, and the first locale of its host, when `domains` lists the host. A
      * search or a hash SvelteKit hides is left out: the search while
-     * prerendering, the hash in a `load`.
+     * prerendering, the hash in a `load`. A trailing slash is kept, except on
+     * the root, which comes back as `/`.
      *
      * @example
      * delocalize(new URL('https://example.com/de/ueber-uns?q=1')) // { path: '/about?q=1', locale: 'de', domain: 'en' }
      */
     delocalize: (url: Pick<URL, 'pathname' | 'search' | 'hash'> & Partial<Pick<URL, 'hostname'>>) => { path: string; locale?: Locale; domain?: Locale };
     /**
-     * `path`, canonical or translated to any locale, translated to `locale`,
-     * without `basePath`, percent-encoded and with its search and hash. A
-     * path the table does not translate to `locale` comes back canonical, and
-     * a locale the table does not name, or none, leaves `path` as it is.
+     * The canonical `path` translated to `locale`, without `basePath`,
+     * percent-encoded and with its search and hash. A pathname it translates
+     * to leads back to the page of `path`: the one of `locale` alone first,
+     * then one several locales share. Short of both, a path that is a
+     * pathname of its own page comes back as it is, and one another page
+     * takes comes back as another locale's pathname of its page, when the
+     * page has one. No locale leaves `path` as it is. A pathname of the site is no canonical path: `delocalize` gives the
+     * path of a URL.
      *
      * @example
-     * localizePath('/de/ueber-uns', 'cs') // '/cs/o-nas'
+     * localizePath('/about', 'cs') // '/cs/o-nas'
+     * localizePath(delocalize(page.url).path, 'cs') // the page shown, in Czech
      */
     localizePath: (path: string, locale: Locale | null | undefined) => string;
     /**
