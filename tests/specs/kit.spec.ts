@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, expectTypeOf, it, onTestFinished, vi } fr
 import { BROWSER } from '#kit-env';
 
 import { defineI18n } from '../../src/kit/define.svelte.js';
+import { localeDomains } from '../../src/kit/domains.js';
 import * as server from '../../src/kit/backend.js';
 import type { Shared } from '../../src/kit/internal.js';
 import { translatePathnames } from '../../src/kit/pathnames.js';
@@ -3469,6 +3470,287 @@ describe('/kit', () => {
         await i18n.setLocale('cs');
         expect(reroute({ url: url('/cs/o-nas') })).toBe(before);
         expect(reroute({ url: url('/about') })).toBe(undefined);
+      });
+    });
+  });
+
+  describe('domains', () => {
+    const loaders = (...locales: string[]) => locales.map((locale) => ({ locale, namespace: 'common', loader: () => Promise.resolve({}) }));
+    const map = { 'https://example.com': ['en', 'de'], 'https://example.cz': 'cs' };
+    const hosted = (options: Kit.Options = {}, extra: Record<string, any> = {}) => setup({ loaders: loaders('en', 'cs', 'de'), ...extra }, { domains: localeDomains(map), ...options });
+    const at = (href: string, options: EventOptions = {}) => {
+      const { pathname } = new URL(href);
+
+      return { ...serverEvent(pathname, options), url: new URL(href) };
+    };
+
+    it('serves no locale at a domain without a map', () => {
+      const { delocalize, localizeHref, warnings } = setup();
+      const based = setup({ basePath: '/repo/' });
+
+      expect(delocalize(new URL('https://example.cz/about'))).toEqual({ path: '/about' });
+      expect(localizeHref('/about', 'cs')).toBe('/about');
+      expect(localizeHref('/about', 'cs', new URL('https://example.com/'))).toBe('/about');
+      expect(based.localizeHref('/', 'cs')).toBe('/repo/');
+      expect(warnings).toEqual([]);
+    });
+
+    it('reads no hostname in delocalize without a map', () => {
+      const { delocalize } = setup();
+      const url = new URL('https://example.cz/about');
+      let reads = 0;
+      const counted = new Proxy(url, {
+        get: (target, property) => {
+          if (property === 'hostname') reads += 1;
+
+          return Reflect.get(target, property, target);
+        },
+      });
+
+      expect(delocalize(counted)).toEqual({ path: '/about' });
+      expect(reads).toBe(0);
+    });
+
+    it('logs what localeDomains() did not make through the config\'s logger, once, at first use, and serves no locale at a domain', () => {
+      const key = Symbol.for('@sveltekit-i18n/base/kit/domains@1');
+      const other = Object.freeze({ [Symbol.for('@sveltekit-i18n/base/kit/domains@0')]: () => ({}) });
+      const bound = { locales: () => ['cs'], origin: () => 'https://example.cz' };
+      const misshapen = Object.keys(bound).flatMap((member) => [undefined, null, true, {}].map((value) => Object.freeze({ [key]: () => ({ ...bound, [member]: value }) })));
+      const throwing = Object.freeze({ [key]: () => { throw new Error('bind'); } });
+
+      for (const domains of [map, localeDomains, other, ...misshapen, throwing, Object.freeze({}), translatePathnames({})]) {
+        const { delocalize, localizeHref, warnings } = setup({ loaders: loaders('en', 'cs') }, { domains: domains as any });
+
+        expect(warnings).toEqual([]);
+        expect(delocalize(new URL('https://example.cz/about'))).toEqual({ path: '/about' });
+        expect(localizeHref('/about', 'cs')).toBe('/about');
+        expect(warnings).toEqual(['[i18n]: `domains` takes what `localeDomains(map)` of a compatible version of the package returns. No locale is served at a domain.']);
+      }
+
+      for (const domains of [undefined, null]) {
+        const { localizeHref, warnings } = setup({}, { domains: domains as any });
+
+        expect(localizeHref('/about', 'cs')).toBe('/about');
+        expect(warnings).toEqual([]);
+      }
+    });
+
+    it('takes the binding of another copy of the package by its registry key', () => {
+      const key = Symbol.for('@sveltekit-i18n/base/kit/domains@1');
+      const domains = localeDomains({ 'https://example.cz': 'cs', 'https://example.com': 'en' });
+      const copied = Object.freeze({ [key]: (domains as unknown as Record<symbol, unknown>)[key] }) as unknown as typeof domains;
+      const { localizeHref, warnings } = setup({}, { domains: copied });
+
+      expect(Object.isFrozen(domains)).toBe(true);
+      expect(localizeHref('/about', 'cs')).toBe('https://example.cz/about');
+      expect(warnings).toEqual([]);
+    });
+
+    it('compiles a map once per defineI18n(), with that config\'s locales', () => {
+      const shared = localeDomains({ 'https://example.cz': 'cs_CZ', 'https://example.com': 'en' });
+      const custom = setup({ sanitizeLocales: (locale: string) => locale.replace('_', '-'), loaders: loaders('en', 'cs-CZ') }, { domains: shared });
+      const plain = setup({ sanitizeLocales: false, loaders: loaders('en', 'cs_CZ') }, { domains: shared });
+
+      expect(custom.delocalize(new URL('https://example.cz/'))).toEqual({ path: '/', domain: 'cs-CZ' });
+      expect(plain.delocalize(new URL('https://example.cz/'))).toEqual({ path: '/', domain: 'cs_CZ' });
+      expect(custom.localizeHref('/', 'cs-cz')).toBe('https://example.cz/');
+      expect([custom.warnings, plain.warnings]).toEqual([[], []]);
+    });
+
+    it('matches a host by its name, whatever its case, a trailing dot, its scheme and its port', () => {
+      const { delocalize } = hosted();
+
+      for (const href of ['https://example.cz/', 'http://EXAMPLE.cz:5173/', 'https://example.cz./']) {
+        expect(delocalize(new URL(href)).domain).toBe('cs');
+      }
+
+      expect(delocalize({ pathname: '/', search: '', hash: '', hostname: 'Example.CZ.' }).domain).toBe('cs');
+      expect(delocalize(new URL('https://www.example.cz/')).domain).toBe(undefined);
+      expect(delocalize(new URL('https://__proto__/')).domain).toBe(undefined);
+      expect(delocalize({ pathname: '/', search: '', hash: '' })).toEqual({ path: '/' });
+    });
+
+    it('reads an internationalized domain name as URL does', () => {
+      const { delocalize, localizeHref, warnings } = setup({ loaders: loaders('en', 'cs') }, { domains: localeDomains({ 'https://příklad.cz': 'cs', 'https://example.com': 'en' }) });
+
+      expect(delocalize(new URL('https://příklad.cz/')).domain).toBe('cs');
+      expect(delocalize(new URL('https://xn--pklad-zsa96e.cz/')).domain).toBe('cs');
+      expect(localizeHref('/', 'cs')).toBe('https://xn--pklad-zsa96e.cz/');
+      expect(warnings).toEqual([]);
+    });
+
+    it('gives the first locale of a host, beside the locale of its pathname', () => {
+      const { delocalize } = hosted({ pathnames: translatePathnames({ '/about': { cs: '/cs/o-nas' } }) });
+
+      expect(delocalize(new URL('https://example.com/cs/o-nas?q=1'))).toEqual({ path: '/about?q=1', locale: 'cs', domain: 'en' });
+      expect(delocalize(new URL('https://example.cz/about'))).toEqual({ path: '/about', domain: 'cs' });
+      expect(delocalize(new URL('https://localhost:5173/cs/o-nas'))).toEqual({ path: '/about', locale: 'cs' });
+    });
+
+    it('links a locale to the origin of its host where the link leaves the host it is on', () => {
+      const { localizeHref } = hosted({}, { basePath: '/repo' });
+      const com = new URL('https://example.com/repo/x');
+      const cz = new URL('https://example.cz/repo/x');
+
+      expect(localizeHref('/about?q=1#top', 'cs')).toBe('https://example.cz/repo/about?q=1#top');
+      expect(localizeHref('/about', 'de')).toBe('https://example.com/repo/about');
+      expect(localizeHref('/about', 'cs', com)).toBe('https://example.cz/repo/about');
+      expect(localizeHref('/about', 'cs', cz)).toBe('/repo/about');
+      expect(localizeHref('/about', 'de', cz)).toBe('https://example.com/repo/about');
+      expect(localizeHref('/about', 'de', com)).toBe('/repo/about');
+      expect(localizeHref('/about', 'CS', com)).toBe('https://example.cz/repo/about');
+      // A host the map does not list stays where it is: a dev server, a preview.
+      expect(localizeHref('/about', 'cs', new URL('http://localhost:5173/'))).toBe('/repo/about');
+      expect(localizeHref('/about', 'cs', null)).toBe('https://example.cz/repo/about');
+      // A locale no host serves, or none.
+      expect(localizeHref('/about', 'fr', com)).toBe('/repo/about');
+      expect(localizeHref('/about', 'fr')).toBe('/repo/about');
+      expect(localizeHref('/about', undefined)).toBe('/repo/about');
+      // What is no path of the app.
+      for (const path of ['//evil.test/x', 'https://evil.test/x', 'about', '']) expect(localizeHref(path, 'cs')).toBe(path);
+    });
+
+    it('translates the path of a link to another host', () => {
+      const { localizeHref } = hosted({ pathnames: translatePathnames({ '/about': { en: '/about', cs: '/o-nas', de: '/ueber-uns' } }) });
+
+      expect(localizeHref('/about', 'cs', new URL('https://example.com/'))).toBe('https://example.cz/o-nas');
+      expect(localizeHref('/ueber-uns', 'cs', new URL('https://example.com/'))).toBe('https://example.cz/o-nas');
+      expect(localizeHref('/o-nas', 'de', new URL('https://example.cz/'))).toBe('https://example.com/ueber-uns');
+      expect(localizeHref('/o-nas', 'en', new URL('https://example.com/'))).toBe('/about');
+    });
+
+    it('logs what is wrong with the map once, at first use, and serves the rest', () => {
+      const { delocalize, localizeHref, warnings } = setup({ loaders: loaders('en', 'cs', 'de', 'sk') }, {
+        domains: localeDomains({
+          'example.org': 'en',
+          'https://example.org/path': 'en',
+          'https://example.org/?q': 'en',
+          'https://example.org/#h': 'en',
+          'https://user@example.org': 'en',
+          'ftp://example.org': 'en',
+          'https://example.com': ['en', 'de'],
+          'http://EXAMPLE.com:8080': 'sk',
+          'https://example.cz': ['cs', 'en', 'fr'],
+          'https://example.de': ['it'],
+          'https://example.at': [],
+          'https://example.ch': [1 as any],
+          'https://example.it': '',
+          // eslint-disable-next-line no-sparse-arrays
+          'https://example.pl': [, 'cs'] as any,
+        }),
+      });
+
+      expect(warnings).toEqual([]);
+      expect(delocalize(new URL('https://example.cz/')).domain).toBe('cs');
+
+      expect(warnings).toEqual([
+        ...['example.org', 'https://example.org/path', 'https://example.org/?q', 'https://example.org/#h', 'https://user@example.org', 'ftp://example.org'].map((key) => `[i18n]: \`domains\` skips '${key}': it is no origin.`),
+        '[i18n]: `domains` skips \'http://EXAMPLE.com:8080\': \'https://example.com\' serves its host.',
+        '[i18n]: `domains` skips \'en\' at \'https://example.cz\': \'https://example.com\' serves it.',
+        ...['https://example.at', 'https://example.ch', 'https://example.it', 'https://example.pl'].map((key) => `[i18n]: \`domains\` skips '${key}': its value is no locale or list of locales.`),
+        '[i18n]: `domains` lists \'fr\', \'it\', which the config serves no translations for.',
+        '[i18n]: `domains` leaves out \'sk\', which no domain serves.',
+      ]);
+
+      expect(delocalize(new URL('https://example.de/')).domain).toBe(undefined);
+      expect(localizeHref('/', 'sk')).toBe('/');
+      expect(localizeHref('/', 'en')).toBe('https://example.com/');
+      expect(warnings).toHaveLength(14);
+    });
+
+    it('logs a map that is no object or cannot be read, once', () => {
+      const throwing = new Proxy({}, { ownKeys: () => { throw new Error('read'); } });
+
+      for (const [value, message] of [['nope', 'is not an object. No locale is served at a domain'], [throwing, 'cannot be read. No locale is served at a domain']] as const) {
+        const { localizeHref, delocalize, warnings } = setup({}, { domains: localeDomains(value as any) });
+
+        expect(localizeHref('/', 'cs')).toBe('/');
+        expect(delocalize(new URL('https://example.cz/'))).toEqual({ path: '/' });
+        expect(warnings).toEqual([`[i18n]: \`domains\` ${message}.`]);
+      }
+    });
+
+    it('types the locales of the map by the config it goes to', () => {
+      const config = { parser: valueParser, loaders: loaders('en', 'cs') as [{ locale: 'en'; namespace: 'common'; loader: () => Promise<object> }, { locale: 'cs'; namespace: 'common'; loader: () => Promise<object> }] };
+
+      defineI18n(config, { domains: localeDomains({ 'https://example.cz': 'cs', 'https://example.com': ['en', 'fr'] }) });
+
+      const { localizeHref, delocalize } = defineI18n(config, { domains: localeDomains({ 'https://example.cz': 'cs' }) });
+
+      expectTypeOf(localizeHref).parameter(1).toEqualTypeOf<'en' | 'cs' | (string & {}) | null | undefined>();
+      expectTypeOf(delocalize(url('/')).domain).toEqualTypeOf<'en' | 'cs' | (string & {}) | undefined>();
+      expectTypeOf(localeDomains({ 'https://example.cz': 'cs' })).toEqualTypeOf<Kit.Domains>();
+
+      // Options annotated without a locale still fit.
+      const options: Kit.Options = { domains: localeDomains({ 'https://example.cz': 'cs' }) };
+
+      defineI18n(config, options);
+
+      // And so do options and domains annotated with the config's locales.
+      const closed: Kit.Options<'en' | 'cs'> = { domains: localeDomains({ 'https://example.cz': 'cs' }) };
+
+      defineI18n(config, closed);
+      defineI18n(config, { domains: localeDomains<'en' | 'cs'>({ 'https://example.cz': 'cs', 'https://example.com': 'en' }) });
+      // @ts-expect-error a locale is a string
+      localeDomains({ 'https://example.cz': 1 });
+    });
+
+    describe.skipIf(BROWSER)('server half', () => {
+      it('negotiates among the locales of the host, and falls back to its first, which no visitor preferred', async () => {
+        const wiring = hosted({ preferredLocale: (event) => event.cookies?.get('lang') }, { initLocale: 'cs', fallbackLocale: 'cs' });
+        const answer = async (href: string, options: EventOptions) => {
+          const { locale, preferred } = (await wiring.load(at(href, options))).i18n;
+
+          return { locale, preferred };
+        };
+
+        expect(await answer('https://example.cz/', { lang: 'en' })).toEqual({ locale: 'cs', preferred: undefined });
+        expect(await answer('https://example.com/', { lang: 'de, en;q=0.5' })).toEqual({ locale: 'de', preferred: undefined });
+        expect(await answer('https://example.com/', { lang: 'cs' })).toEqual({ locale: 'en', preferred: undefined });
+        expect(await answer('https://example.com/', { lang: 'cs', cookie: 'de' })).toEqual({ locale: 'de', preferred: true });
+        expect(await answer('https://example.com/', { lang: 'de', cookie: 'cs' })).toEqual({ locale: 'de', preferred: undefined });
+        expect(await answer('https://example.cz/', { lang: 'de', cookie: 'de' })).toEqual({ locale: 'cs', preferred: undefined });
+        expect(await answer('https://example.com/', { lang: 'de-AT' })).toEqual({ locale: 'de', preferred: undefined });
+        // A host the map does not list negotiates among every locale, as without `domains`.
+        expect(await answer('http://localhost:5173/', { lang: 'cs' })).toEqual({ locale: 'cs', preferred: undefined });
+        expect(await answer('http://sveltekit-prerender/', { lang: '' })).toEqual({ locale: 'cs', preferred: undefined });
+        expect(await answer('https://www.example.com/', { lang: 'fr', cookie: 'de' })).toEqual({ locale: 'de', preferred: true });
+        expect(await html(wiring, at('https://example.cz/', { lang: 'en' }))).toBe('<html lang="cs">');
+        expect(await wiring.load(at('https://example.cz/x', { lang: 'en', isDataRequest: true }))).toEqual({ i18n: { locale: 'cs', route: '/x' } });
+      });
+
+      it('takes the locale of a translated pathname only where its host serves it', async () => {
+        const wiring = hosted({
+          pathnames: translatePathnames({
+            '/about': { en: '/about', de: '/de/ueber-uns', cs: '/o-nas' },
+            '/[...rest]': { en: '/[...rest]', de: '/de/[...rest]', cs: '/[...rest]' },
+          }),
+        });
+        const answer = async (href: string, options: EventOptions = {}) => {
+          const { locale, route, preferred } = (await wiring.load(at(href, options))).i18n;
+
+          return { locale, route, preferred };
+        };
+
+        expect(await answer('https://example.cz/about', { lang: 'en' })).toEqual({ locale: 'cs', route: '/about', preferred: undefined });
+        expect(await answer('https://example.cz/o-nas', { lang: 'en' })).toEqual({ locale: 'cs', route: '/about', preferred: true });
+        expect(await answer('https://example.com/de/ueber-uns', { lang: 'en' })).toEqual({ locale: 'de', route: '/about', preferred: true });
+        expect(await answer('https://example.com/about', { lang: 'de' })).toEqual({ locale: 'en', route: '/about', preferred: true });
+        expect(await answer('https://example.com/o-nas', { lang: 'de' })).toEqual({ locale: 'de', route: '/about', preferred: undefined });
+        expect(await answer('http://localhost:5173/de/ueber-uns', { lang: 'cs' })).toEqual({ locale: 'de', route: '/about', preferred: true });
+      });
+    });
+
+    describe.runIf(effectsRun)('browser', () => {
+      it('negotiates among the locales of the host in an app without a server load', async () => {
+        const languages = vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['cs', 'de']);
+
+        onTestFinished(() => languages.mockRestore());
+
+        const { load } = hosted();
+        const { i18n } = await load({ ...universalEvent('/', null), url: new URL('https://example.com/') });
+
+        expect(i18n.locale).toBe('de');
       });
     });
   });

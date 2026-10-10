@@ -67,13 +67,14 @@ repositories:
 | `src/I18n.svelte.ts` | `class I18nCore` + the exported `I18n` facade — the runes-based core (state, loading, orchestration, extension pipe) |
 | `src/utils.ts` | pure helpers (`translate`, `sanitizeLocales`, `matchLocale`, `textDirection`, `toDotNotation`, `serialize`, `fetchTranslation`, `testRoute`) |
 | `src/exports/utils.ts` | the published `/utils` subpath — a facade re-exporting the reusable helpers and the `DotNotation` type |
-| `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n`, `translatePathnames` and the `Kit` types |
+| `src/exports/kit.ts` | the published `/kit` subpath — `defineI18n`, `translatePathnames`, `localeDomains` and the `Kit` types |
 | `src/kit/define.svelte.ts` | `defineI18n`: negotiation, the universal `load`, `use()` and `get()` |
 | `src/kit/backend.ts` / `backend.browser.ts` | the server half (`handle`, the server `load`) and the stub `#kit-server` resolves to under `browser` |
 | `src/kit/env.ts` / `env.browser.ts` | `BROWSER`, resolved through `#kit-env` |
 | `src/kit/types.ts` | the `Kit` namespace — the event shapes it reads and the exports' types |
-| `src/kit/internal.ts` | the unpublished types between the factory, the server half and the translated pathnames |
+| `src/kit/internal.ts` | the unpublished types between the factory, the server half, the translated pathnames and the domains |
 | `src/kit/pathnames.ts` | `translatePathnames`, the value `options.pathnames` takes: the matcher behind `reroute`, `delocalize`, `localizePath` and the canonical pathname the wiring loads |
+| `src/kit/domains.ts` | `localeDomains`, the value `options.domains` takes: the locales of a host and the origin of a locale, behind the negotiation, `delocalize` and `localizeHref` |
 | `src/logger.ts` | `loggerFactory` + module-level `logger` singleton + `setLogger` |
 | `src/types.ts` | all public/internal types |
 | `tests/specs/index.spec.ts` | the suite |
@@ -491,6 +492,23 @@ repositories:
   negotiation candidate, marked `preferred`. Segments compare decoded and come
   out percent-encoded, an empty segment matches nothing, and none of the
   functions throws: a pathname is visitor input.
+- **Domains scope the negotiation by host.** `options.domains` takes what
+  `localeDomains(map)` returns, bound as `translatePathnames()` is (a frozen
+  object under a registry-wide, versioned symbol, read once per
+  `defineI18n()` at first use, logged and ignored when anything else but
+  `undefined` and `null`), so an app that never imports `localeDomains` ships
+  none of it. The map's keys are origins, read by `URL`; its values a locale
+  or a list of them, the host's own first, and a locale belongs to one
+  origin. A host the map lists negotiates the same candidates among its own
+  locales alone, and falls back to its first in place of `initLocale`,
+  `fallbackLocale` and the first locale served; that fallback is no
+  visitor's choice, so it never sets `preferred`, or a prerendered page would
+  carry the build's host into a navigation. A host it does not list (a dev
+  server, a preview, the prerendering origin) negotiates as without
+  `domains`. A host is matched by its hostname (lowercased, one trailing dot
+  dropped), never by scheme or port, in a `Map`, since a hostname is visitor
+  input, and an origin the wiring writes (`localizeHref`) is the one the map
+  spells, never the request's.
 - **Preprocessing.** `addTranslations` applies `preprocess` (`'full'` default |
   `'preserveArrays'` | `'none'` | custom fn) via `toDotNotation`.
   `rawTranslations` is pre-preprocess; `translations` is post-preprocess. Keep
@@ -506,9 +524,9 @@ repositories:
 3. **Parser-agnostic.** No imports from `@sveltekit-i18n/parser-*`.
 4. **ESM-only (single ESM artifact, no CJS), npm for development.** The
    package targets Node 22+, Bun 1.2+ and Deno 2+: the source imports no
-   `node:` module and touches no platform API beyond `Intl` (the network is
-   the consumer's loader), and the CI runtime legs exist to keep that true.
-   `/kit` imports nothing from `$app/*` or `@sveltejs/kit` either: it reads
+   `node:` module and touches no platform API beyond `Intl` and `URL` (the
+   network is the consumer's loader), and the CI runtime legs exist to keep
+   that true. `/kit` imports nothing from `$app/*` or `@sveltejs/kit` either: it reads
    SvelteKit's events by shape, and the consumer's toolchain resolves its
    `imports` conditions. Its only other platform APIs are the browser's:
    `navigator.languages` behind `BROWSER`, and `document` inside `use()`'s

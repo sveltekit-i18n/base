@@ -7,8 +7,8 @@ import { loaders, log, n, parser, table } from './data.js';
 const record = collect(import.meta.filename);
 
 const { defineI18n } = kit;
-// A base without translated pathnames has no `translatePathnames`.
-const { translatePathnames } = kit as Partial<typeof kit>;
+// A base without translated pathnames has no `translatePathnames`, and one without domains no `localeDomains`.
+const { translatePathnames, localeDomains } = kit as Partial<typeof kit>;
 
 const KEYS = 10_000;
 
@@ -73,7 +73,7 @@ it('translated pathnames', () => {
   const micro = (fn: () => void) => 1_000 * time(fn, { inner: 2_000 });
 
   for (const entries of [10, 1_000]) {
-    const { reroute, localizePath } = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries)) });
+    const { delocalize, reroute, localizePath } = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries)) });
     const translated = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/${LOCALES[i % 5]}/strana${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`)));
     const missed = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/elsewhere/${i}`)));
     const canonical = cycle(Array.from({ length: 64 }, (_, i) => `/page${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`));
@@ -82,6 +82,7 @@ it('translated pathnames', () => {
     expect([reroute({ url: new URL('https://x.test/de/strana1/42') }), localizePath('/page1/42', 'cs'), localizePath('/cs/strana1/42', 'de')]).toEqual(['/page1/42', '/cs/strana1/42', '/de/strana1/42']);
 
     record(`reroute, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: translated() })));
+    record(`delocalize, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => delocalize(translated())));
     record(`reroute, a pathname no entry translates (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: missed() })));
     record(`localizePath, a canonical path to a locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(canonical(), 'de')));
     record(`localizePath, a translated path to another locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(localized(), 'de')));
@@ -99,3 +100,19 @@ it('translated pathnames', () => {
 
   record('reroute, a pathname of 1,000 segments', 'time', 'µs', micro(() => wiring.reroute({ url: deep() })));
 });
+
+it('domains', async () => {
+  // A base without domains measures none of them.
+  if (!localeDomains) return;
+
+  const domains = localeDomains(Object.fromEntries(LOCALES.map((locale) => [`https://example.${locale}`, locale])));
+  const { delocalize, load, localizeHref } = defineI18n({ parser, log, loaders: loaders(table(KEYS, 'namespaces'), LOCALES) }, { domains });
+  const from = new URL('https://example.cs/');
+  const onDomain = () => ({ ...event(), url: new URL('https://example.de/') });
+
+  expect([(await load(onDomain())).i18n.locale, localizeHref('/about', 'de', from), localizeHref('/about', 'cs', from), delocalize(from)]).toEqual(['de', 'https://example.de/about', '/about', { path: '/', domain: 'cs' }]);
+
+  record(`the server load, a page render on a domain (${n(KEYS)} keys)`, 'time', 'ms', await timeAsync(() => load(onDomain())));
+  record('delocalize, a URL on a domain (5 domains)', 'time', 'µs', 1_000 * time(() => delocalize(from), { inner: 2_000 }));
+  record('localizeHref, a link to the domain of another locale (5 domains)', 'time', 'µs', 1_000 * time(() => localizeHref('/about', 'de', from), { inner: 2_000 }));
+}, 600_000);

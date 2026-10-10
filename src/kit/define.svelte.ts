@@ -7,7 +7,7 @@ import { I18n } from '../I18n.svelte.js';
 import { logError, logger, loggerFactory, setLogger } from '../logger.js';
 import type { Config, Loader, Snapshot } from '../types.js';
 import { configLocales, matchLocale, paramsSignature, quietlySanitized, resolveLoaders, routeParams, sanitizeLocales, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
-import { TRANSLATION, type Negotiated, type Params, type Setup, type Translation } from './internal.js';
+import { HOSTING, TRANSLATION, type Hosting, type Negotiated, type Params, type Setup, type Translation } from './internal.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -49,6 +49,7 @@ type Configured = { locales: string[]; handOver: boolean; loaders: Loader.Resolv
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
 const UNTRANSLATED: Translation = { canonical: (pathname) => ({ pathname }), localizePath: (path) => path };
+const UNHOSTED: Hosting = { locales: () => undefined, origin: () => undefined };
 
 /** `url[property]`, or nothing where SvelteKit hides it: the search while prerendering, the hash in a `load`. */
 const visible = (url: Pick<URL, 'search' | 'hash'>, property: 'search' | 'hash'): string => {
@@ -63,13 +64,13 @@ const isServerEvent = (event: Kit.ServerLoadEvent<Params> | Kit.UniversalLoadEve
 
 /**
  * Wires SvelteKit to an instance of `config`: a `handle` hook, the root
- * layout's `load`, `use()` / `get()` for components, and the translated
- * pathnames of `options.pathnames`. The server builds an instance per
- * request; the browser keeps one per tab.
+ * layout's `load`, `use()` / `get()` for components, the translated
+ * pathnames of `options.pathnames` and the domains of `options.domains`. The
+ * server builds an instance per request; the browser keeps one per tab.
  */
 export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, any>>(
   config: C,
-  options: Kit.Options = {},
+  options: Kit.Options<Config.LocaleInput<Config.LocalesFromConfig<C>>> = {},
 ): Kit.T<InstanceType<typeof I18n<C>>, Config.LocaleInput<Config.LocalesFromConfig<C>>> => {
   // The constructor would start an `initLocale` load of its own, next to the
   // negotiated one; here `initLocale` is a negotiation candidate instead. The
@@ -142,44 +143,55 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     }
   };
 
-  let translated: Translation | undefined;
+  const setup = (name: string): Setup => ({
+    basePath: config.basePath,
+    sanitize: (locale) => sanitize(locale)[0] ?? locale,
+    normalize: (locale) => (sanitize === sanitizeLocales ? quietlySanitized(locale) : visitorSanitized(locale) ?? locale),
+    served: locales,
+    warn: (message) => logger.warn(`\`${name}\` ${message}.`),
+  });
 
-  // Bound on first use, after the config's logger is set, so what is wrong
-  // with `options.pathnames` reports through it.
-  const translation = (): Translation => {
-    if (translated) return translated;
+  // What a factory of this package made for `options[name]`, bound on first
+  // use, after the config's logger is set, so what is wrong with it reports
+  // through it.
+  const binding = <T extends object>(name: 'pathnames' | 'domains', key: symbol, members: ReadonlyArray<keyof T>, none: T, fallback: string): () => T => {
+    let bound: T | undefined;
 
-    const { pathnames } = options as { pathnames?: unknown };
+    return () => {
+      if (bound) return bound;
 
-    if (pathnames === undefined || pathnames === null) return (translated = UNTRANSLATED);
+      const value = (options as Record<string, unknown>)[name];
 
-    locales();
+      if (value === undefined || value === null) return (bound = none);
 
-    const warn = (message: string): void => logger.warn(`\`pathnames\` ${message}.`);
-    const setup: Setup = {
-      basePath: config.basePath,
-      sanitize: (locale) => sanitize(locale)[0] ?? locale,
-      normalize: (locale) => (sanitize === sanitizeLocales ? quietlySanitized(locale) : visitorSanitized(locale) ?? locale),
-      served: locales,
-      warn,
+      locales();
+
+      const given = setup(name);
+
+      try {
+        const bind = typeof value === 'object' ? (value as Record<symbol, unknown>)[key] : undefined;
+        const result = typeof bind === 'function' ? (bind as (setup: Setup) => Partial<T> | undefined)(given) : undefined;
+
+        if (result && members.every((member) => typeof result[member] === 'function')) return (bound = result as T);
+      } catch { /* reported below */ }
+
+      given.warn(fallback);
+
+      return (bound = none);
     };
-
-    try {
-      const bind = typeof pathnames === 'object' ? (pathnames as Record<symbol, unknown>)[TRANSLATION] : undefined;
-      const bound = typeof bind === 'function' ? (bind as (setup: Setup) => Partial<Translation> | undefined)(setup) : undefined;
-
-      if (typeof bound?.canonical === 'function' && typeof bound.localizePath === 'function') return (translated = bound as Translation);
-    } catch { /* reported below */ }
-
-    warn('takes what `translatePathnames(table)` of a compatible version of the package returns. No pathname is translated');
-
-    return (translated = UNTRANSLATED);
   };
 
+  const translation = binding<Translation>('pathnames', TRANSLATION, ['canonical', 'localizePath'], UNTRANSLATED, 'takes what `translatePathnames(table)` of a compatible version of the package returns. No pathname is translated');
+  const hosting = binding<Hosting>('domains', HOSTING, ['locales', 'origin'], UNHOSTED, 'takes what `localeDomains(map)` of a compatible version of the package returns. No locale is served at a domain');
+
   const negotiate = (event: Kit.Event<Params>, ranges: string | readonly string[] | null | undefined): Negotiated => {
-    // First: it sets the config's logger, which `preferred` and the
-    // pathnames report through.
-    const available = locales();
+    // First: it sets the config's logger, which `preferred`, the pathnames
+    // and the domains report through.
+    const served = locales();
+    // A host `domains` lists serves its own locales alone, and falls back to
+    // its first, which no visitor chose: it never counts as `preferred`.
+    const hosted = hosting().locales(event.url.hostname);
+    const available = hosted ?? served;
     // A translated pathname of one locale is the visitor's choice of it.
     const pinned = translation().canonical(event.url.pathname).locale;
     const chosen = (pinned === undefined ? undefined : matchLocale(pinned, available)) ?? matchLocale(visitorSanitized(preferred(event)), available);
@@ -187,9 +199,9 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     if (chosen !== undefined) return { locale: chosen, preferred: true };
 
     return {
-      // Last, the first locale served: a config that serves one never renders
-      // a page without a locale.
-      locale: [ranges, ...defaults].reduce<string | undefined>((found, candidate) => found ?? matchLocale(candidate, available), undefined) ?? available[0],
+      // Last, the host's first locale, or the first locale served: a config
+      // that serves one never renders a page without a locale.
+      locale: (hosted ? [ranges] : [ranges, ...defaults]).reduce<string | undefined>((found, candidate) => found ?? matchLocale(candidate, available), undefined) ?? available[0],
       preferred: false,
     };
   };
@@ -449,11 +461,27 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const delocalize: Kit.T['delocalize'] = (url) => {
     const { pathname, locale } = translation().canonical(url.pathname);
     const path = `${withoutBasePath(pathname, config.basePath)}${visible(url, 'search')}${visible(url, 'hash')}`;
+    const hosted = hosting();
+    const domain = hosted !== UNHOSTED && typeof url.hostname === 'string' ? hosted.locales(url.hostname)?.[0] : undefined;
 
-    return locale === undefined ? { path } : { path, locale };
+    if (domain === undefined) return locale === undefined ? { path } : { path, locale };
+
+    return locale === undefined ? { path, domain } : { path, locale, domain };
   };
 
   const localizePath: Kit.T['localizePath'] = (path, locale) => translation().localizePath(path, locale);
 
-  return { handle: server.handle, load, use, get, reroute, delocalize, localizePath } as unknown as Kit.T<InstanceType<typeof I18n<C>>, Config.LocaleInput<Config.LocalesFromConfig<C>>>;
+  const base = typeof config.basePath === 'string' ? config.basePath.replace(/\/+$/, '') : '';
+
+  const localizeHref: Kit.T['localizeHref'] = (path, locale, from) => {
+    const localized = localizePath(path, locale);
+
+    if (typeof localized !== 'string' || localized[0] !== '/' || localized[1] === '/') return localized;
+
+    const origin = typeof locale === 'string' ? hosting().origin(locale, from === undefined || from === null ? undefined : from.hostname) : undefined;
+
+    return `${origin ?? ''}${base}${localized}`;
+  };
+
+  return { handle: server.handle, load, use, get, reroute, delocalize, localizePath, localizeHref } as unknown as Kit.T<InstanceType<typeof I18n<C>>, Config.LocaleInput<Config.LocalesFromConfig<C>>>;
 };

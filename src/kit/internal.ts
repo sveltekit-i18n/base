@@ -32,17 +32,19 @@ export type ServerHalf = {
 };
 
 /**
- * The key a `translatePathnames()` value holds its binding under:
- * registry-wide, so two copies of the package meet, and versioned, so a
- * binding of another shape is no binding. Bump it whenever `Setup` or
- * `Translation` changes.
+ * The keys a `translatePathnames()` and a `localeDomains()` value hold their
+ * binding under: registry-wide, so two copies of the package meet, and
+ * versioned, so a binding of another shape is no binding. Bump one whenever
+ * what it binds to (`Translation`, `Hosting`) changes, and both whenever
+ * `Setup`, which they share, does.
  */
 export const TRANSLATION = Symbol.for('@sveltekit-i18n/base/kit/translation@1');
+export const HOSTING = Symbol.for('@sveltekit-i18n/base/kit/domains@1');
 
 /** A canonical pathname, the base path kept, and the locale its localized pattern pins. */
 export type Canonical = { pathname: string; locale?: string };
 
-/** What `defineI18n()` hands the binding of `options.pathnames`. */
+/** What `defineI18n()` hands the binding of `options.pathnames` and of `options.domains`. */
 export type Setup = {
   basePath: string | undefined;
   /** The config's sanitizer, which the table's locales go through. */
@@ -59,4 +61,17 @@ export type Setup = {
 export type Translation = {
   canonical: (pathname: string) => Canonical;
   localizePath: Kit.T['localizePath'];
+};
+
+/** The domains one `defineI18n()` wires. */
+export type Hosting = {
+  /** The locales the host of `hostname` serves, its own first, or `undefined` for a host the map does not list. */
+  locales: (hostname: string) => string[] | undefined;
+  /**
+   * The origin of the host that serves `locale`, or `undefined` for a locale
+   * the map does not list, and, given the hostname of a link's page in
+   * `from`, for a link that stays on that host or leaves a host the map does
+   * not list.
+   */
+  origin: (locale: string, from?: unknown) => string | undefined;
 };
