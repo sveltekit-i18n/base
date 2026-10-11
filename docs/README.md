@@ -2638,7 +2638,11 @@ browser stands across the navigations whose pathname keeps that answer.
   pathname `localizePath` gives. A `handle` can redirect such a pathname to
   its locale's own instead, for a page rendered on request and a
   prerendered one alike; the target depends on the URL alone, so a
-  permanent redirect is safe to cache.
+  permanent redirect is safe to cache. A client navigation the app's own
+  catch-all route takes is redirected too: SvelteKit asks the server for its
+  data through `handle`, with the page's URL, and the router follows the
+  redirect. A navigation runs no request when no server `load` runs on it,
+  as in an app without the server half, and is then not redirected.
   A remote function's request can carry the URL of the page that
   called it (a command's, an enhanced form's and that of a prerender
   function run on request, and on SvelteKit 2 a query's too), so a remote
@@ -2656,7 +2660,7 @@ browser stands across the navigations whose pathname keeps that answer.
   export const handle = sequence(({ event, resolve }) => {
     const { path, locale } = delocalize(event.url);
 
-    if (locale !== undefined && !event.isDataRequest && !event.isRemoteRequest) {
+    if (locale !== undefined && !event.isRemoteRequest) {
       const href = localizePath(path, locale);
       const pathname = event.url.pathname.slice(base.length) || '/';
 
@@ -2846,7 +2850,10 @@ link that leaves the origin, so switch the locale by such a link (or
   target names the host the map spells, never the request's, and a host
   never redirects to itself. It localizes the canonical path of the URL, with
   its search, which `delocalize` leaves out while prerendering, where reading
-  it throws:
+  it throws. As the [redirect of a translated
+  pathname](#translated-pathnames) does, it leaves a remote request alone and
+  answers a client navigation's data request, which SvelteKit follows to
+  another host by a full page load:
 
   ```javascript
   // src/hooks.server.js
@@ -2855,7 +2862,7 @@ link that leaves the origin, so switch the locale by such a link (or
   import { delocalize, handle as i18nHandle, localizeHref } from '#lib/i18n.js';
 
   export const handle = sequence(({ event, resolve }) => {
-    if (!event.isDataRequest && !event.isRemoteRequest) {
+    if (!event.isRemoteRequest) {
       const { path, locale, domain } = delocalize(event.url);
       const href = localizeHref(path, locale ?? domain, event.url);
 
