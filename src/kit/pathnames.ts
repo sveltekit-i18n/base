@@ -25,6 +25,9 @@ type Found<T> = { value: T; params: string[]; rest: string };
 /** A compiled table: a trie per direction, and the locales it names, lowercased. */
 type Tries = { localized: Node<Claim>; canonical: Node<Entry>; locales: Set<string> };
 
+/** A pattern that reads the pathnames a pattern with a rest fills where its rest holds `length` segments, and the locales that leaves without one. */
+type Shadow = { reader: Claim; length: number; locales: string[] };
+
 /** A pathname, split into its segments, and whether it ends in a slash. */
 type Split = { segments: string[]; trailing: boolean };
 
@@ -622,6 +625,142 @@ const outranked = (tries: Tries, claims: readonly Claim[], value: () => string):
   return found;
 };
 
+/** How a pathname read as `claim` stands for the lowercased `locale`: its own, shared, or another locale's. */
+const standing = (claim: Claim, locale: string): 'pinned' | 'shared' | 'other' => (localeOf(claim.locales) === undefined ? 'shared' : pins({ claim }, locale) ? 'pinned' : 'other');
+
+/**
+ * The lengths of a rest past the segments a pathname and its page lead with,
+ * their params filled with `blank`, a value no static segment spells, at
+ * which a walk `shadowed` runs can meet another match: where a node below
+ * either lead ends or rests in its trie, and below the lead of each pattern a
+ * rest entry the page reaches translates to, which `localizePath` fills for
+ * it. Past them all, every length reads alike. A lead reaches what any such
+ * value reaches, so the lengths below each lead of the localized trie are
+ * found once.
+ */
+const changes = (tries: Tries, blank: string): ((page: readonly string[], pathname: readonly string[]) => number[]) => {
+  const below = new Map<string, number[]>();
+  const localized = (segments: readonly string[]): number[] => {
+    const key = segments.join('/');
+    let found = below.get(key);
+
+    if (!found) below.set(key, (found = lengths(reach(tries.localized, segments))));
+
+    return found;
+  };
+
+  // What the targets of a rest entry reach, its params filled from `page`: once per entry whose params all hold `blank`.
+  const filled = ({ canonical, targets }: Entry, page: readonly string[]): number[][] => {
+    const values = new Map(canonical.segments.flatMap((segment, index) => ('param' in segment ? [[segment.param, page[index] ?? blank]] : [])));
+
+    return [...targets.values()].map(({ pattern }) => localized(pattern.segments.map((segment) => ('param' in segment ? values.get(segment.param)! : segment.encoded))));
+  };
+  const blanks = new Map<Entry, number[][]>();
+
+  return (page, pathname) => {
+    const found = new Set<number>();
+    const add = (from: readonly number[], offset: number): void => from.forEach((length) => found.add(Math.max(length + offset, 0)));
+    // `spelled`: a param on the way holds a segment of the page other than `blank`.
+    const rests: { entry: Entry; depth: number; spelled: boolean }[] = [];
+    let level = [{ node: tries.canonical, spelled: false }];
+
+    for (let depth = 0; level.length; depth++) {
+      level.forEach(({ node, spelled }) => node.rest && rests.push({ entry: node.rest, depth, spelled }));
+
+      if (depth === page.length) add(lengths(level.map(({ node }) => node)), 0);
+
+      level = level.flatMap(({ node, spelled }) => {
+        if (depth >= page.length) return node.param ? [{ node: node.param, spelled }] : [];
+
+        const child = node.statics?.get(decodeSegment(page[depth]));
+
+        return [...(child ? [{ node: child, spelled }] : []), ...(node.param ? [{ node: node.param, spelled: spelled || page[depth] !== blank }] : [])];
+      });
+    }
+
+    for (const { entry, depth, spelled } of rests) {
+      let reached = spelled ? filled(entry, page) : blanks.get(entry);
+
+      if (!reached) blanks.set(entry, (reached = filled(entry, [])));
+
+      reached.forEach((from) => add(from, depth - page.length));
+    }
+
+    add(localized(pathname), 0);
+    add(localized(page), 0);
+
+    return [...found].sort((a, b) => a - b);
+  };
+};
+
+/**
+ * Per pattern of `claims` with a rest, each length of the rest at which the
+ * pattern that reads the pathname it fills first costs locales that pathname
+ * of the page: `localizePath` gives another, or this one, which the reader
+ * serves as another page, and would give this one were the pathname read as
+ * the pattern itself, so a locale an entry above translates the page to, or
+ * a pattern of that locale alone below outranks a shared one in, is not the
+ * reader's loss. The pathnames are filled with values no static segment
+ * spells, so only the lengths `changes` finds can read otherwise. A pattern
+ * without a rest reads every pathname it fills so.
+ */
+const shadowed = (tries: Tries, claims: readonly Claim[], value: () => string): Map<Claim, Shadow[]> => {
+  const blank = value();
+  const lengthsOf = changes(tries, blank);
+  const found = new Map<Claim, Shadow[]>();
+  // How many entries translate to each lowercased locale.
+  const entries = new Map<string, number>();
+
+  claims.forEach(({ locales }) => locales.forEach((locale) => entries.set(locale.toLowerCase(), (entries.get(locale.toLowerCase()) ?? 0) + 1)));
+
+  for (const claim of claims) {
+    const { entry, pattern } = claim;
+
+    if (pattern.rest === undefined) continue;
+
+    const values = new Map(entry.canonical.segments.flatMap((segment) => ('param' in segment ? [[segment.param, value()]] : [])));
+    const lead = ({ segments }: Pattern): string[] => segments.map((segment) => ('param' in segment ? blank : segment.encoded));
+    const lost = new Set<string>();
+
+    for (const length of lengthsOf(lead(entry.canonical), lead(pattern))) {
+      values.set(pattern.rest, Array.from({ length }, () => value()).join('/'));
+
+      const page = fill(entry.canonical, values, false);
+      const pathname = fill(pattern, values, false);
+      const read = delocalized(tries.localized, pathname);
+
+      // Read as the pattern itself, the pathname ranks as it would.
+      if (!read || read.claim === claim) continue;
+
+      const locales = claim.locales.filter((locale) => {
+        const lowered = locale.toLowerCase();
+
+        if (lost.has(locale)) return false;
+        // Read as a pattern that stands for the locale as this one does, the
+        // pathname ranks as this one would.
+        if (read.path === page && standing(read.claim, lowered) === standing(claim, lowered)) return false;
+        // Nothing else translates to the locale, so a lead of the page is its pathname.
+        if (entries.get(lowered) === 1 && read.path === page && standing(read.claim, lowered) !== 'other') return false;
+        if (read.path === page && localize(tries, page, lowered) === pathname) return false;
+
+        // Lost to the reader only where read as this pattern it would win.
+        const ideal = ranked(tries, split(page)!, lowered, { entry, claim, localized: pathname });
+
+        return (ideal.pinned ?? ideal.shared)?.localized === pathname;
+      });
+
+      if (locales.length) {
+        found.set(claim, [...(found.get(claim) ?? []), { reader: read.claim, length, locales }]);
+        locales.forEach((locale) => lost.add(locale));
+
+        if (lost.size === claim.locales.length) break;
+      }
+    }
+  }
+
+  return found;
+};
+
 // `String()` of an object runs its own conversion, which can throw.
 const quoted = (value: unknown): string => `'${value !== null && (typeof value === 'object' || typeof value === 'function') ? Object.prototype.toString.call(value) : String(value)}'`;
 
@@ -733,6 +872,14 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
         warn(`translates ${quoted(claim.entry.key)} in ${outrun.map(quoted).join(', ')} to ${quoted(spelled.get(claim))}, which localizePath ranks below ${above.length > 1 ? `${above.slice(0, -1).join(', ')} and ${above[above.length - 1]}` : above[0]}`);
       }
     });
+
+    search(() => {
+      for (const [claim, shadows] of shadowed({ localized, canonical, locales }, [...spelled.keys()], value)) {
+        const rest = quoted(`[...${claim.pattern.rest}]`);
+
+        for (const { reader, length, locales: lost } of shadows) warn(`translates ${quoted(claim.entry.key)} in ${lost.map(quoted).join(', ')} to ${quoted(spelled.get(claim))}, which ${quoted(spelled.get(reader))} outranks where ${rest} ${length ? `holds ${length} segment${length > 1 ? 's' : ''}` : 'is empty'}`);
+      }
+    });
   }
 
   if (unserved.size) warn(`translates to ${[...unserved].map(quoted).join(', ')}, which the config serves no translations for`);
@@ -841,7 +988,9 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * pattern that takes a canonical pathname of another page, which `delocalize`
  * then reads as the pattern's, and of a pattern several locales share that
  * `localizePath` ranks below a pattern of one of them alone, on a canonical
- * pathname both their entries match.
+ * pathname both their entries match, and of a pattern with a rest a pathname
+ * of which a pattern ranked above it reads, which `localizePath` then never
+ * gives its page.
  *
  * The table is read when `defineI18n()`'s wiring first needs it, and
  * compiled then, once per `defineI18n()`. A pathname is visitor input: no
