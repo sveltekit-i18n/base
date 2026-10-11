@@ -931,10 +931,12 @@ not RCE/XSS.
   the localized trie and visits each of its nodes once; `localizePath` walks
   the canonical trie twice at most and the localized one once more per
   pathname it tries, and runs only regexes of one character class, which are
-  linear; `reroute` walks the localized trie twice at most, then the walks of
-  `localizePath`, without its regexes, in each locale of the patterns that
-  match the pathname, and once more for a locale without a pathname of its
-  own.
+  linear; `reroute` walks the localized trie and the canonical one once each,
+  and only where another entry that matches the canonical pathname
+  translates to the locales of the pattern that read it, the localized trie
+  once more, then the walks of `localizePath`, without its regexes, in each
+  locale of the patterns that match the pathname, and once more for a locale
+  without a pathname of its own.
 
 ## 12. Comments & language
 

@@ -285,6 +285,35 @@ const localize = (tries: Tries, pathname: string, wanted?: string): string | und
 const withoutSlash = (path: string): string => (path.endsWith('/') ? path.slice(0, -1) : path);
 
 /**
+ * Whether `claim`, which reads a pathname as the canonical `path`, has a
+ * locale no other entry that matches `path` translates to where `localizePath`
+ * would take it: ahead of the claim's entry, or, for a pattern several locales
+ * share, past it through a pattern of that locale alone, which outranks it.
+ * `localizePath` then leads `path` to the pathname the claim's pattern fills,
+ * the one it read.
+ */
+const unrivaled = ({ canonical }: Tries, { entry, locales }: Claim, path: string): boolean => {
+  const pinned = locales.length === 1;
+  const open = new Set(locales.map((locale) => locale.toLowerCase()));
+  let reached = false;
+
+  walk(canonical, split(path)!.segments, ({ value }) => {
+    if (value === entry) reached = true;
+    else {
+      open.forEach((locale) => {
+        const target = value.targets.get(locale);
+
+        if (target && (!reached || target.locales.length === 1)) open.delete(locale);
+      });
+    }
+
+    return !open.size || (reached && pinned);
+  });
+
+  return reached && open.size > 0;
+};
+
+/**
  * Whether `localizePath` translates the canonical `path` to `pathname`, which
  * the table reads as `path`, a trailing slash aside, which SvelteKit settles
  * once a route matched: `reroute` serves a page at no other pathname. A
@@ -906,7 +935,7 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
   };
   // The last pathname read, with what `served` decides of it once asked:
   // `delocalize` and the negotiation never ask.
-  let last: { pathname: string; result: Canonical; read?: { local: string; path: string }; served?: string } | undefined;
+  let last: { pathname: string; result: Canonical; read?: { local: string; path: string; claim: Claim }; served?: string } | undefined;
 
   const trimmed = typeof basePath === 'string' ? basePath.replace(/\/+$/, '') : '';
 
@@ -924,7 +953,7 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
 
         // The root under the base path is itself with or without its slash.
         last.result = { pathname: local === '/' && found.path === '/' ? pathname : `${trimmed}${found.path}`, ...(locale === undefined ? {} : { locale }) };
-        last.read = { local, path: found.path };
+        last.read = { local, path: found.path, claim: found.claim };
       }
     } catch { /* passed through */ }
 
@@ -943,7 +972,7 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
         try {
           const { read } = looked;
 
-          looked.served = read && leadsTo(tries(), read.path, read.local) ? looked.result.pathname : pathname;
+          looked.served = read && (unrivaled(tries(), read.claim, read.path) || leadsTo(tries(), read.path, read.local)) ? looked.result.pathname : pathname;
         } catch {
           looked.served = pathname;
         }
@@ -998,9 +1027,11 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * walks the localized trie, `localizePath` only regexes of one character
  * class, which are linear, walks the canonical trie twice at most and the
  * localized one once more per pathname it tries, and `reroute` walks the
- * localized trie twice at most, then runs `localizePath` without a regex in each
- * locale of the patterns that match the pathname, and once more for a locale
- * without a pathname of its own.
+ * localized trie and the canonical one once each, and only where another
+ * entry that matches the canonical pathname translates to the locales of the
+ * pattern that read it, walks the localized trie once more and runs
+ * `localizePath` without a regex in each locale of the patterns that match the
+ * pathname, and once more for a locale without a pathname of its own.
  *
  * @example
  * defineI18n(config, {

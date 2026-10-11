@@ -78,18 +78,23 @@ it('translated pathnames', () => {
 
   for (const entries of [10, 1_000]) {
     const { delocalize, reroute, localizePath } = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries)) });
+    const { reroute: rerouteShared } = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries, true)) });
     const translated = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/${LOCALES[i % 5]}/strana${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`)));
     const missed = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/elsewhere/${i}`)));
     // The catch-all takes these, though each of their pages has a pathname of its own in the locale.
     const elsewhere = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/${LOCALES[i % 5]}/page${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`)));
+    // The static pages of the shared table, which a catch-all the locales share too ranks below.
+    const shared = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://x.test/strana${((i * 7) % Math.ceil(entries / 2)) * 2}`)));
     const canonical = cycle(Array.from({ length: 64 }, (_, i) => `/page${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`));
 
+    expect(rerouteShared({ url: new URL('https://x.test/strana2') })).toBe('/page2');
     expect([reroute({ url: new URL('https://x.test/de/strana1/42') }), localizePath('/page1/42', 'cs'), localizePath(delocalize(new URL('https://x.test/cs/strana1/42')).path, 'de')]).toEqual(['/page1/42', '/cs/strana1/42', '/de/strana1/42']);
 
     record(`reroute, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: translated() })));
     record(`delocalize, a translated pathname (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => delocalize(translated())));
     record(`reroute, a pathname no entry translates (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: missed() })));
     record(`reroute, a pathname another pathname of its page serves (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => reroute({ url: elsewhere() })));
+    record(`reroute, a pathname of a pattern the locales share (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => rerouteShared({ url: shared() })));
     record(`localizePath, a canonical path to a locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(canonical(), 'de')));
     record(`localizePath of delocalize, a translated pathname to another locale (${n(entries)} entries of 5 locales)`, 'time', 'µs', micro(() => localizePath(delocalize(translated()).path, 'de')));
   }
