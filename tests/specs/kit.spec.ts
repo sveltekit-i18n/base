@@ -3337,6 +3337,7 @@ describe('/kit', () => {
           '/support': { cs: '/cs/pomoc' },
           '/contact': { cs: '/help' },
           '/pair/[x]/[y]': { en: '/paar/[x]/[y]', cs: '/paar/[y]/[x]' },
+          '/about-us': { cs: '/cs/o-nas', CS: '/cs/about-us' },
         }),
       });
 
@@ -3346,6 +3347,7 @@ describe('/kit', () => {
       expect(localizePath('/support', 'cs')).toBe('/support');
       expect(localizePath('/pair/1/2', 'cs')).toBe('/pair/1/2');
       expect(reroute({ url: url('/paar/2/1') })).toBe('/pair/2/1');
+      expect([localizePath('/about-us', 'cs'), reroute({ url: url('/cs/o-nas') }), reroute({ url: url('/cs/about-us') })]).toEqual(['/cs/o-nas', '/about-us', undefined]);
       expect(warnings).toEqual([
         '[i18n]: `pathnames` skips \'about\': it is no pathname pattern.',
         '[i18n]: `pathnames` skips \'/a/[[x]]\': it is no pathname pattern.',
@@ -3357,9 +3359,46 @@ describe('/kit', () => {
         '[i18n]: `pathnames` skips \'/[slug]/x\': \'/[id]/x\' names the same pathnames.',
         '[i18n]: `pathnames` skips \'/support\' in \'cs\': \'/help\' translates to \'/cs/pomoc\' too.',
         '[i18n]: `pathnames` skips \'/pair/[x]/[y]\' in \'cs\': \'/paar/[y]/[x]\' names the params of \'/paar/[x]/[y]\' in another order.',
+        '[i18n]: `pathnames` skips \'/about-us\' in \'CS\': \'cs\' names the same locale.',
         ...(BROWSER ? [] : ['[i18n]: `pathnames` serves \'/contact\' in \'cs\' at \'/help\', which takes a pathname of \'/help\'.']),
         '[i18n]: `pathnames` translates to \'fr\', which the config serves no translations for.',
       ]);
+    });
+
+    it('skips a locale an entry already names, in any spelling its sanitizer reads alike', () => {
+      const touch = (table: Record<string, Record<string, string>>, extra: Record<string, any> = {}) => {
+        const { delocalize, localizePath, warnings } = setup(extra, { pathnames: translatePathnames(table) });
+
+        return { delocalize, localizePath, skips: () => warnings.filter((warning) => warning.includes(' skips ')) };
+      };
+
+      // A spelling that stood first but compiled nothing names no locale.
+      const invalid = touch({ '/x': { cs: 'nope', CS: '/cs/b' } });
+
+      expect([invalid.localizePath('/x', 'cs'), invalid.delocalize(url('/cs/b')), invalid.skips()]).toEqual(['/cs/b', { path: '/x', locale: 'cs' }, ['[i18n]: `pathnames` skips \'/x\' in \'cs\': \'nope\' is no pathname pattern.']]);
+
+      // The skipped spelling's pattern stays out of the table, so another entry may take it.
+      const taken = touch({ '/x': { CS: '/cs/a', cs: '/cs/b' }, '/y': { de: '/cs/b' } });
+
+      expect([taken.localizePath('/x', 'cs'), taken.localizePath('/y', 'de'), taken.delocalize(url('/cs/b')), taken.skips()]).toEqual(['/cs/a', '/cs/b', { path: '/y', locale: 'de' }, ['[i18n]: `pathnames` skips \'/x\' in \'cs\': \'CS\' names the same locale.']]);
+
+      const claimed = touch({ '/y': { de: '/cs/b' }, '/x': { CS: '/cs/a', cs: '/cs/b' } });
+
+      expect([claimed.localizePath('/x', 'cs'), claimed.skips()]).toEqual(['/cs/a', ['[i18n]: `pathnames` skips \'/x\' in \'cs\': \'CS\' names the same locale.']]);
+
+      // A pattern a second spelling repeats keeps its locale.
+      const repeated = touch({ '/x': { en: '/x', cs: '/cs/x', CS: '/x' } });
+
+      expect([repeated.localizePath('/x', 'cs'), repeated.delocalize(url('/x'))]).toEqual(['/cs/x', { path: '/x', locale: 'en' }]);
+
+      // Alike once sanitized and lowercased, never by their spelling alone.
+      const alias = touch({ '/x': { he: '/he/a', iw: '/iw/b' } });
+
+      expect([alias.localizePath('/x', 'he'), alias.delocalize(url('/iw/b')), alias.skips()]).toEqual(['/he/a', { path: '/iw/b' }, ['[i18n]: `pathnames` skips \'/x\' in \'iw\': \'he\' names the same locale.']]);
+
+      const raw = touch({ '/x': { de: '/de/a', DE: '/de/b' } }, { sanitizeLocales: false });
+
+      expect([raw.localizePath('/x', 'de'), raw.delocalize(url('/de/b')), raw.skips()]).toEqual(['/de/a', { path: '/de/b' }, ['[i18n]: `pathnames` skips \'/x\' in \'DE\': \'de\' names the same locale.']]);
     });
 
     it.skipIf(BROWSER)('warns of a localized pattern that takes a pathname of another page, on the server', () => {

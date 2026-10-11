@@ -656,6 +656,9 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
 
     at.node[at.slot] = entry;
 
+    // Each locale the entry translates to, by its lowercased name, as the table spells it.
+    const named = new Map<string, string>();
+
     for (const [locale, value] of Object.entries(spelled as Record<string, unknown>)) {
       const target = parse(value);
       const name = sanitize(locale);
@@ -663,6 +666,11 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
 
       if (!target || target.names !== parsed.names) {
         warn(`skips ${quoted(key)} in ${quoted(locale)}: ${quoted(value)} ${target ? 'names other params' : 'is no pathname pattern'}`);
+        continue;
+      }
+
+      if (named.has(lowered)) {
+        warn(`skips ${quoted(key)} in ${quoted(locale)}: ${quoted(named.get(lowered))} names the same locale`);
         continue;
       }
 
@@ -689,6 +697,7 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
 
       claim.locales.push(name);
       entry.targets.set(lowered, claim);
+      named.set(lowered, locale);
       locales.add(lowered);
 
       if (!available.has(lowered)) unserved.add(name);
