@@ -48,7 +48,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath, canonical, ha
       // negotiates here; a function replacement is inserted as it is.
       const negotiated = (): string => {
         if (lang === undefined) {
-          check(event, canonical(event.url.pathname));
+          check(event, canonical(event.url));
           lang = answer(event).locale ?? '';
         }
 
@@ -83,7 +83,7 @@ export const serverHalf = ({ create, negotiate, locales, basePath, canonical, ha
     load: async (event) => {
       // Read before anything returns: SvelteKit re-runs a load on a
       // navigation only for what it read.
-      const route = canonical(event.url.pathname);
+      const route = canonical(event.url);
 
       check(event, route);
 

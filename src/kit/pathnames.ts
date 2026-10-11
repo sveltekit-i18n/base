@@ -285,17 +285,20 @@ const localize = (tries: Tries, pathname: string, wanted?: string): string | und
 const withoutSlash = (path: string): string => (path.endsWith('/') ? path.slice(0, -1) : path);
 
 /**
- * Whether `claim`, which reads a pathname as the canonical `path`, has a
- * locale no other entry that matches `path` translates to where `localizePath`
- * would take it: ahead of the claim's entry, or, for a pattern several locales
- * share, past it through a pattern of that locale alone, which outranks it.
- * `localizePath` then leads `path` to the pathname the claim's pattern fills,
- * the one it read.
+ * The locales of `claim`, which reads a pathname as the canonical `path`, of
+ * those `within` holds when given and lowercased, that no other entry that
+ * matches `path` translates to where `localizePath` would take it: ahead of
+ * the claim's entry, or, for a pattern several locales share, past it through
+ * a pattern of that locale alone, which outranks it. `localizePath` leads
+ * `path` in each of them to the pathname the claim's pattern fills, the one
+ * it read.
  */
-const unrivaled = ({ canonical }: Tries, { entry, locales }: Claim, path: string): boolean => {
+const unrivaled = ({ canonical }: Tries, { entry, locales }: Claim, path: string, within?: ReadonlySet<string>): ReadonlySet<string> => {
   const pinned = locales.length === 1;
-  const open = new Set(locales.map((locale) => locale.toLowerCase()));
+  const open = new Set(locales.map((locale) => locale.toLowerCase()).filter((locale) => !within || within.has(locale)));
   let reached = false;
+
+  if (!open.size) return open;
 
   walk(canonical, split(path)!.segments, ({ value }) => {
     if (value === entry) reached = true;
@@ -310,28 +313,35 @@ const unrivaled = ({ canonical }: Tries, { entry, locales }: Claim, path: string
     return !open.size || (reached && pinned);
   });
 
-  return reached && open.size > 0;
+  if (!reached) open.clear();
+
+  return open;
 };
 
 /**
  * Whether `localizePath` translates the canonical `path` to `pathname`, which
- * the table reads as `path`, a trailing slash aside, which SvelteKit settles
- * once a route matched: `reroute` serves a page at no other pathname. A
- * locale gives a pathname of its own only through a pattern that matches it,
- * so the locales of those patterns are tried, the most specific first, and
- * then what a locale without one gets.
+ * the table reads as `path`, in `wanted`, lowercased, or in a locale without
+ * a pathname of its own when left out, a trailing slash aside, which
+ * SvelteKit settles once a route matched.
+ */
+const leads = (tries: Tries, path: string, pathname: string, wanted?: string): boolean => {
+  const localized = localize(tries, path, wanted);
+
+  return localized !== undefined && samePath(withoutSlash(localized), withoutSlash(pathname));
+};
+
+/**
+ * Whether `localizePath` translates the canonical `path` to `pathname` in
+ * any locale: `reroute` serves a page at no other pathname. A locale gives a
+ * pathname of its own only through a pattern that matches it, so the locales
+ * of those patterns are tried, the most specific first, and then what a
+ * locale without one gets.
  */
 const leadsTo = (tries: Tries, path: string, pathname: string): boolean => {
   const parts = split(pathname);
 
   if (!parts) return false;
 
-  const wanted = withoutSlash(pathname);
-  const leads = (locale?: string): boolean => {
-    const localized = localize(tries, path, locale);
-
-    return localized !== undefined && samePath(withoutSlash(localized), wanted);
-  };
   const locales = new Set<string>();
 
   walk(tries.localized, parts.segments, ({ value }) => {
@@ -340,7 +350,7 @@ const leadsTo = (tries: Tries, path: string, pathname: string): boolean => {
     return false;
   });
 
-  return [...locales].some(leads) || leads();
+  return [...locales, undefined].some((locale) => leads(tries, path, pathname, locale));
 };
 
 /** The children of `node`: its statics, then its param. */
@@ -933,9 +943,16 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
 
     return compiled;
   };
-  // The last pathname read, with what `served` decides of it once asked:
-  // `delocalize` and the negotiation never ask.
-  let last: { pathname: string; result: Canonical; read?: { local: string; path: string; claim: Claim }; served?: string } | undefined;
+  // The last pathname read, with what `served` decides of it once asked, and
+  // how the last host asked reads it: `delocalize` and the negotiation never
+  // ask off the map.
+  let last: {
+    pathname: string;
+    result: Canonical;
+    read?: { local: string; path: string; claim: Claim };
+    served?: string;
+    host?: { locales: readonly string[]; result?: Canonical; served?: string };
+  } | undefined;
 
   const trimmed = typeof basePath === 'string' ? basePath.replace(/\/+$/, '') : '';
 
@@ -960,19 +977,97 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
     return last;
   };
 
-  return {
-    canonical: (pathname) => (typeof pathname === 'string' ? lookup(pathname).result : { pathname }),
+  // A locale the table names is taken in any case; only another spelling of
+  // one goes through the sanitizer.
+  const wantedOf = ({ locales }: Tries, locale: string): string => {
+    const named = locale.toLowerCase();
 
-    served: (pathname) => {
+    return locales.has(named) ? named : normalize(locale).toLowerCase();
+  };
+
+  const hosted = (looked: NonNullable<typeof last>, locales: readonly string[]): NonNullable<NonNullable<typeof last>['host']> => {
+    if (looked.host?.locales !== locales) looked.host = { locales };
+
+    return looked.host;
+  };
+
+  // A host's reading of a pathname the table reads: the locales of the host
+  // `localizePath` leads its path to. The table's own locale is kept where
+  // the host serves it at that pathname, or where no locale of the host
+  // does, so that `delocalize` sends the visitor to its host.
+  const readOn = (looked: NonNullable<typeof last>, locales: readonly string[]): void => {
+    const host = hosted(looked, locales);
+    const { read, result } = looked;
+
+    if (host.result) return;
+
+    host.result = result;
+    host.served = looked.pathname;
+
+    if (!read) return;
+
+    const compiled = tries();
+    const own = result.locale?.toLowerCase();
+    const wanted = locales.map((locale) => wantedOf(compiled, locale));
+    const free = own !== undefined && !wanted.includes(own) ? new Set<string>() : unrivaled(compiled, read.claim, read.path, new Set(wanted));
+
+    if (own !== undefined && free.has(own)) {
+      host.served = result.pathname;
+
+      return;
+    }
+
+    const leading = locales.filter((_, i) => free.has(wanted[i]) || leads(compiled, read.path, read.local, wanted[i]));
+
+    if (leading.length) host.served = result.pathname;
+    if (!leading.length || leading.some((locale) => wantedOf(compiled, locale) === own)) return;
+
+    host.result = leading.length === 1 ? { pathname: result.pathname, locale: leading[0] } : { pathname: result.pathname };
+  };
+
+  return {
+    canonical: (pathname, locales) => {
+      if (typeof pathname !== 'string') return { pathname };
+
+      const looked = lookup(pathname);
+
+      if (!locales) return looked.result;
+
+      try {
+        readOn(looked, locales);
+      } catch { /* read as off the map */ }
+
+      return looked.host?.result ?? looked.result;
+    },
+
+    served: (pathname, locales) => {
       if (typeof pathname !== 'string') return pathname;
 
       const looked = lookup(pathname);
+
+      if (locales) {
+        const host = hosted(looked, locales);
+
+        if (host.served === undefined) {
+          try {
+            const { read } = looked;
+            const compiled = tries();
+            const within = new Set(locales.map((locale) => wantedOf(compiled, locale)));
+
+            host.served = read && (unrivaled(compiled, read.claim, read.path, within).size > 0 || locales.some((locale) => leads(compiled, read.path, read.local, wantedOf(compiled, locale)))) ? looked.result.pathname : pathname;
+          } catch {
+            host.served = pathname;
+          }
+        }
+
+        return host.served;
+      }
 
       if (looked.served === undefined) {
         try {
           const { read } = looked;
 
-          looked.served = read && (unrivaled(tries(), read.claim, read.path) || leadsTo(tries(), read.path, read.local)) ? looked.result.pathname : pathname;
+          looked.served = read && (unrivaled(tries(), read.claim, read.path).size > 0 || leadsTo(tries(), read.path, read.local)) ? looked.result.pathname : pathname;
         } catch {
           looked.served = pathname;
         }
@@ -986,12 +1081,8 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
 
       try {
         const compiled = tries();
-        // A locale the table names is taken in any case; only another
-        // spelling of one goes through the sanitizer.
-        const named = locale.toLowerCase();
-        const wanted = compiled.locales.has(named) ? named : normalize(locale).toLowerCase();
         const end = path.search(/[?#]/);
-        const localized = localize(compiled, encodePath(end < 0 ? path : path.slice(0, end)), wanted);
+        const localized = localize(compiled, encodePath(end < 0 ? path : path.slice(0, end)), wantedOf(compiled, locale));
 
         return localized === undefined ? path : `${localized}${end < 0 ? '' : path.slice(end)}`;
       } catch {
@@ -1011,9 +1102,11 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * specific pattern, as SvelteKit ranks its routes, whatever the table's
  * order, and a locale an entry leaves out falls through to the next pattern
  * that matches. A pathname the table does not name passes through unchanged.
- * `reroute` serves a page only at the pathnames `localizePath` gives it, and
- * passes any other through, which `delocalize` and the negotiation still read
- * as the pattern's page. On the server, the compile warns of a localized
+ * `reroute` serves a page only at the pathnames `localizePath` gives it, on a
+ * host `domains` lists in a locale of that host, and passes any other
+ * through, which `delocalize` and the negotiation still read as the
+ * pattern's page; on such a host, a pathname it serves in one of the host's
+ * locales alone belongs to that locale. On the server, the compile warns of a localized
  * pattern that takes a canonical pathname of another page, which `delocalize`
  * then reads as the pattern's, and of a pattern several locales share that
  * `localizePath` ranks below a pattern of one of them alone, on a canonical
@@ -1031,7 +1124,11 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * entry that matches the canonical pathname translates to the locales of the
  * pattern that read it, walks the localized trie once more and runs
  * `localizePath` without a regex in each locale of the patterns that match the
- * pathname, and once more for a locale without a pathname of its own.
+ * pathname, and once more for a locale without a pathname of its own; on a
+ * host `domains` lists, in each locale of the host instead. There,
+ * `delocalize` and the negotiation walk the canonical trie once more at most
+ * for a pathname a pattern reads, and, unless the host serves it in the locale the
+ * pattern pins, run `localizePath` without a regex in each locale of the host.
  *
  * @example
  * defineI18n(config, {

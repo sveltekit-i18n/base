@@ -404,7 +404,8 @@ repositories:
   `'cookies' in event`; the server branch reads `url` before any return (a
   load re-runs on a navigation only for what it read) and sends the tables on
   a page render only, the locale and the route on a data request, and marks a
-  page render whose locale the translated pathname or `preferredLocale` gave
+  page render whose locale the translated pathname (on a host `domains`
+  lists, only the locale its pattern pins) or `preferredLocale` gave
   (`preferred: true`), never a data request; when a server `load` exists, `preferredLocale` runs in the
   browser only on a root error page SvelteKit renders without its data (the
   universal event says nothing of whether one exists). The server
@@ -488,7 +489,8 @@ repositories:
   a pure function of the URL, as the browser caches it per URL. It serves a
   page only at a pathname `localizePath` gives it (`served`), trying the
   locales of the patterns that match the pathname, then what a locale without
-  a pathname of its own gets, so any
+  a pathname of its own gets — on a host `domains` lists, the locales of that
+  host instead (`wantedOf`, as `localizePath` reads a locale) — so any
   other pathname a pattern takes (`/cs/about` beside `/cs/o-nas`) reaches
   `handle` as it is, and no prerendered file answers it in another locale;
   `delocalize` and the negotiation read every pathname a pattern takes. The
@@ -512,7 +514,14 @@ repositories:
   visitor's choice, so it never sets `preferred`, or a prerendered page would
   carry the build's host into a navigation. A host it does not list (a dev
   server, a preview, the prerendering origin) negotiates as without
-  `domains`. A host is matched by its hostname (lowercased, one trailing dot
+  `domains`. A host it lists reads a translated pathname among its own
+  locales too (`Translation`'s `locales`, the host's own array, so the last
+  reading is cached with the host it was read on): `reroute` serves a page there only at a
+  pathname `localizePath` gives it in one of them, and a pathname it serves
+  in one of them alone belongs to that locale for `delocalize` and the
+  negotiation — never `preferred` unless its pattern pins it, as the host
+  gave it — while one it serves in none keeps the locale its pattern pins,
+  for a redirect to send to its host. A host is matched by its hostname (lowercased, one trailing dot
   dropped), never by scheme or port, in a `Map`, since a hostname is visitor
   input, and an origin the wiring writes (`localizeHref`) is the one the map
   spells, never the request's.
@@ -936,7 +945,11 @@ not RCE/XSS.
   translates to the locales of the pattern that read it, the localized trie
   once more, then the walks of `localizePath`, without its regexes, in each
   locale of the patterns that match the pathname, and once more for a locale
-  without a pathname of its own.
+  without a pathname of its own — on a host `domains` lists, in each locale
+  of the host instead. There, `delocalize` and the negotiation walk the
+  canonical trie once more at most for a pathname a pattern reads and, unless the
+  host serves it in the locale the pattern pins, the walks of `localizePath`
+  in each locale of the host.
 
 ## 12. Comments & language
 
