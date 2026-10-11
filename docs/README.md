@@ -2542,9 +2542,11 @@ it, as *One page, one pathname per locale* below sets out.
 - **The table is checked when first used**, once per `defineI18n()`, so one
   `translatePathnames()` result can serve several: an entry it cannot read — a
   pattern outside the syntax, two entries naming the same pathnames, a
-  translated pattern that names other params, or one two entries claim — is
-  logged through [`log`](#loglevel) and skipped. A locale the config serves
-  no translations for is logged, and its pathnames are served all the same.
+  translated pattern that names other params, one two entries claim, or a
+  locale an entry already names in another spelling (`de` beside `DE`, of
+  which the first stands) — is logged through [`log`](#loglevel) and skipped.
+  A locale the config serves no translations for is logged, and its
+  pathnames are served all the same.
   On the server, a translated pattern that takes a canonical pathname of
   another page is logged too, as `'/contact': { cs: '/help' }` does beside an
   entry `'/help'`, or `'/pair/[x]/[y]': { cs: '/pair/[y]/[x]' }` of its own
