@@ -3034,6 +3034,21 @@ describe('/kit', () => {
       expect(elsewhere.reroute({ url: url('/s') })).toBe('/x');
     });
 
+    it('reroutes a pathname of a pattern its locales share unless a pattern of one of them alone outranks it', () => {
+      // A catch-all of the same locales ranks below the page and is shared too.
+      const served = setup({ loaders: loaders('en', 'en-GB') }, { pathnames: translatePathnames({ '/about': { en: '/about-us', 'en-GB': '/about-us' }, '/[...rest]': { en: '/[...rest]', 'en-GB': '/[...rest]' } }) });
+
+      expect(served.reroute({ url: url('/about-us') })).toBe('/about');
+      expect(served.reroute({ url: url('/about-us/') })).toBe('/about/');
+
+      // A catch-all of each locale alone gives the page a pathname under its prefix.
+      const outranked = setup({ loaders: loaders('en', 'de', 'cs') }, { pathnames: translatePathnames({ '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { de: '/de/[...rest]', cs: '/cs/[...rest]' } }) });
+
+      expect(outranked.localizePath('/contact', 'de')).toBe('/de/contact');
+      expect(outranked.reroute({ url: url('/kontakt') })).toBe(undefined);
+      expect(outranked.reroute({ url: url('/de/contact') })).toBe('/contact');
+    });
+
     it('ranks the patterns as SvelteKit ranks routes, whatever the order of the table and its locales', () => {
       const { reroute, delocalize } = setup({}, {
         pathnames: translatePathnames({
