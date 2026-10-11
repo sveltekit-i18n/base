@@ -2514,7 +2514,8 @@ export { reroute } from '#lib/i18n.js';
 [`reroute`](https://svelte.dev/docs/kit/hooks#Universal-hooks-reroute) serves
 a translated pathname from the route of its canonical one: `/cs/produkty/42`
 renders `src/routes/products/[id]`. Without the hook, a translated pathname
-reaches no route.
+reaches no route. It serves a page only at a pathname `localizePath` gives
+it, as *One page, one pathname per locale* below sets out.
 
 - **Patterns** use SvelteKit's route syntax, limited to static segments,
   `[param]` and a trailing `[...rest]`; every pattern of an entry names the
@@ -2536,7 +2537,8 @@ reaches no route.
 - **Loaders match the canonical pathname.** Their [`routes`](#routes-optional)
   are written once, for `/products/[id]`, never per locale. `page.route.id`
   and `params` are the canonical route's too, while `page.url` and
-  `event.url` keep the pathname the visitor requested.
+  `event.url` keep the pathname the visitor requested. For a pathname
+  `reroute` leaves as it is, loader `routes` match that pathname itself.
 - **The table is checked when first used**, once per `defineI18n()`, so one
   `translatePathnames()` result can serve several: an entry it cannot read — a
   pattern outside the syntax, two entries naming the same pathnames, a
@@ -2546,9 +2548,21 @@ reaches no route.
   On the server, a translated pattern that takes a canonical pathname of
   another page is logged too, as `'/contact': { cs: '/help' }` does beside an
   entry `'/help'`, or `'/pair/[x]/[y]': { cs: '/pair/[y]/[x]' }` of its own
-  pages: that page is never served at that pathname. A pathname whose page
-  captures a segment in a rest param is left out, or every catch-all would be
-  logged.
+  pages: `delocalize` and the negotiation read that pathname as the
+  pattern's page, and where `localizePath` gives the pattern's page that
+  pathname, `reroute` serves it there in place of the other page. A pathname
+  whose page captures a segment in a rest param is left out, or every
+  catch-all would be logged. A pattern several locales share is logged too
+  where `localizePath` below ranks a pattern of one of them alone above it,
+  on a canonical pathname both their entries match: beside
+  `'/[...rest]': { de: '/de/[...rest]', cs: '/cs/[...rest]' }`,
+  `'/contact': { de: '/kontakt', cs: '/kontakt' }` gives the contact page
+  `/de/contact` and `/cs/contact`, so `reroute` serves it at `/kontakt` in
+  neither locale. That search fills each param with a segment no pattern
+  spells, and gives up on a shared pattern once 32 checks, each of a
+  pathname in one of its locales, confirm nothing, so a loss only a param
+  holding a static segment meets, or one in a table that pairs the pattern
+  with more patterns, may go unlogged.
 
 `localizePath(path, locale)` translates a canonical path to `locale`:
 `localizePath('/products/42', 'cs')` is `/cs/produkty/42`, and so is
@@ -2601,13 +2615,20 @@ locale a translated pathname belongs to is the server's answer, so a
 navigation to another locale's pathname switches. A `setLocale()` in the
 browser stands across the navigations whose pathname keeps that answer.
 
-- **One page, one pathname per locale.** With the catch-all above,
-  `/cs/about` serves the about page in Czech too, beside `/cs/o-nas`. A
-  `handle` can redirect such a pathname to its locale's own; the target
-  depends on the URL alone, so a permanent redirect is safe to cache. It
-  reaches only the pages rendered on request: SvelteKit answers a pathname
-  it reroutes to a prerendered page with that page's file, before `handle`
-  runs. A remote function's request can carry the URL of the page that
+- **One page, one pathname per locale.** `reroute` serves a page only at
+  a pathname `localizePath` gives it, in a locale of the table or in any
+  other. The catch-all above takes `/cs/about` too, but the about page's Czech pathname
+  is `/cs/o-nas`, so `/cs/about` is not rerouted: it reaches `handle` as it
+  is, still Czech, as `delocalize` reads it too (`{ path: '/about', locale:
+  'cs' }`), and SvelteKit answers it with a 404 unless a route of its own
+  matches it. In the browser, SvelteKit's router finds no route for it
+  either: a link to it loads the page from the server, `preloadData()`
+  throws on it, and so does `goto()` in SvelteKit 3, so hand both a
+  pathname `localizePath` gives. A `handle` can redirect such a pathname to
+  its locale's own instead, for a page rendered on request and a
+  prerendered one alike; the target depends on the URL alone, so a
+  permanent redirect is safe to cache.
+  A remote function's request can carry the URL of the page that
   called it (a command's, an enhanced form's and that of a prerender
   function run on request, and on SvelteKit 2 a query's too), so a remote
   request is left alone, or a remote function called on such a page would
@@ -2683,6 +2704,10 @@ browser stands across the navigations whose pathname keeps that answer.
   rendered in the canonical pathname's locale. Its crawler reaches a
   translated pathname only through a link, such as the switcher's, so list
   the ones nothing links to in `prerender.entries` of SvelteKit's config.
+  A link to a pathname `reroute` leaves as it is fails the build with a 404
+  (`prerender.handleHttpError`), unless a route of the app's own matches it
+  or the redirect above answers it: the crawler then writes a file that
+  redirects to the page's own pathname.
   The `hreflang` alternates of a prerendered page name the origin it was
   rendered at: set it in `paths.origin` (`prerender.origin` in SvelteKit 2),
   or they name `http://sveltekit-prerender`. An app served at several

@@ -2926,7 +2926,7 @@ describe('/kit', () => {
       const key = Symbol.for('@sveltekit-i18n/base/kit/translation@1');
       const other = Object.freeze({ [Symbol.for('@sveltekit-i18n/base/kit/translation@0')]: () => ({}) });
       // A binding that translates, so that none of it reaches the calls once one of its members is no function.
-      const bound = { canonical: () => ({ pathname: '/about', locale: 'cs' }), localizePath: () => '/cs/o-nas' };
+      const bound = { canonical: () => ({ pathname: '/about', locale: 'cs' }), served: () => '/about', localizePath: () => '/cs/o-nas' };
       const misshapen = Object.keys(bound).flatMap((member) => [undefined, null, true, {}].map((value) => Object.freeze({ [key]: () => ({ ...bound, [member]: value }) })));
       const throwing = Object.freeze({ [key]: () => { throw new Error('bind'); } });
 
@@ -2982,6 +2982,56 @@ describe('/kit', () => {
       // English pathnames are canonical ones already.
       expect(reroute({ url: url('/about') })).toBe(undefined);
       expect(reroute({ url: url('/') })).toBe(undefined);
+    });
+
+    it('reroutes a pathname only where localizePath leads to it, and delocalizes every one', () => {
+      const { reroute, delocalize, localizePath } = translated();
+
+      // The catch-all takes these, though each of their pages has a Czech pathname of its own.
+      for (const pathname of ['/cs/about', '/cs/about/', '/cs/products/42', '/cs/produkty/new', '/cs/files/a/b']) {
+        expect(reroute({ url: url(pathname) })).toBe(undefined);
+      }
+
+      expect(delocalize(url('/cs/about?q=1'))).toEqual({ path: '/about?q=1', locale: 'cs' });
+      expect(localizePath(delocalize(url('/cs/produkty/new')).path, 'cs')).toBe('/cs/produkty/novy');
+
+      const based = setup({ basePath: '/repo' }, { pathnames: translatePathnames(pathnames) });
+
+      expect(based.reroute({ url: url('/repo/cs/about') })).toBe(undefined);
+      expect(based.reroute({ url: url('/repo/cs/o-nas') })).toBe('/repo/about');
+      expect(based.reroute({ url: url('/repo/cs') })).toBe('/repo/');
+
+      // A pathname several locales share serves the page of each of them it leads to.
+      const shared = setup({}, { pathnames: translatePathnames({ '/blog': { en: '/weblog', de: '/weblog' }, '/[...rest]': { de: '/de/[...rest]' } }) });
+
+      expect(shared.localizePath('/blog', 'de')).toBe('/de/blog');
+      expect(shared.localizePath('/blog', 'en')).toBe('/weblog');
+      expect(shared.reroute({ url: url('/de/blog') })).toBe('/blog');
+      expect(shared.reroute({ url: url('/weblog') })).toBe('/blog');
+      expect(shared.delocalize(url('/weblog'))).toEqual({ path: '/blog' });
+
+      // A pathname a locale reaches through a pattern other locales share.
+      const reached = setup({}, { pathnames: translatePathnames({ '/about': { en: '/p/about', de: '/p/about' }, '/[...rest]': { cs: '/p/[...rest]', en: '/e/[...rest]', de: '/d/[...rest]' } }) });
+
+      expect(reached.localizePath('/about', 'cs')).toBe('/p/about');
+      expect(reached.reroute({ url: url('/p/about') })).toBe('/about');
+
+      // Of the patterns a locale shares, the one its canonical path matches first.
+      const both = setup({}, { pathnames: translatePathnames({ '/x': { de: '/k', cs: '/k' }, '/[...rest]': { de: '/r/[...rest]', cs: '/r/[...rest]' } }) });
+
+      expect(both.localizePath('/x', 'cs')).toBe('/k');
+      expect(both.reroute({ url: url('/k') })).toBe('/x');
+
+      // A pathname only a locale without one of its own reaches, the table's or not.
+      const fallen = setup({}, { pathnames: translatePathnames({ '/blog/[...rest]': { cs: '/clanky/[...rest]', de: '/clanky/[...rest]' }, '/news/[...rest]': { en: '/blog/[...rest]' }, '/[...rest]': { cs: '/cs/[...rest]', de: '/de/[...rest]', en: '/en/[...rest]' } }) });
+
+      expect(fallen.localizePath('/blog/x', 'fr')).toBe('/clanky/x');
+      expect(fallen.reroute({ url: url('/clanky/x') })).toBe('/blog/x');
+
+      const elsewhere = setup({}, { pathnames: translatePathnames({ '/x': { z: '/s', w: '/s', y: '/y' }, '/[a]': { z: '/z/[a]', w: '/w/[a]' }, '/q': { y: '/x' } }) });
+
+      expect(elsewhere.localizePath('/x', 'fr')).toBe('/s');
+      expect(elsewhere.reroute({ url: url('/s') })).toBe('/x');
     });
 
     it('ranks the patterns as SvelteKit ranks routes, whatever the order of the table and its locales', () => {
@@ -3331,6 +3381,10 @@ describe('/kit', () => {
         '[i18n]: `pathnames` serves \'/c\' in \'en\' at \'/\', which takes a pathname of \'/[...r]\'.',
       ]);
       expect(touch({ '/a/b': { cs: '/b/c' }, '/[...r]': { cs: '/cs/[...r]' } })).toEqual([]);
+      // `reroute` leaves `/cs/about` to its own page, which `delocalize` still reads as `/about` in Czech.
+      expect(touch({ '/about': { cs: '/cs/o-nas' }, '/[...r]': { cs: '/cs/[...r]' }, '/cs/about': {}, '/cs/kontakt': {} })).toEqual([
+        '[i18n]: `pathnames` serves \'/[...r]\' in \'cs\' at \'/cs/[...r]\', which takes pathnames of \'/cs/about\' and \'/cs/kontakt\'.',
+      ]);
       expect(touch(pathnames)).toEqual([]);
       expect(touch({ '/a': {}, '/b': {}, '/x/[...r]': { cs: '/[...r]' } })).toEqual([
         '[i18n]: `pathnames` serves \'/x/[...r]\' in \'cs\' at \'/[...r]\', which takes pathnames of \'/a\', \'/b\' and \'/x/[...r]\'.',
@@ -3338,6 +3392,127 @@ describe('/kit', () => {
       expect(touch({ '/[c]/a': {}, '/[c]/b': {}, '/[c]/c': {}, '/[c]/d': {}, '/x/[...r]': { cs: '/[...r]' } })).toEqual([
         '[i18n]: `pathnames` serves \'/x/[...r]\' in \'cs\' at \'/[...r]\', which takes pathnames of \'/x/[...r]\', \'/[c]/a\', \'/[c]/b\' and 2 more.',
       ]);
+      // A param takes a pathname wherever no static segment of the pattern beside it fills it.
+      expect(touch({ '/[...r]': { en: '/_1/[...r]' }, '/_3/_2/[...r]': { de: '/_3/[...r]' }, '/[p0]/[p1]/[...r]': {} })).toEqual([
+        '[i18n]: `pathnames` serves \'/[...r]\' in \'en\' at \'/_1/[...r]\', which takes a pathname of \'/[p0]/[p1]/[...r]\'.',
+        '[i18n]: `pathnames` serves \'/_3/_2/[...r]\' in \'de\' at \'/_3/[...r]\', which takes pathnames of \'/[p0]/[p1]/[...r]\' and \'/_3/_2/[...r]\'.',
+      ]);
+      expect(touch({ '/q/[x]/[y]': { cs: '/[x]/[y]' }, '/[a]/[b]': {}, '/[a]/_2': {} })).toEqual([
+        '[i18n]: `pathnames` serves \'/q/[x]/[y]\' in \'cs\' at \'/[x]/[y]\', which takes pathnames of \'/[a]/_2\' and \'/[a]/[b]\'.',
+      ]);
+      expect(touch({ '/_0/[...r]': { cs: '/[...r]' }, '/[p0]/_2/[...r]': {} })).toEqual([
+        '[i18n]: `pathnames` serves \'/_0/[...r]\' in \'cs\' at \'/[...r]\', which takes pathnames of \'/_0/[...r]\' and \'/[p0]/_2/[...r]\'.',
+      ]);
+    });
+
+    it.skipIf(BROWSER)('warns of a pattern locales share that localizePath ranks below a pattern of one of them alone, on the server', () => {
+      const touch = (table: Record<string, Record<string, string>>) => {
+        const { reroute, warnings } = setup({}, { pathnames: translatePathnames(table) });
+
+        reroute({ url: url('/') });
+
+        return warnings.filter((warning) => warning.includes('ranks below'));
+      };
+      const deep = (segments: number) => `/${Array.from({ length: segments }, (_, index) => `s${index}`).join('/')}`;
+
+      expect(touch({ '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { de: '/de/[...rest]', cs: '/cs/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/contact\' in \'de\', \'cs\' to \'/kontakt\', which localizePath ranks below \'/de/[...rest]\' in \'de\' and \'/cs/[...rest]\' in \'cs\'.',
+      ]);
+      expect(touch({ '/p/[id]': { de: '/x/[id]', cs: '/x/[id]', en: '/x/[id]' }, '/[...rest]': { de: '/de/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/p/[id]\' in \'de\' to \'/x/[id]\', which localizePath ranks below \'/de/[...rest]\' in \'de\'.',
+      ]);
+      // A pattern that takes another page's pathname is still checked for its own.
+      expect(touch({ '/p/[id]': { de: '/x/[id]', cs: '/x/[id]' }, '/x/new': {}, '/[...rest]': { de: '/de/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/p/[id]\' in \'de\' to \'/x/[id]\', which localizePath ranks below \'/de/[...rest]\' in \'de\'.',
+      ]);
+      // A param meets the static segments of other entries, a rest every segment below it.
+      expect(touch({ '/p/[id]': { de: '/x/[id]', cs: '/x/[id]' }, '/[a]/new': { de: '/de/[a]/neu' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/p/[id]\' in \'de\' to \'/x/[id]\', which localizePath ranks below \'/de/[a]/neu\' in \'de\'.',
+      ]);
+      expect(touch({ '/blog/[...rest]': { de: '/b/[...rest]', cs: '/b/[...rest]' }, '/[a]/[b]': { cs: '/cs/[a]/[b]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/blog/[...rest]\' in \'cs\' to \'/b/[...rest]\', which localizePath ranks below \'/cs/[a]/[b]\' in \'cs\'.',
+      ]);
+      expect(touch({ '/blog/[...rest]': { de: '/b/[...rest]', cs: '/b/[...rest]' }, '/blog/[slug]': { de: '/de/blog/[slug]' }, '/[...rest]': { de: '/de/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/blog/[...rest]\' in \'de\' to \'/b/[...rest]\', which localizePath ranks below \'/de/[...rest]\' in \'de\'.',
+      ]);
+      // A pattern of one locale that spells the shared one reads as it, so the other locales alone lose.
+      expect(touch({ '/legal': { en: '/legal', cs: '/legal' }, '/[...rest]': { en: '/[...rest]', cs: '/cs/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/legal\' in \'cs\' to \'/legal\', which localizePath ranks below \'/cs/[...rest]\' in \'cs\'.',
+      ]);
+      // A rest loses at the length where the pathname leaves an entry above.
+      expect(touch({ '/a/[...r]': { en: '/a/[...r]', cs: '/a/[...r]' }, '/[x]/[...r]': { en: '/en/[x]/[...r]' }, '/a': { en: '/en-a', cs: '/cs-a' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'en\' to \'/a/[...r]\', which localizePath ranks below \'/en/[x]/[...r]\' in \'en\'.',
+      ]);
+      expect(touch({ '/a/[...r]': { en: '/a/[...r]', cs: '/a/[...r]' }, '/[x]/[...r]': { en: '/en/[x]/[...r]' }, '/a/[p]/[...q]': { en: '/en-a/[p]/[...q]', cs: '/cs-a/[p]/[...q]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'en\' to \'/a/[...r]\', which localizePath ranks below \'/en/[x]/[...r]\' in \'en\'.',
+      ]);
+      // A rest left empty meets a pathname that ends.
+      expect(touch({ '/docs': { de: '/docs', cs: '/docs' }, '/docs/[...slug]': { de: '/de/docs/[...slug]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/docs\' in \'de\' to \'/docs\', which localizePath ranks below \'/de/docs/[...slug]\' in \'de\'.',
+      ]);
+      expect(touch({ [`${deep(200)}/[...rest]`]: { de: '/d/[...rest]', cs: '/d/[...rest]' }, '/[...rest]': { de: '/de/[...rest]' } })).toHaveLength(1);
+      // A table too deep for one search is searched by the others.
+      const params = `/${Array.from({ length: 6_000 }, (_, index) => `[p${index}]`).join('/')}`;
+
+      expect(touch({ [params]: { de: `/de${params}` }, '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { de: '/de/[...rest]', cs: '/cs/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/contact\' in \'de\', \'cs\' to \'/kontakt\', which localizePath ranks below \'/de/[...rest]\' in \'de\' and \'/cs/[...rest]\' in \'cs\'.',
+      ]);
+      // So is a table too wide at one level.
+      const wide = Object.fromEntries(Array.from({ length: 200_000 }, (_, index) => [`/s${index}`, {}]));
+
+      expect(touch({ ...wide, '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { de: '/de/[...rest]', cs: '/cs/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/contact\' in \'de\', \'cs\' to \'/kontakt\', which localizePath ranks below \'/de/[...rest]\' in \'de\' and \'/cs/[...rest]\' in \'cs\'.',
+      ]);
+      // Each loses where a param, a rest or a pattern of a locale the others lack leads its pathname elsewhere.
+      expect(touch({ '/p/[id]': { de: '/x/[id]', cs: '/x/[id]' }, '/p/[...r]': { de: '/de/[...r]' }, '/p/_1': { de: '/de/one' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/p/[id]\' in \'de\' to \'/x/[id]\', which localizePath ranks below \'/de/[...r]\' in \'de\'.',
+      ]);
+      expect(touch({ '/b/[p0]': { 'en-US': '/b/[p0]' }, '/b/[p0]/[...r]': { en: '/w/[p0]/[...r]', de: '/w/[p0]/[...r]' }, '/[p0]/[...r]': { de: '/[p0]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/b/[p0]/[...r]\' in \'de\' to \'/w/[p0]/[...r]\', which localizePath ranks below \'/[p0]/[...r]\' in \'de\'.',
+      ]);
+      expect(touch({ '/x/[p0]/[...r]': { en: '/cs/[p0]/[...r]', cs: '/cs/[p0]/[...r]' }, '/[p0]/[...r]': { en: '/[p0]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/x/[p0]/[...r]\' in \'en\' to \'/cs/[p0]/[...r]\', which localizePath ranks below \'/[p0]/[...r]\' in \'en\'.',
+      ]);
+      expect(touch({ '/[p0]/x/[...r]': { cs: '/[p0]/[...r]' }, '/b/[p0]/[...r]': { de: '/b/[p0]/[...r]', cs: '/b/[p0]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/b/[p0]/[...r]\' in \'cs\' to \'/b/[p0]/[...r]\', which localizePath ranks below \'/[p0]/[...r]\' in \'cs\'.',
+      ]);
+      expect(touch({ '/[...r]': { en: '/a/[...r]' }, '/[p0]/b/[...r]': { en: '/[p0]/b/[...r]', cs: '/[p0]/b/[...r]' }, '/[p0]/[p1]/[...r]': { en: '/[p0]/[p1]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/b/[...r]\' in \'en\' to \'/[p0]/b/[...r]\', which localizePath ranks below \'/a/[...r]\' in \'en\'.',
+      ]);
+      expect(touch({ '/b': { en: '/de', de: '/de' }, '/b/[...r]': { en: '/b/[...r]', de: '/b/[...r]' }, '/[p0]': { en: '/cs/[p0]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/b\' in \'en\' to \'/de\', which localizePath ranks below \'/cs/[p0]\' in \'en\'.',
+      ]);
+      expect(touch({ '/[p0]/[p1]': { cs: '/cs/[p0]/[p1]' }, '/[p0]': { cs: '/[p0]' }, '/[p0]/[...r]': { de: '/a/[p0]/[...r]', cs: '/a/[p0]/[...r]' }, '/[...r]': { cs: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[...r]\' in \'cs\' to \'/a/[p0]/[...r]\', which localizePath ranks below \'/[...r]\' in \'cs\'.',
+      ]);
+      expect(touch({ '/a/[p0]/[p1]/[...r]': { en: '/[p0]/[p1]/[...r]', de: '/[p0]/[p1]/[...r]' }, '/[p0]/[...r]': { de: '/cs/[p0]/[...r]' }, '/[p0]/[p1]': { cs: '/[p0]/[p1]' }, '/a/[p0]/[p1]/[p2]/[p3]/[...r]': { en: '/[p0]/[p1]/[p2]/[p3]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[p0]/[p1]/[...r]\' in \'de\' to \'/[p0]/[p1]/[...r]\', which localizePath ranks below \'/cs/[p0]/[...r]\' in \'de\'.',
+      ]);
+      expect(touch({ '/b/[...r]': { de: '/a/b/[...r]', cs: '/a/b/[...r]' }, '/[p0]/b': { de: '/[p0]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/b/[...r]\' in \'de\' to \'/a/b/[...r]\', which localizePath ranks below \'/[p0]\' in \'de\'.',
+      ]);
+      expect(touch({ '/[p0]/[p1]': { en: '/w/[p0]/[p1]', de: '/w/[p0]/[p1]' }, '/[p0]/[...r]': { de: '/a/[p0]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[p1]\' in \'de\' to \'/w/[p0]/[p1]\', which localizePath ranks below \'/a/[p0]/[...r]\' in \'de\'.',
+      ]);
+      expect(touch({ '/a': { cs: '/de/a', 'en-US': '/de/a' }, '/[...r]': { 'en-US': '/de/a/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a\' in \'en-US\' to \'/de/a\', which localizePath ranks below \'/de/a/[...r]\' in \'en-US\'.',
+      ]);
+      expect(touch({ '/f/[...r]': { de: '/s/[...r]', cs: '/s/[...r]' }, '/[a]/[...r]': { de: '/de/[a]/[...r]' }, '/f': { de: '/de/x' }, '/f/[b]/[c]/[...d]': { de: '/de/f/[b]/[c]/[...d]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/f/[...r]\' in \'de\' to \'/s/[...r]\', which localizePath ranks below \'/de/[a]/[...r]\' in \'de\'.',
+      ]);
+      // Where no pattern reads as one of them alone, the shared one serves them all.
+      expect(touch({ '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { en: '/en/[...rest]' } })).toEqual([]);
+      expect(touch({ '/contact': { de: '/kontakt', cs: '/kontakt' }, '/[...rest]': { de: '/r/[...rest]', cs: '/r/[...rest]' } })).toEqual([]);
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]', cs: '/w/[...path]' }, '/item/[id]': { en: '/w/[id]' }, '/[...rest]': { en: '/[...rest]' } })).toEqual([]);
+      // A pattern that outranks the shared one, or ranks only on pathnames it does not match, wins nothing from it.
+      expect(touch({ '/files/[...path]': { de: '/dateien/[...path]', cs: '/dateien/[...path]' }, '/files/[a]': { de: '/de/files/[a]' } })).toEqual([]);
+      expect(touch({ '/[x]': { de: '/k/[x]', cs: '/k/[x]' }, '/p': { de: '/de/p' }, '/[x]/[y]': { de: '/de/[x]/[y]' } })).toEqual([]);
+      expect(touch({ '/blog/[slug]': { de: '/de/blog/[slug]', cs: '/cs/blog/[slug]' }, '/blog/[...rest]': { de: '/b/x/[...rest]', cs: '/b/x/[...rest]' } })).toEqual([]);
+      // With its rest empty, a pattern that spells the shared one reads as it.
+      expect(touch({ '/blog/[slug]': { en: '/blog/[slug]', 'en-GB': '/blog/[slug]' }, '/[...rest]': { en: '/[...rest]' } })).toEqual([]);
+      expect(touch({ '/news': { de: '/de/news', 'de-CH': '/de/news' }, '/[section]/[...path]': { de: '/de/[section]/[...path]' } })).toEqual([]);
+      expect(touch({ '/p/[id]': { de: '/x/[id]', cs: '/x/[id]' }, '/p/[n]/[...r]': { de: '/x/[n]/[...r]', en: '/en/x/[n]/[...r]' } })).toEqual([]);
+      expect(touch(pathnames)).toEqual([]);
     });
 
     it.skipIf(BROWSER)('searches a table whose patterns start with a param beside many static ones without a blow-up', () => {
@@ -3422,19 +3597,51 @@ describe('/kit', () => {
       expect(visits(1000)).toEqual(small);
     });
 
-    it('walks a pathname of ten thousand segments once', () => {
+    it('walks a pathname of ten thousand segments as it walks one of ten', () => {
       const { reroute } = translated();
 
       reroute({ url: url('/warm') });
 
-      const get = vi.spyOn(Map.prototype, 'get');
+      const lookups = (segments: number) => {
+        const get = vi.spyOn(Map.prototype, 'get');
 
-      expect(reroute({ url: url(`/cs${'/x'.repeat(10_000)}`) })).toBe(`${'/x'.repeat(10_000)}`);
+        expect(reroute({ url: url(`/cs${'/x'.repeat(segments)}`) })).toBe(`${'/x'.repeat(segments)}`);
 
-      const count = get.mock.calls.length;
+        const count = get.mock.calls.length;
 
-      get.mockRestore();
-      expect(count).toBeLessThan(10);
+        get.mockRestore();
+
+        return count;
+      };
+
+      expect(lookups(10_000)).toBe(lookups(10));
+    });
+
+    it('reroutes a pathname another of its page serves at a cost the locales of the table do not raise', () => {
+      const lookups = (count: number) => {
+        const locales = ['cs', ...Array.from({ length: count - 1 }, (_, index) => `l${index}`)];
+        const { reroute } = setup({}, {
+          pathnames: translatePathnames({
+            '/about': Object.fromEntries(locales.map((locale) => [locale, `/${locale}/o-${locale}`])),
+            '/[...rest]': Object.fromEntries(locales.map((locale) => [locale, `/${locale}/[...rest]`])),
+          }),
+        });
+
+        reroute({ url: url('/warm') });
+
+        const get = vi.spyOn(Map.prototype, 'get');
+
+        expect(reroute({ url: url('/cs/about') })).toBe(undefined);
+        expect(reroute({ url: url('/cs/o-cs') })).toBe('/about');
+
+        const calls = get.mock.calls.length;
+
+        get.mockRestore();
+
+        return calls;
+      };
+
+      expect(lookups(50)).toBe(lookups(5));
     });
 
     it('types the locale of Kit.T by the instance by default', () => {
@@ -3472,6 +3679,15 @@ describe('/kit', () => {
         expect(i18n.preferred).toBe(true);
         expect(calls).toContain('cs:about:/about');
         expect(await load(serverEvent('/cs/o-nas', { isDataRequest: true, id: '/about' }))).toEqual({ i18n: { locale: 'cs', route: '/about' } });
+      });
+
+      it('hands the core the pathname reroute leaves, in the locale of its pattern', async () => {
+        const { load, calls } = translated();
+        const { i18n } = await load(serverEvent('/cs/about', { lang: 'en', id: null as unknown as string }));
+
+        expect(i18n.locale).toBe('cs');
+        expect(i18n.route).toBe('/cs/about');
+        expect(calls).not.toContain('cs:about:/about');
       });
 
       it('takes the locale of a translated pathname before preferredLocale', async () => {

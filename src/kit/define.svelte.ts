@@ -48,7 +48,7 @@ type Configured = { locales: string[]; handOver: boolean; loaders: Loader.Resolv
 
 const passOf = (data: unknown): Pass | undefined => (data as Record<PropertyKey, Pass | undefined> | null | undefined)?.[KEY];
 
-const UNTRANSLATED: Translation = { canonical: (pathname) => ({ pathname }), localizePath: (path) => path };
+const UNTRANSLATED: Translation = { canonical: (pathname) => ({ pathname }), served: (pathname) => pathname, localizePath: (path) => path };
 const UNHOSTED: Hosting = { locales: () => undefined, origin: () => undefined };
 
 /** `url[property]`, or nothing where SvelteKit hides it: the search while prerendering, the hash in a `load`. */
@@ -181,7 +181,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     };
   };
 
-  const translation = binding<Translation>('pathnames', TRANSLATION, ['canonical', 'localizePath'], UNTRANSLATED, 'takes what `translatePathnames(table)` of a compatible version of the package returns. No pathname is translated');
+  const translation = binding<Translation>('pathnames', TRANSLATION, ['canonical', 'served', 'localizePath'], UNTRANSLATED, 'takes what `translatePathnames(table)` of a compatible version of the package returns. No pathname is translated');
   const hosting = binding<Hosting>('domains', HOSTING, ['locales', 'origin'], UNHOSTED, 'takes what `localeDomains(map)` of a compatible version of the package returns. No locale is served at a domain');
 
   const negotiate = (event: Kit.Event<Params>, ranges: string | readonly string[] | null | undefined): Negotiated => {
@@ -206,7 +206,8 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     };
   };
 
-  const canonical = (pathname: string): string => translation().canonical(pathname).pathname;
+  // The pathname `reroute` serves, so the core loads the route rendered.
+  const canonical = (pathname: string): string => translation().served(pathname);
 
   const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, canonical, handOver: () => resolved().handOver });
 

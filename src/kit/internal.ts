@@ -57,9 +57,15 @@ export type Setup = {
   warn: (message: string) => void;
 };
 
-/** The translated pathnames one `defineI18n()` wires: the canonical pathname of a URL's, and `localizePath`. */
+/**
+ * The translated pathnames one `defineI18n()` wires: the canonical pathname
+ * of a URL's, which `delocalize` and the negotiation read, the pathname
+ * `reroute` serves, and `localizePath`.
+ */
 export type Translation = {
   canonical: (pathname: string) => Canonical;
+  /** The canonical pathname, `basePath` kept, where `localizePath` gives the page the pathname, and the pathname itself otherwise. */
+  served: (pathname: string) => string;
   localizePath: Kit.T['localizePath'];
 };
 
