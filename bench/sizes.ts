@@ -3,7 +3,7 @@ import { gzipSync } from 'node:zlib';
 
 import { I18n } from '@sveltekit-i18n/base';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { stringify } from 'devalue';
+import { uneval } from 'devalue';
 import { build, type Rolldown } from 'vite';
 import { expect, it } from 'vitest';
 
@@ -25,7 +25,9 @@ it('the SSR hand-off', async () => {
   await i18n.loadTranslations('en', '/');
   expect(Object.keys(i18n.translations.en)).toHaveLength(KEYS);
 
-  record(`snapshot({ records: true }) as devalue writes it (${n(KEYS)} keys)`, 'size', 'B', stringify(i18n.snapshot({ records: true })).length);
+  // A page render embeds the server's data with `uneval`; a data request,
+  // which `stringify` writes, carries no tables.
+  record(`snapshot({ records: true }) as a page render embeds it (${n(KEYS)} keys)`, 'size', 'B', uneval(i18n.snapshot({ records: true })).length);
 });
 
 /**
