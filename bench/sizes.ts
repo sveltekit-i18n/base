@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 import { I18n } from '@sveltekit-i18n/base';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { stringify } from 'devalue';
-import * as esbuild from 'esbuild';
-import { compileModule } from 'svelte/compiler';
+import { build, type Rolldown } from 'vite';
 import { expect, it } from 'vitest';
 
 import { sourceImports, SRC } from '../vitest.config.js';
@@ -31,36 +30,32 @@ it('the SSR hand-off', async () => {
 
 /**
  * What a browser bundle of `entry`, or of the `names` an app imports from it,
- * ships, minified: compiled from the source as a consumer's bundler compiles
- * it, since the package ships its rune modules uncompiled. `svelte` is the
- * consumer's, so it is left out.
+ * ships, minified: built by Vite with the Svelte plugin, as a SvelteKit app
+ * builds it, so the rune modules, which the package ships uncompiled, compile
+ * as there and the server-only code `BROWSER` guards is dropped as there.
+ * `svelte` is the consumer's, so it is left out.
  */
 const bundle = async (entry: string, names?: string) => {
-  const { outputFiles: [output] } = await esbuild.build({
-    ...(names ? { stdin: { contents: `export { ${names} } from ${JSON.stringify(resolve(source, entry))};`, resolveDir: source } } : { entryPoints: [resolve(source, entry)] }),
-    bundle: true,
-    minify: true,
-    write: false,
-    format: 'esm',
-    platform: 'browser',
-    external: ['svelte', 'svelte/*'],
-    alias: Object.fromEntries(sourceImports('client', source).map(({ find, replacement }) => [find, replacement])),
+  const input = '\0entry';
+  const { output: [chunk, ...rest] } = await build({
+    configFile: false,
+    envFile: false,
     logLevel: 'silent',
-    plugins: [{
-      name: 'runes',
-      setup: (build) => {
-        build.onLoad({ filter: /\.svelte\.ts$/ }, async ({ path }) => {
-          const { code } = await esbuild.transform(readFileSync(path, 'utf8'), { loader: 'ts' });
+    resolve: { alias: sourceImports('client', source) },
+    plugins: [
+      svelte({ configFile: false }),
+      ...(names ? [{ name: 'entry', resolveId: (id: string) => (id === input ? id : null), load: (id: string) => (id === input ? `export { ${names} } from ${JSON.stringify(resolve(source, entry))};` : null) }] : []),
+    ],
+    build: { write: false, minify: true, modulePreload: false, rolldownOptions: { input: names ? input : resolve(source, entry), preserveEntrySignatures: 'strict', external: [/^svelte($|\/)/] } },
+  }) as Rolldown.RolldownOutput;
 
-          return { contents: compileModule(code, { generate: 'client', dev: false, filename: path }).js.code, loader: 'js' };
-        });
-      },
-    }],
-  });
+  expect(rest).toEqual([]);
 
-  expect(output.text).not.toMatch(/\$state|\$derived|\$effect/);
+  const { code } = chunk;
 
-  return output.contents;
+  expect(code).not.toMatch(/\$state|\$derived|\$effect/);
+
+  return Buffer.from(code);
 };
 
 it('the browser bundle', async () => {
