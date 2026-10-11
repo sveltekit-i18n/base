@@ -12,7 +12,7 @@ type Pattern = { segments: Segment[]; rest?: string };
 type Parsed = { pattern: Pattern; shape: string; names: string; order: string };
 
 /** An entry of the table: its canonical pattern, and the localized one of each locale, by its lowercased name. */
-type Entry = { key: string; canonical: Pattern; targets: Map<string, Pattern> };
+type Entry = { key: string; canonical: Pattern; targets: Map<string, Claim> };
 
 /** A localized pattern: the entry it maps to, as the table spells it, and the locales that spell it. */
 type Claim = { entry: Entry; pattern: Pattern; locales: string[] };
@@ -21,6 +21,9 @@ type Claim = { entry: Entry; pattern: Pattern; locales: string[] };
 type Node<T> = { statics?: Map<string, Node<T>>; param?: Node<T>; rest?: T; end?: T };
 
 type Found<T> = { value: T; params: string[]; rest: string };
+
+/** A compiled table: a trie per direction, and the locales it names, lowercased. */
+type Tries = { localized: Node<Claim>; canonical: Node<Entry>; locales: Set<string> };
 
 /** A pathname, split into its segments, and whether it ends in a slash. */
 type Split = { segments: string[]; trailing: boolean };
@@ -187,6 +190,156 @@ const fill = ({ segments, rest }: Pattern, values: Map<string, string>, trailing
   return trailing && path !== '/' ? `${path}/` : path;
 };
 
+/** The canonical path of a localized one, and the pattern that reads it. */
+const delocalized = (localized: Node<Claim>, path: string): { path: string; claim: Claim } | undefined => {
+  const parts = split(path);
+
+  if (!parts) return undefined;
+
+  const found = walk(localized, parts.segments, () => true);
+
+  if (!found) return undefined;
+
+  const { entry, pattern } = found.value;
+
+  return { path: fill(entry.canonical, captured(pattern, found), parts.trailing), claim: found.value };
+};
+
+const localeOf = (locales: readonly string[]): string | undefined => (locales.length === 1 ? locales[0] : undefined);
+
+/** Whether the pathname a match led to reads as the lowercased `locale` alone. */
+const pins = (led: { claim: Claim } | undefined, locale: string): boolean => led !== undefined && localeOf(led.claim.locales)?.toLowerCase() === locale;
+
+/**
+ * The pathname `target` fills with what a canonical match captured, and the
+ * pattern that reads it, where that leads back to the same page: a more
+ * specific pattern can take the path a match fills for another page.
+ */
+const lead = (back: Node<Claim>, found: Found<Entry>, target: Pattern | undefined, trailing: boolean): { localized: string; claim: Claim } | undefined => {
+  if (!target) return undefined;
+
+  const values = captured(found.value.canonical, found);
+  const localized = fill(target, values, trailing);
+  const led = delocalized(back, localized);
+
+  // The root keeps no trailing slash, so neither does the way back from it.
+  return led?.path === fill(found.value.canonical, values, trailing && localized !== '/') ? { localized, claim: led.claim } : undefined;
+};
+
+type Led = { localized: string; claim: Claim; entry: Entry };
+
+/**
+ * The first pathname of `wanted`, lowercased, that reads as `wanted` alone,
+ * and the first that every locale of its pattern shares, of the entries that
+ * match `parts`, in rank order; the walk stops at the first of the former.
+ */
+const ranked = ({ localized: back, canonical: root }: Tries, parts: Split, wanted: string, instead?: { entry: Entry; claim: Claim; localized: string }): { pinned?: Led; shared?: Led } => {
+  const chosen: { pinned?: Led; shared?: Led } = {};
+
+  // A pathname that reads as the wanted locale wins over one every
+  // locale it names shares, which the visitor's locale would read it as.
+  walk(root, parts.segments, (found) => {
+    const led = found.value === instead?.entry ? instead : lead(back, found, found.value.targets.get(wanted)?.pattern, parts.trailing);
+
+    if (led && localeOf(led.claim.locales) === undefined) chosen.shared ??= { ...led, entry: found.value };
+    else if (led && pins(led, wanted)) chosen.pinned = { ...led, entry: found.value };
+
+    return chosen.pinned !== undefined;
+  });
+
+  return chosen;
+};
+
+/**
+ * A percent-encoded canonical `pathname` translated to `wanted`, lowercased,
+ * or to any locale without a pathname of its own when `wanted` is left out;
+ * `undefined` for a pathname it cannot split.
+ */
+const localize = (tries: Tries, pathname: string, wanted?: string): string | undefined => {
+  const { localized: back, canonical: root, locales } = tries;
+  const parts = split(pathname);
+
+  if (!parts) return undefined;
+
+  const chosen = wanted !== undefined && locales.has(wanted) ? ranked(tries, parts, wanted) : {};
+  const localized = chosen.pinned?.localized ?? chosen.shared?.localized;
+
+  if (localized !== undefined) return localized;
+
+  // Short of the wanted locale, a path that serves its own page stays,
+  // and one another page is served at takes any locale's pathname of it.
+  const own = delocalized(back, pathname);
+
+  if (!own || samePath(own.path, pathname)) return pathname;
+
+  let other: string | undefined;
+
+  walk(root, parts.segments, (found) => [...found.value.targets.values()].some((target) => (other = lead(back, found, target.pattern, parts.trailing)?.localized) !== undefined));
+
+  return other ?? pathname;
+};
+
+const withoutSlash = (path: string): string => (path.endsWith('/') ? path.slice(0, -1) : path);
+
+/**
+ * Whether `localizePath` translates the canonical `path` to `pathname`, which
+ * the table reads as `path`, a trailing slash aside, which SvelteKit settles
+ * once a route matched: `reroute` serves a page at no other pathname. A
+ * locale gives a pathname of its own only through a pattern that matches it,
+ * so the locales of those patterns are tried, the most specific first, and
+ * then what a locale without one gets.
+ */
+const leadsTo = (tries: Tries, path: string, pathname: string): boolean => {
+  const parts = split(pathname);
+
+  if (!parts) return false;
+
+  const wanted = withoutSlash(pathname);
+  const leads = (locale?: string): boolean => {
+    const localized = localize(tries, path, locale);
+
+    return localized !== undefined && samePath(withoutSlash(localized), wanted);
+  };
+  const locales = new Set<string>();
+
+  walk(tries.localized, parts.segments, ({ value }) => {
+    value.locales.forEach((locale) => locales.add(locale.toLowerCase()));
+
+    return false;
+  });
+
+  return [...locales].some(leads) || leads();
+};
+
+/** The children of `node`: its statics, then its param. */
+const childrenOf = <T>(node: Node<T>): Node<T>[] => [...node.statics?.values() ?? [], ...(node.param ? [node.param] : [])];
+
+/** The nodes of `roots`, each before its children: a table can be too deep to recurse into. */
+const nodesOf = <T>(...roots: Node<T>[]): Node<T>[] => {
+  const nodes = [...roots];
+
+  for (const node of nodes) childrenOf(node).forEach((child) => nodes.push(child));
+
+  return nodes;
+};
+
+/** A source of param values no static segment of the tries spells, a new one per call. */
+const sampler = (...roots: Node<unknown>[]): (() => string) => {
+  const statics = new Set<string>();
+
+  for (const node of nodesOf(...roots)) node.statics?.forEach((_, segment) => statics.add(segment));
+
+  let count = 0;
+
+  return () => {
+    let next: string;
+
+    do next = `_${count++}`; while (statics.has(next));
+
+    return next;
+  };
+};
+
 /**
  * The pages each localized pattern takes a pathname of: the pathnames a
  * pattern matches that are pages of the canonical trie, which no rest of it
@@ -194,30 +347,9 @@ const fill = ({ segments, rest }: Pattern, values: Map<string, string>, trailing
  * walked together, a node of each per depth: a static segment meets its own
  * static and a param, a param meets every static and a param, with a value no
  * static spells, and a rest every node below. Each pathname laid out so is
- * read through both tries, as `reroute` reads it.
+ * read through both tries, as `delocalize` reads it.
  */
-const overlaps = (localized: Node<Claim>, canonical: Node<Entry>): Map<Claim, Set<Entry>> => {
-  const statics = new Set<string>();
-  const gather = (node: Node<unknown>): void => {
-    node.statics?.forEach((child, segment) => {
-      statics.add(segment);
-      gather(child);
-    });
-
-    if (node.param) gather(node.param);
-  };
-
-  gather(localized);
-  gather(canonical);
-
-  let count = 0;
-  const value = (): string => {
-    let next: string;
-
-    do next = `_${count++}`; while (statics.has(next));
-
-    return next;
-  };
+const overlaps = (localized: Node<Claim>, canonical: Node<Entry>, value: () => string): Map<Claim, Set<Entry>> => {
   const found = new Map<Claim, Set<Entry>>();
   const segments: string[] = [];
 
@@ -270,6 +402,222 @@ const overlaps = (localized: Node<Claim>, canonical: Node<Entry>): Map<Claim, Se
   };
 
   pair(localized, canonical);
+
+  return found;
+};
+
+/** The nodes of `root` a pathname of `segments` reaches. */
+const reach = <T>(root: Node<T>, segments: readonly string[]): Node<T>[] => segments.reduce<Node<T>[]>((nodes, segment) => {
+  const decoded = decodeSegment(segment);
+
+  return nodes.flatMap((node) => [node.statics?.get(decoded), node.param].filter((next) => next !== undefined));
+}, [root]);
+
+/**
+ * The lengths of a rest past the nodes `from` reaches at which what matches
+ * can change: where a node of the param chains below them ends or rests, the
+ * length after one that ends, and the first length past them all.
+ */
+const lengths = (from: readonly Node<unknown>[]): number[] => {
+  const found = [0];
+  let ended = false;
+  let length = 0;
+
+  for (let at = from; at.length; length++, at = at.flatMap((node) => (node.param ? [node.param] : []))) {
+    if (length && (ended || at.some((node) => node.end !== undefined || node.rest !== undefined))) found.push(length);
+
+    ended = at.some((node) => node.end !== undefined);
+  }
+
+  if (length > 0) found.push(length);
+
+  return found;
+};
+
+/**
+ * The static segments a localized pattern spells before its entry's
+ * canonical pattern, which it spells out after them: two such patterns with
+ * the same ones fill the same pathname wherever both entries match.
+ */
+const prefixOf = ({ entry: { canonical }, pattern }: Claim): string | undefined => {
+  const lead = pattern.segments.length - canonical.segments.length;
+  const head = pattern.segments.slice(0, Math.max(lead, 0));
+
+  if (lead < 0 || pattern.rest !== canonical.rest || head.some((segment) => 'param' in segment)) return undefined;
+
+  const same = canonical.segments.every((segment, index) => {
+    const other = pattern.segments[lead + index];
+
+    return 'param' in segment ? 'param' in other && other.param === segment.param : !('param' in other) && other.decoded === segment.decoded;
+  });
+
+  return same ? JSON.stringify(head.map((segment) => ('param' in segment ? '' : segment.decoded))) : undefined;
+};
+
+/** Per node of `root`, per lowercased locale of a pattern of one locale alone at it or below it, the prefixes of such patterns, `''` for one without. */
+const lone = (root: Node<Entry>): Map<Node<Entry>, Map<string, Set<string>>> => {
+  const below = new Map<Node<Entry>, Map<string, Set<string>>>();
+
+  // In reverse, each node comes after its children.
+  for (const node of nodesOf(root).reverse()) {
+    const locales = new Map<string, Set<string>>();
+    const add = (locale: string, prefix: string): void => {
+      locales.set(locale, (locales.get(locale) ?? new Set()).add(prefix));
+    };
+
+    for (const entry of [node.end, node.rest]) entry?.targets.forEach((claim, locale) => claim.locales.length === 1 && add(locale, prefixOf(claim) ?? ''));
+
+    for (const child of childrenOf(node)) below.get(child)!.forEach((prefixes, locale) => prefixes.forEach((prefix) => add(locale, prefix)));
+
+    below.set(node, locales);
+  }
+
+  return below;
+};
+
+/** The checks `outranked` runs per shared pattern, each of a pathname in one of its locales, before it gives up on it. */
+const ATTEMPTS = 32;
+
+/**
+ * Per pattern of `claims` several locales share, per locale of it, the
+ * pattern of that locale alone `localizePath` gives instead of it on a
+ * canonical pathname of its entry's page. Candidates come from the canonical
+ * trie walked along the entry: down the segments it ties on, and below the
+ * first one it wins, to every entry that matches a pathname it matches, with
+ * a target of one locale alone. Each is confirmed on such a pathname, filled
+ * as the walk went, by the ranking `localizePath` runs.
+ */
+const outranked = (tries: Tries, claims: readonly Claim[], value: () => string): Map<Claim, Map<string, Claim>> => {
+  const found = new Map<Claim, Map<string, Claim>>();
+  const shared = claims.filter((claim) => claim.locales.length > 1);
+
+  if (!shared.length) return found;
+
+  const below = lone(tries.canonical);
+  const anywhere = below.get(tries.canonical)!;
+
+  for (const claim of shared) {
+    const prefix = prefixOf(claim);
+    // A pattern of the same prefix fills the pathname the shared one does, which reads as one of them.
+    const differs = (prefixes: Set<string> | undefined): boolean => prefixes !== undefined && (prefix === undefined || prefixes.size > 1 || !prefixes.has(prefix));
+    const open = new Map(claim.locales.map((locale) => [locale.toLowerCase(), locale] as const).filter(([lowered]) => differs(anywhere.get(lowered))));
+
+    if (!open.size) continue;
+
+    const { entry } = claim;
+    const { segments, rest } = entry.canonical;
+    const lost = new Map<string, Claim>();
+    const witness: string[] = [];
+
+    const step = (segment: string, next: () => void): void => {
+      witness.push(segment);
+      next();
+      witness.pop();
+    };
+    let spent = 0;
+    // A search that confirmed nothing in so many checks gives up: a table can pair every shared pattern with every other.
+    const done = (): boolean => lost.size === open.size || spent >= ATTEMPTS;
+    const reaches = (node: Node<Entry>): boolean => {
+      if (done()) return false;
+
+      const locales = below.get(node)!;
+
+      return [...open.keys()].some((lowered) => !lost.has(lowered) && differs(locales.get(lowered)));
+    };
+    // `vary`: the pathname ends in a rest, of any length.
+    const check = (other: Entry | undefined, tail: readonly string[] = [], vary = false): void => {
+      if (!other || other === entry) return;
+
+      const wanted = [...open.keys()].filter((lowered) => {
+        const target = other.targets.get(lowered);
+
+        return !lost.has(lowered) && target?.locales.length === 1 && (prefix === undefined || prefixOf(target) !== prefix);
+      });
+
+      if (!wanted.length) return;
+
+      const fixed = [...witness, ...tail];
+      for (const length of vary ? extent(fixed, other, wanted) : [0]) {
+        if (wanted.every((lowered) => lost.has(lowered))) break;
+
+        const parts: Split = { segments: length ? [...fixed, ...Array.from({ length }, value)] : fixed, trailing: false };
+
+        for (const lowered of wanted) {
+          if (lost.has(lowered)) continue;
+
+          if (done()) return;
+
+          const { pinned, shared } = ranked(tries, parts, lowered);
+
+          if (pinned && shared?.entry === entry) lost.set(lowered, pinned.claim);
+          else spent++;
+        }
+      }
+    };
+    // How many segments a rest past `fixed` holds before every longer one reads alike: the param chains below what the pathname and the patterns' fills of it reach.
+    const extent = (fixed: readonly string[], other: Entry, wanted: readonly string[]): number[] => {
+      const fills = [entry, other].flatMap((page) => {
+        const at = walk(tries.canonical, fixed, (found) => found.value === page);
+
+        return at ? (page === entry ? [claim] : wanted.map((lowered) => page.targets.get(lowered)!)).map((target) => fill(target.pattern, captured(page.canonical, at), false)) : [];
+      });
+      const frontier = [...reach(tries.canonical, fixed), ...fills.flatMap((path) => reach(tries.localized, split(path)?.segments ?? []))];
+
+      return lengths(frontier);
+    };
+    const remainder = (at: number): string[] => segments.slice(at).map((segment) => ('param' in segment ? value() : segment.encoded));
+    const every = (node: Node<Entry>): void => {
+      if (!reaches(node)) return;
+
+      check(node.end);
+
+      for (const [segment, child] of node.statics ?? []) {
+        if (done()) return;
+
+        step(encodeStatic(segment)!, () => every(child));
+      }
+
+      if (node.param) step(value(), () => every(node.param!));
+
+      check(node.rest, [], true);
+    };
+    // `won`: a segment above has ranked the entry first.
+    const visit = (node: Node<Entry>, at: number, won: boolean): void => {
+      if (!reaches(node)) return;
+
+      if (at < segments.length) {
+        const segment = segments[at];
+
+        if ('param' in segment) {
+          if (won) {
+            for (const [decoded, child] of node.statics ?? []) {
+              if (done()) return;
+
+              step(encodeStatic(decoded)!, () => visit(child, at + 1, true));
+            }
+          }
+
+          if (node.param) step(value(), () => visit(node.param!, at + 1, won));
+        } else {
+          const child = node.statics?.get(segment.decoded);
+
+          if (child) step(segment.encoded, () => visit(child, at + 1, won));
+
+          if (node.param) step(segment.encoded, () => visit(node.param!, at + 1, true));
+        }
+
+        // A rest ranks below a segment, and below a pathname that ends.
+        check(node.rest, remainder(at), rest !== undefined);
+      } else if (rest === undefined) {
+        check(node.end);
+        check(node.rest);
+      } else if (won) every(node);
+    };
+
+    visit(tries.canonical, 0, false);
+
+    if (lost.size) found.set(claim, new Map([...lost].map(([lowered, pinned]) => [open.get(lowered)!, pinned])));
+  }
 
   return found;
 };
@@ -330,17 +678,17 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
         continue;
       }
 
-      if (claimed) {
-        claimed.claim.locales.push(name);
-      } else {
+      const claim: Claim = claimed?.claim ?? { entry, pattern: target.pattern, locales: [] };
+
+      if (!claimed) {
         const slot = insert(localized, target.pattern);
-        const claim: Claim = { entry, pattern: target.pattern, locales: [name] };
 
         slot.node[slot.slot] = claim;
         claims.set(target.shape, { claim, spelled: value as string, order: target.order });
       }
 
-      entry.targets.set(lowered, target.pattern);
+      claim.locales.push(name);
+      entry.targets.set(lowered, claim);
       locales.add(lowered);
 
       if (!available.has(lowered)) unserved.add(name);
@@ -349,17 +697,33 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
 
   // The browser reads the table the server has warned of already.
   if (!BROWSER) {
-    try {
-      const spelled = new Map([...claims.values()].map((claimed) => [claimed.claim, claimed.spelled]));
+    const spelled = new Map([...claims.values()].map((claimed) => [claimed.claim, claimed.spelled]));
+    const value = sampler(localized, canonical);
+    // Each search stands alone: a table too deep for one is searched by the others.
+    const search = (run: () => void): void => {
+      try {
+        run();
+      } catch { /* a table too deep to search is translated all the same */ }
+    };
 
-      for (const [claim, pages] of overlaps(localized, canonical)) {
+    search(() => {
+      for (const [claim, pages] of overlaps(localized, canonical, value)) {
         const keys = [...pages].slice(0, 3).map((page) => quoted(page.key));
         const more = pages.size - keys.length;
         const named = pages.size === 1 ? `a pathname of ${keys[0]}` : `pathnames of ${more ? keys.join(', ') : keys.slice(0, -1).join(', ')} and ${more ? `${more} more` : keys[keys.length - 1]}`;
 
         warn(`serves ${quoted(claim.entry.key)} in ${claim.locales.map(quoted).join(', ')} at ${quoted(spelled.get(claim))}, which takes ${named}`);
       }
-    } catch { /* a table too deep to search is translated all the same */ }
+    });
+
+    search(() => {
+      for (const [claim, lost] of outranked({ localized, canonical, locales }, [...spelled.keys()], value)) {
+        const outrun = claim.locales.filter((locale) => lost.has(locale));
+        const above = outrun.map((locale) => `${quoted(spelled.get(lost.get(locale)!))} in ${quoted(locale)}`);
+
+        warn(`translates ${quoted(claim.entry.key)} in ${outrun.map(quoted).join(', ')} to ${quoted(spelled.get(claim))}, which localizePath ranks below ${above.length > 1 ? `${above.slice(0, -1).join(', ')} and ${above[above.length - 1]}` : above[0]}`);
+      }
+    });
   }
 
   if (unserved.size) warn(`translates to ${[...unserved].map(quoted).join(', ')}, which the config serves no translations for`);
@@ -368,11 +732,11 @@ const compile = (table: unknown, { sanitize, served, warn }: Pick<Setup, 'saniti
 };
 
 const translation = (table: unknown, { basePath, sanitize, normalize, served, warn }: Setup): Translation => {
-  let compiled: ReturnType<typeof compile> | undefined;
+  let compiled: Tries | undefined;
 
   // Compiled once even when the table throws as it is read, so no call pays
   // for a compile again.
-  const tries = (): ReturnType<typeof compile> => {
+  const tries = (): Tries => {
     if (!compiled) {
       try {
         compiled = compile(table, { sanitize, served, warn });
@@ -384,106 +748,67 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
 
     return compiled;
   };
-  let last: { pathname: string; result: Canonical } | undefined;
+  // The last pathname read, with what `served` decides of it once asked:
+  // `delocalize` and the negotiation never ask.
+  let last: { pathname: string; result: Canonical; read?: { local: string; path: string }; served?: string } | undefined;
 
   const trimmed = typeof basePath === 'string' ? basePath.replace(/\/+$/, '') : '';
 
-  const delocalized = (path: string): { path: string; locale?: string } | undefined => {
-    const parts = split(path);
+  const lookup = (pathname: string): NonNullable<typeof last> => {
+    if (last?.pathname === pathname) return last;
 
-    if (!parts) return undefined;
+    last = { pathname, result: { pathname } };
 
-    const found = walk(tries().localized, parts.segments, () => true);
+    try {
+      const local = !trimmed ? pathname : pathname === trimmed ? '/' : pathname.startsWith(`${trimmed}/`) ? pathname.slice(trimmed.length) : undefined;
+      const found = local === undefined ? undefined : delocalized(tries().localized, local);
 
-    if (!found) return undefined;
+      if (local !== undefined && found) {
+        const locale = localeOf(found.claim.locales);
 
-    const { entry, pattern, locales } = found.value;
-    const result = fill(entry.canonical, captured(pattern, found), parts.trailing);
+        // The root under the base path is itself with or without its slash.
+        last.result = { pathname: local === '/' && found.path === '/' ? pathname : `${trimmed}${found.path}`, ...(locale === undefined ? {} : { locale }) };
+        last.read = { local, path: found.path };
+      }
+    } catch { /* passed through */ }
 
-    return locales.length === 1 ? { path: result, locale: locales[0] } : { path: result };
+    return last;
   };
 
   return {
-    canonical: (pathname) => {
-      if (typeof pathname !== 'string') return { pathname };
+    canonical: (pathname) => (typeof pathname === 'string' ? lookup(pathname).result : { pathname }),
 
-      if (last?.pathname === pathname) return last.result;
+    served: (pathname) => {
+      if (typeof pathname !== 'string') return pathname;
 
-      let result: Canonical = { pathname };
+      const looked = lookup(pathname);
 
-      try {
-        const local = !trimmed ? pathname : pathname === trimmed ? '/' : pathname.startsWith(`${trimmed}/`) ? pathname.slice(trimmed.length) : undefined;
-        const found = local === undefined ? undefined : delocalized(local);
+      if (looked.served === undefined) {
+        try {
+          const { read } = looked;
 
-        // The root under the base path is itself with or without its slash.
-        if (found) result = { pathname: local === '/' && found.path === '/' ? pathname : `${trimmed}${found.path}`, ...(found.locale === undefined ? {} : { locale: found.locale }) };
-      } catch { /* passed through */ }
+          looked.served = read && leadsTo(tries(), read.path, read.local) ? looked.result.pathname : pathname;
+        } catch {
+          looked.served = pathname;
+        }
+      }
 
-      last = { pathname, result };
-
-      return result;
+      return looked.served;
     },
 
     localizePath: (path, locale) => {
       if (typeof path !== 'string' || typeof locale !== 'string') return path;
 
       try {
-        const { canonical: root, locales } = tries();
-
+        const compiled = tries();
         // A locale the table names is taken in any case; only another
         // spelling of one goes through the sanitizer.
         const named = locale.toLowerCase();
-        const wanted = locales.has(named) ? named : normalize(locale).toLowerCase();
+        const wanted = compiled.locales.has(named) ? named : normalize(locale).toLowerCase();
         const end = path.search(/[?#]/);
-        const pathname = encodePath(end < 0 ? path : path.slice(0, end));
-        const suffix = end < 0 ? '' : path.slice(end);
-        const parts = split(pathname);
+        const localized = localize(compiled, encodePath(end < 0 ? path : path.slice(0, end)), wanted);
 
-        if (!parts) return path;
-
-        // A more specific pattern can take the path a match fills for another
-        // page, so a match counts only where it leads back to the same page.
-        const lead = (found: Found<Entry>, target: Pattern | undefined): { localized: string; locale?: string } | undefined => {
-          if (!target) return undefined;
-
-          const values = captured(found.value.canonical, found);
-          const localized = fill(target, values, parts.trailing);
-          const back = delocalized(localized);
-
-          // The root keeps no trailing slash, so neither does the way back from it.
-          return back?.path === fill(found.value.canonical, values, parts.trailing && localized !== '/') ? { localized, locale: back.locale } : undefined;
-        };
-        let pinned: string | undefined;
-        let shared: string | undefined;
-
-        // A pathname that reads as the wanted locale wins over one every
-        // locale it names shares, which the visitor's locale would read it as.
-        if (locales.has(wanted)) {
-          walk(root, parts.segments, (found) => {
-            const led = lead(found, found.value.targets.get(wanted));
-
-            if (led?.locale === undefined) shared ??= led?.localized;
-            else if (led.locale.toLowerCase() === wanted) pinned = led.localized;
-
-            return pinned !== undefined;
-          });
-        }
-
-        const localized = pinned ?? shared;
-
-        if (localized !== undefined) return `${localized}${suffix}`;
-
-        // Short of the wanted locale, a path that serves its own page stays,
-        // and one another page is served at takes any locale's pathname of it.
-        const own = delocalized(pathname);
-
-        if (!own || samePath(own.path, pathname)) return `${pathname}${suffix}`;
-
-        let other: string | undefined;
-
-        walk(root, parts.segments, (found) => [...found.value.targets.values()].some((target) => (other = lead(found, target)?.localized) !== undefined));
-
-        return `${other ?? pathname}${suffix}`;
+        return localized === undefined ? path : `${localized}${end < 0 ? '' : path.slice(end)}`;
       } catch {
         return path;
       }
@@ -501,16 +826,23 @@ const translation = (table: unknown, { basePath, sanitize, normalize, served, wa
  * specific pattern, as SvelteKit ranks its routes, whatever the table's
  * order, and a locale an entry leaves out falls through to the next pattern
  * that matches. A pathname the table does not name passes through unchanged.
- * On the server, the compile warns of a localized pattern that takes a
- * canonical pathname of another page, which that page is then never served
- * at.
+ * `reroute` serves a page only at the pathnames `localizePath` gives it, and
+ * passes any other through, which `delocalize` and the negotiation still read
+ * as the pattern's page. On the server, the compile warns of a localized
+ * pattern that takes a canonical pathname of another page, which `delocalize`
+ * then reads as the pattern's, and of a pattern several locales share that
+ * `localizePath` ranks below a pattern of one of them alone, on a canonical
+ * pathname both their entries match.
  *
  * The table is read when `defineI18n()`'s wiring first needs it, and
  * compiled then, once per `defineI18n()`. A pathname is visitor input: no
- * function of the wiring throws on one, `reroute` and `delocalize` run no
- * regex on it and walk one trie, and `localizePath` only regexes of one
- * character class, which are linear, walks the canonical trie twice at most
- * and the localized one once more per pathname it tries.
+ * function of the wiring throws on one, `delocalize` runs no regex on it and
+ * walks the localized trie, `localizePath` only regexes of one character
+ * class, which are linear, walks the canonical trie twice at most and the
+ * localized one once more per pathname it tries, and `reroute` walks the
+ * localized trie twice at most, then runs `localizePath` without a regex in each
+ * locale of the patterns that match the pathname, and once more for a locale
+ * without a pathname of its own.
  *
  * @example
  * defineI18n(config, {

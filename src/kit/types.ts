@@ -72,9 +72,9 @@ export namespace Kit {
     preferredLocale?: (event: Event) => string | null | undefined;
     /**
      * Translated pathnames, as `translatePathnames()` makes them of a table.
-     * `reroute` serves a localized pathname from the route of its canonical
-     * one, and a URL whose pattern belongs to one locale gives the locale,
-     * before `preferredLocale`. A value of another kind, or of a version
+     * `reroute` serves a page's localized pathname from the route of its
+     * canonical one, and a URL whose pattern belongs to one locale gives the
+     * locale, before `preferredLocale`. A value of another kind, or of a version
      * of this package that binds it otherwise, is logged and translates
      * nothing.
      *
@@ -148,8 +148,11 @@ export namespace Kit {
     /**
      * SvelteKit's `reroute` hook, exported from `src/hooks.ts`: the canonical
      * pathname of a translated one, `basePath` kept, or `undefined` for a
-     * pathname `pathnames` does not translate. A pure function of the URL, as
-     * SvelteKit caches it per URL for the life of the tab.
+     * pathname `pathnames` does not translate. A page is served only at a
+     * pathname `localizePath` gives it, so another pathname a pattern takes
+     * (`/cs/about` beside `/cs/o-nas`) is left as it is, for `handle` to
+     * redirect. A pure function of the URL, as SvelteKit caches it per URL
+     * for the life of the tab.
      */
     reroute: (input: { url: Pick<URL, 'pathname'> }) => string | undefined;
     /**
