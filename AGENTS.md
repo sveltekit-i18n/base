@@ -485,8 +485,15 @@ repositories:
   first use and once per `defineI18n()`, into a trie per direction, matched as SvelteKit
   ranks its routes (static, then param, then rest, leftmost first) by walks
   that visit each node once, never by a regex. `reroute` reads the pathname alone and stays
-  a pure function of the URL, as the browser caches it per URL; the wiring hands the core the
-  canonical pathname (`canonical`, the base path kept, through
+  a pure function of the URL, as the browser caches it per URL. It serves a
+  page only at a pathname `localizePath` gives it (`served`), trying the
+  locales of the patterns that match the pathname, then what a locale without
+  a pathname of its own gets, so any
+  other pathname a pattern takes (`/cs/about` beside `/cs/o-nas`) reaches
+  `handle` as it is, and no prerendered file answers it in another locale;
+  `delocalize` and the negotiation read every pathname a pattern takes. The
+  wiring hands the core the pathname `reroute` serves (`canonical`, the base
+  path kept, through
   `serverHalf` too), so loader `routes` and the base-path warning read the
   canonical route, and a pathname that belongs to one locale is the first
   negotiation candidate, marked `preferred`. Segments compare decoded and come
@@ -920,10 +927,14 @@ not RCE/XSS.
   `routePrefix`, behind the `/kit` prefix warning, runs no regex on the
   pathname, decides each segment and pattern pair once and leaves a pathname
   of more than 64 segments alone.
-  The translated pathnames run no regex on it in `reroute` and `delocalize`,
-  which walk one trie and visit each of its nodes once; `localizePath` walks
+  The translated pathnames run no regex on it in `delocalize`, which walks
+  the localized trie and visits each of its nodes once; `localizePath` walks
   the canonical trie twice at most and the localized one once more per
-  pathname it tries, and runs only regexes of one character class, which are linear.
+  pathname it tries, and runs only regexes of one character class, which are
+  linear; `reroute` walks the localized trie twice at most, then the walks of
+  `localizePath`, without its regexes, in each locale of the patterns that
+  match the pathname, and once more for a locale without a pathname of its
+  own.
 
 ## 12. Comments & language
 
