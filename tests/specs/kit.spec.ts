@@ -3554,6 +3554,149 @@ describe('/kit', () => {
       expect(touch(pathnames)).toEqual([]);
     });
 
+    it.skipIf(BROWSER)('warns of a pattern with a rest whose pathnames a pattern ranked above it reads, on the server', () => {
+      const touch = (table: Record<string, Record<string, string>>, path?: string, locale?: string) => {
+        const { reroute, localizePath, warnings } = setup({}, { pathnames: translatePathnames(table) });
+
+        reroute({ url: url('/') });
+
+        return [...warnings.filter((warning) => warning.includes('outranks where')), ...(path ? [localizePath(path, locale)] : [])];
+      };
+
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' } }, '/files/a/b', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[id]/[...rest]\' outranks where \'[...path]\' holds 1 segment.',
+        '/files/a/b',
+      ]);
+      expect(setup({}, { pathnames: translatePathnames({ '/files/[...path]': { de: '/w/[...path]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' } }) }).reroute({ url: url('/w/a/b') })).toBe('/item/a/b');
+      // An entry above that leaves the locale out falls through to the pattern's.
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/files/[id]/[...rest]': { en: '/en/f/[id]/[...rest]' }, '/item/[id]/[...rest]': { de: '/w/[id]/[...rest]' } }, '/files/a/b', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[id]/[...rest]\' outranks where \'[...path]\' holds 1 segment.',
+        '/files/a/b',
+      ]);
+      expect(touch({ '/about': { de: '/de/w' }, '/files/[...path]': { de: '/de/w/[...path]' } }, '/files', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/de/w/[...path]\', which \'/de/w\' outranks where \'[...path]\' is empty.',
+        '/files',
+      ]);
+      expect(touch({ '/[...rest]': { en: '/[...rest]', de: '/de/[...rest]' }, '/users/[id]': { en: '/[id]', de: '/de/benutzer/[id]' } }, '/impressum', 'en')).toEqual([
+        '[i18n]: `pathnames` translates \'/[...rest]\' in \'en\' to \'/[...rest]\', which \'/[id]\' outranks where \'[...rest]\' holds 1 segment.',
+        '/de/impressum',
+      ]);
+      expect(touch({ '/[...rest]': { de: '/de/[...rest]' }, '/shop/[category]/[product]': { de: '/de/[category]/[product]' } }, '/a/b', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/[...rest]\' in \'de\' to \'/de/[...rest]\', which \'/de/[category]/[product]\' outranks where \'[...rest]\' holds 2 segments.',
+        '/a/b',
+      ]);
+      // A pattern that reads the pathname as the same page, but as another locale's, leaves the locale without it too.
+      expect(touch({ '/[slug]': { cs: '/cs/w/[slug]' }, '/[...rest]': { de: '/cs/w/[...rest]' } }, '/x', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/[...rest]\' in \'de\' to \'/cs/w/[...rest]\', which \'/cs/w/[slug]\' outranks where \'[...rest]\' holds 1 segment.',
+        '/x',
+      ]);
+      // Each locale is named at the first length that leaves it without a pathname.
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]', cs: '/w/[...path]' }, '/files/[x]': { cs: '/cs/f/[x]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' } }, '/files/a/b', 'cs')).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[id]/[...rest]\' outranks where \'[...path]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'cs\' to \'/w/[...path]\', which \'/w/[id]/[...rest]\' outranks where \'[...path]\' holds 2 segments.',
+        '/files/a/b',
+      ]);
+      // A shared pattern below outranks a pattern of one locale alone above it, where that pattern's pathname reads as another page.
+      expect(touch({ '/files/[id]/[...r]': { de: '/s/[id]/[...r]', cs: '/s/[id]/[...r]' }, '/files/[...path]': { de: '/w/[...path]' }, '/f/[x]': { de: '/w/[x]' } }, '/files/a', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[x]\' outranks where \'[...path]\' holds 1 segment.',
+        '/s/a',
+      ]);
+      // What the ranking alone costs a locale is logged as that, never as the reader's.
+      expect(touch({ '/a/[slug]': { en: '/x/[slug]', at: '/x/[slug]' }, '/a/[...rest]': { de: '/x/[...rest]', cs: '/x/[...rest]' }, '/[...all]': { de: '/d/[...all]' } })).toEqual([]);
+      // Each pattern of the chains below ranks at its own depth: the deepest rest before the one that ends.
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/files/[x]': { de: '/de/f/[x]' }, '/files/[x]/[y]': { de: '/de/f/[x]/[y]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[id]/[...rest]\' outranks where \'[...path]\' holds 3 segments.',
+      ]);
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/files/[x]': { de: '/de/f/[x]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' }, '/thing/[a]/[b]/[...r]': { en: '/w/[a]/[b]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[a]/[b]/[...r]\' outranks where \'[...path]\' holds 2 segments.',
+        '[i18n]: `pathnames` translates \'/item/[id]/[...rest]\' in \'en\' to \'/w/[id]/[...rest]\', which \'/w/[a]/[b]/[...r]\' outranks where \'[...rest]\' holds 1 segment.',
+      ]);
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/files/[x]': { de: '/de/f/[x]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' }, '/one/[a]/[b]': { en: '/w/[a]/[b]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'de\' to \'/w/[...path]\', which \'/w/[a]/[b]\' outranks where \'[...path]\' holds 2 segments.',
+        '[i18n]: `pathnames` translates \'/item/[id]/[...rest]\' in \'en\' to \'/w/[id]/[...rest]\', which \'/w/[a]/[b]\' outranks where \'[...rest]\' holds 1 segment.',
+      ]);
+      // A rest entry the page reaches is read where its targets lead, filled as localizePath fills them.
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/[...q]': { de: '/z/[...q]' }, '/c/[x]/[y]/[z]/[t]': { de: '/z/[x]/[y]/[z]/[t]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 3 segments.',
+        '[i18n]: `pathnames` translates \'/[...q]\' in \'de\' to \'/z/[...q]\', which \'/z/[x]/[y]/[z]/[t]\' outranks where \'[...q]\' holds 4 segments.',
+      ]);
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/[p]/[...q]': { de: '/z/[p]/[...q]' }, '/c/[x]/[y]/[z]': { de: '/z/a/[x]/[y]/[z]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 3 segments.',
+      ]);
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/a/[x]/[...q]': { de: '/z/[x]/[...q]' }, '/c/[x]/[y]/[z]/[t]': { de: '/z/[x]/[y]/[z]/[t]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 4 segments.',
+        '[i18n]: `pathnames` translates \'/a/[x]/[...q]\' in \'de\' to \'/z/[x]/[...q]\', which \'/z/[x]/[y]/[z]/[t]\' outranks where \'[...q]\' holds 3 segments.',
+      ]);
+      expect(touch({ '/d/[...r]': { en: '/u/[...r]' }, '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[y]/[...s]': { en: '/w/[x]/[y]/[...s]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\', \'cs\' to \'/w/[...r]\', which \'/w/[x]/[y]/[...s]\' outranks where \'[...r]\' holds 2 segments.',
+      ]);
+      expect(touch({ '/ü/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/ü/[y]': { de: '/de/[y]' }, '/ü/[y]/[z]': { de: '/de/[y]/[z]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/ü/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/ü/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 3 segments.',
+      ]);
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/a/[x]/[...s]': { de: '/z/[x]/[...s]', fr: '/w/[x]/[...s]' }, '/y/[q]/[m]/[n]': { en: '/z/[q]/[m]/[n]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 3 segments.',
+        '[i18n]: `pathnames` translates \'/a/[x]/[...s]\' in \'de\' to \'/z/[x]/[...s]\', which \'/z/[q]/[m]/[n]\' outranks where \'[...s]\' holds 2 segments.',
+      ]);
+      // Where nothing translates the page to the locale, localizePath gives the pathname the localized trie reads it at.
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]' }, '/a/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/k1/[x]': { en: '/a/[x]' }, '/k2/[x]/[y]': { en: '/a/[x]/[y]' }, '/k3/[x]/[y]/[z]': { en: '/a/[x]/[y]/[z]' } }, '/a/v', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 4 segments.',
+        '/w/v',
+      ]);
+      // Each locale is named at its first such length, counted from the rest and never below empty, with a value of its own in each param.
+      expect(touch({ '/[p0]/[p1]/b/[...r]': { en: '/[p0]/[p1]/[...r]' }, '/[...r]': { cs: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[...r]\' in \'cs\' to \'/[...r]\', which \'/[p0]/[p1]/[...r]\' outranks where \'[...r]\' holds 2 segments.',
+      ]);
+      expect(touch({ '/[...r]': { de: '/cs/[...r]' }, '/[p0]/[...r]': { cs: '/cs/[p0]/[...r]' }, '/x/[p0]': { de: '/cs/[p0]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[...r]\' in \'de\' to \'/cs/[...r]\', which \'/cs/[p0]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/[p0]/[...r]\' in \'cs\' to \'/cs/[p0]/[...r]\', which \'/cs/[p0]\' outranks where \'[...r]\' is empty.',
+      ]);
+      expect(touch({ '/[p0]/[...r]': { en: '/[p0]/[...r]' }, '/[p0]/[p1]/[p2]/[p3]/[p4]': { de: '/[p0]/[p1]/[p3]/[p2]/[p4]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[...r]\' in \'en\' to \'/[p0]/[...r]\', which \'/[p0]/[p1]/[p3]/[p2]/[p4]\' outranks where \'[...r]\' holds 4 segments.',
+      ]);
+      expect(touch({ '/[p0]/[...r]': { en: '/[p0]/[...r]' }, '/[p0]/[p1]/[p2]/[p3]/[p4]': { cs: '/[p1]/[p0]/[p2]/[p3]/[p4]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[...r]\' in \'en\' to \'/[p0]/[...r]\', which \'/[p1]/[p0]/[p2]/[p3]/[p4]\' outranks where \'[...r]\' holds 4 segments.',
+      ]);
+      expect(touch({ '/[p0]/[p1]/[...r]': { en: '/[p0]/[p1]/[...r]' }, '/[p0]/[p1]/[p2]': { de: '/[p1]/[p0]/[p2]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[p1]/[...r]\' in \'en\' to \'/[p0]/[p1]/[...r]\', which \'/[p1]/[p0]/[p2]\' outranks where \'[...r]\' holds 1 segment.',
+      ]);
+      // Each locale the reader leaves without a pathname is named, and no other.
+      expect(touch({ '/[p0]/[...r]': { cs: '/[p0]/[...r]' }, '/[...r]': { cs: '/x/[...r]' }, '/[p0]': { de: '/[p0]', cs: '/[p0]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/[...r]\' in \'cs\' to \'/[p0]/[...r]\', which \'/[p0]\' outranks where \'[...r]\' is empty.',
+      ]);
+      expect(touch({ '/[p0]': { en: '/[p0]/cs', de: '/[p0]/cs' }, '/a/[p0]/[...r]': { cs: '/[p0]/cs/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[p0]/[...r]\' in \'cs\' to \'/[p0]/cs/[...r]\', which \'/[p0]/cs\' outranks where \'[...r]\' is empty.',
+      ]);
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]', cs: '/w/[...path]' }, '/files/[id]': { de: '/w/[id]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/files/[...path]\' in \'cs\' to \'/w/[...path]\', which \'/w/[id]\' outranks where \'[...path]\' holds 1 segment.',
+      ]);
+      expect(touch({ '/b': { en: '/' }, '/[...r]': { en: '/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[...r]\' in \'en\' to \'/[...r]\', which \'/\' outranks where \'[...r]\' is empty.',
+      ]);
+      expect(touch({ '/[p0]/b': { de: '/[p0]' }, '/[p0]/[p1]': { de: '/de/[p0]/[p1]' }, '/[p0]/x/[...r]': { de: '/[p0]/[...r]', cs: '/[p0]/[...r]' } })).toEqual([
+        '[i18n]: `pathnames` translates \'/[p0]/x/[...r]\' in \'cs\' to \'/[p0]/[...r]\', which \'/[p0]\' outranks where \'[...r]\' is empty.',
+      ]);
+      // An entry off the pattern's own chains, which outranks it where it ends, ranks it first past its end.
+      expect(touch({ '/a/[...r]': { de: '/w/[...r]', cs: '/w/[...r]' }, '/i/[x]/[...s]': { en: '/w/[x]/[...s]' }, '/[x]/[y]': { de: '/de/[x]/[y]' }, '/[x]/[y]/[z]': { de: '/de/[x]/[y]/[z]' } }, '/a/b/c/d', 'de')).toEqual([
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'cs\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 1 segment.',
+        '[i18n]: `pathnames` translates \'/a/[...r]\' in \'de\' to \'/w/[...r]\', which \'/w/[x]/[...s]\' outranks where \'[...r]\' holds 3 segments.',
+        '/a/b/c/d',
+      ]);
+      // An entry above that translates the page to the locale gives it its pathname, in any spelling of the locale.
+      expect(touch({ '/files/[...path]': { de: '/w/[...path]' }, '/files/[id]/[...r]': { de: '/de/f/[id]/[...r]' }, '/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' } })).toEqual([]);
+      expect(touch({ '/files/[...path]': { 'en-US': '/w/[...path]' }, '/files/[x]': { 'en-US': '/de/f/[x]' }, '/item/[id]': { en: '/w/[id]' } })).toEqual([]);
+      expect(touch({ '/a/[slug]': { en: '/x/[slug]', at: '/x/[slug]' }, '/a/[...rest]': { 'en-US': '/x/[...rest]' } })).toEqual([]);
+      // A pattern that reads the pathname as a page the locale has a pathname of its own of takes nothing.
+      expect(touch({ '/': { de: '/de' }, '/[...rest]': { de: '/de/[...rest]' } })).toEqual([]);
+      expect(touch({ '/blog/[...slug]': { de: '/de/blog/[...slug]' }, '/blog/[id]': { de: '/de/blog/[id]' } })).toEqual([]);
+      expect(touch({ '/docs/[...path]': { de: '/de/doku/[...path]' }, '/docs/api/[...path]': { de: '/de/doku/api/[...path]' } })).toEqual([]);
+      expect(touch(pathnames)).toEqual([]);
+    });
+
     it.skipIf(BROWSER)('searches a table whose patterns start with a param beside many static ones without a blow-up', () => {
       const table: Record<string, Record<string, string>> = {};
 

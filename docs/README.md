@@ -2564,7 +2564,16 @@ it, as *One page, one pathname per locale* below sets out.
   spells, and gives up on a shared pattern once 32 checks, each of a
   pathname in one of its locales, confirm nothing, so a loss only a param
   holding a static segment meets, or one in a table that pairs the pattern
-  with more patterns, may go unlogged.
+  with more patterns, may go unlogged. A pattern with a rest is logged too
+  where a pattern `delocalize` ranks above it reads a pathname it fills, so
+  that in a locale of the pattern `localizePath` no longer leads the page
+  there — it gives another pathname, or that one, which `reroute` serves as
+  another page — where it would were the pathname read as the pattern itself:
+  beside `'/item/[id]/[...rest]': { en: '/w/[id]/[...rest]' }`,
+  `'/files/[...path]': { de: '/w/[...path]' }` gives `/files/a/b` no German
+  pathname, and `reroute` serves `/w/a/b` as the item page. The pathnames
+  searched fill its params with segments no pattern spells, so a static
+  pattern that reads one of them (`/w/about`) is not logged.
 
 `localizePath(path, locale)` translates a canonical path to `locale`:
 `localizePath('/products/42', 'cs')` is `/cs/produkty/42`, and so is
