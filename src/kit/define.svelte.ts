@@ -7,7 +7,7 @@ import { I18n } from '../I18n.svelte.js';
 import { logError, logger, loggerFactory, setLogger } from '../logger.js';
 import type { Config, Loader, Snapshot } from '../types.js';
 import { configLocales, matchLocale, paramsSignature, quietlySanitized, resolveLoaders, routeParams, sanitizeLocales, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
-import { HOSTING, TRANSLATION, type Hosting, type Negotiated, type Params, type Setup, type Translation } from './internal.js';
+import { HOSTING, TRANSLATION, type Hosting, type Negotiated, type Params, type Setup, type Shared, type Translation } from './internal.js';
 import type { Kit } from './types.js';
 
 // Registry-wide, so two copies of this package meet: the context key, and the
@@ -192,9 +192,15 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     // its first, which no visitor chose: it never counts as `preferred`.
     const hosted = hosting().locales(event.url.hostname);
     const available = hosted ?? served;
-    // A translated pathname of one locale is the visitor's choice of it.
-    const pinned = translation().canonical(event.url.pathname).locale;
-    const chosen = (pinned === undefined ? undefined : matchLocale(pinned, available)) ?? matchLocale(visitorSanitized(preferred(event)), available);
+    // A translated pathname of one locale is the visitor's choice of it. One
+    // the host serves in another of its locales is that locale's page there,
+    // but no visitor's choice: a prerendered file answers on every host.
+    const read = translation().canonical(event.url.pathname, hosted).locale;
+    const pageLocale = read === undefined ? undefined : matchLocale(read, available);
+
+    if (pageLocale !== undefined) return { locale: pageLocale, preferred: !hosted || read === translation().canonical(event.url.pathname).locale };
+
+    const chosen = matchLocale(visitorSanitized(preferred(event)), available);
 
     if (chosen !== undefined) return { locale: chosen, preferred: true };
 
@@ -206,8 +212,20 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
     };
   };
 
+  // The locales of the URL's host, which a translated pathname is read
+  // among; no hostname is read without `domains`.
+  const hostOf = (url: Partial<Pick<URL, 'hostname'>>): string[] | undefined => {
+    const hosted = hosting();
+
+    return hosted !== UNHOSTED && typeof url.hostname === 'string' ? hosted.locales(url.hostname) : undefined;
+  };
+
   // The pathname `reroute` serves, so the core loads the route rendered.
-  const canonical = (pathname: string): string => translation().served(pathname);
+  const canonical: Shared['canonical'] = (url) => {
+    const translated = translation();
+
+    return translated === UNTRANSLATED ? url.pathname : translated.served(url.pathname, hostOf(url));
+  };
 
   const server = serverHalf({ create, negotiate, locales, basePath: config.basePath, canonical, handOver: () => resolved().handOver });
 
@@ -289,7 +307,7 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   };
 
   const universalLoad = async (event: Kit.UniversalLoadEvent<Params>): Promise<Record<string, any>> => {
-    const route = canonical(event.url.pathname);
+    const route = canonical(event.url);
     const payload = event.data?.i18n as Kit.Payload | undefined;
     // A page render's own instance: the server branch loaded it for this very
     // payload, which SvelteKit hands over as it was returned.
@@ -454,16 +472,16 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   };
 
   const reroute: Kit.T['reroute'] = ({ url }) => {
-    const pathname = canonical(url.pathname);
+    const pathname = canonical(url);
 
     return pathname === url.pathname ? undefined : pathname;
   };
 
   const delocalize: Kit.T['delocalize'] = (url) => {
-    const { pathname, locale } = translation().canonical(url.pathname);
+    const hosted = hostOf(url);
+    const { pathname, locale } = translation().canonical(url.pathname, hosted);
     const path = `${withoutBasePath(pathname, config.basePath)}${visible(url, 'search')}${visible(url, 'hash')}`;
-    const hosted = hosting();
-    const domain = hosted !== UNHOSTED && typeof url.hostname === 'string' ? hosted.locales(url.hostname)?.[0] : undefined;
+    const domain = hosted?.[0];
 
     if (domain === undefined) return locale === undefined ? { path } : { path, locale };
 

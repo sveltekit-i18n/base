@@ -62,19 +62,19 @@ const pathnames = (entries: number, shared = false) => Object.fromEntries([
   ['/[...rest]', Object.fromEntries(LOCALES.map((locale) => [locale, `${shared ? '' : `/${locale}`}/[...rest]`]))],
 ]);
 
+// Distinct pathnames, so each call walks the trie rather than reading the last answer back.
+const cycle = <T>(values: T[]) => {
+  let at = 0;
+
+  return () => values[at++ % values.length];
+};
+const micro = (fn: () => void) => 1_000 * time(fn, { inner: 2_000 });
+
 it('translated pathnames', () => {
   // A base without translated pathnames measures none of them.
   if (!translatePathnames) return;
 
   const wiring = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(1_000)) });
-
-  // Distinct pathnames, so each call walks the trie rather than reading the last answer back.
-  const cycle = <T>(values: T[]) => {
-    let at = 0;
-
-    return () => values[at++ % values.length];
-  };
-  const micro = (fn: () => void) => 1_000 * time(fn, { inner: 2_000 });
 
   for (const entries of [10, 1_000]) {
     const { delocalize, reroute, localizePath } = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries)) });
@@ -140,4 +140,29 @@ it('domains', async () => {
   record(`the server load, a page render on a domain (${n(KEYS)} keys)`, 'time', 'ms', await timeAsync(() => load(onDomain())));
   record('delocalize, a URL on a domain (5 domains)', 'time', 'µs', 1_000 * time(() => delocalize(from), { inner: 2_000 }));
   record('localizeHref, a link to the domain of another locale (5 domains)', 'time', 'µs', 1_000 * time(() => localizeHref('/about', 'de', from), { inner: 2_000 }));
+}, 600_000);
+
+it('translated pathnames on a domain', () => {
+  // A base without translated pathnames or domains reads no pathname on a host.
+  if (!translatePathnames || !localeDomains) return;
+
+  const domains = localeDomains({ 'https://example.com': ['cs', 'de'], 'https://example.eu': ['fr', 'es', 'it'] });
+
+  for (const entries of [10, 1_000]) {
+    const hosted = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries)), domains });
+    const hostedShared = defineI18n({ parser, log, loaders: loaders(table(20, 'namespaces'), LOCALES) }, { pathnames: translatePathnames(pathnames(entries, true)), domains });
+    const at = (host: string, locale: string, i: number) => new URL(`https://${host}/${locale}/strana${(i * 7) % entries}${(i * 7) % entries % 2 ? `/${i}` : ''}`);
+    const own = cycle(Array.from({ length: 64 }, (_, i) => at('example.com', LOCALES[i % 2], i)));
+    // Pathnames of the locales of the other host, which a base whose `reroute` ignores the host serves.
+    const foreign = cycle(Array.from({ length: 64 }, (_, i) => at('example.com', LOCALES[2 + (i % 3)], i)));
+    const sharedOn = cycle(Array.from({ length: 64 }, (_, i) => new URL(`https://example.eu/strana${((i * 7) % Math.ceil(entries / 2)) * 2}`)));
+
+    expect([hosted.reroute({ url: new URL('https://example.com/de/strana1/42') }), hosted.delocalize(new URL('https://example.com/de/strana1/42'))]).toEqual(['/page1/42', { path: '/page1/42', locale: 'de', domain: 'cs' }]);
+    expect(hostedShared.delocalize(new URL('https://example.eu/strana2'))).toEqual({ path: '/page2', domain: 'fr' });
+
+    record(`reroute, a translated pathname on a host of its locale (${n(entries)} entries of 5 locales, 2 hosts)`, 'time', 'µs', micro(() => hosted.reroute({ url: own() })));
+    record(`reroute, a translated pathname on a host of other locales (${n(entries)} entries of 5 locales, 2 hosts)`, 'time', 'µs', micro(() => hosted.reroute({ url: foreign() })));
+    record(`delocalize, a translated pathname on a host of its locale (${n(entries)} entries of 5 locales, 2 hosts)`, 'time', 'µs', micro(() => hosted.delocalize(own())));
+    record(`delocalize, a pathname of a pattern the 3 locales of its host share (${n(entries)} entries of 5 locales, 2 hosts)`, 'time', 'µs', micro(() => hostedShared.delocalize(sharedOn())));
+  }
 }, 600_000);

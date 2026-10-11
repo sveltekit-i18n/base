@@ -2628,7 +2628,8 @@ browser stands across the navigations whose pathname keeps that answer.
 
 - **One page, one pathname per locale.** `reroute` serves a page only at
   a pathname `localizePath` gives it, in a locale of the table or in any
-  other. The catch-all above takes `/cs/about` too, but the about page's Czech pathname
+  other, and on a host [`domains`](#domains) lists, in a locale of that
+  host. The catch-all above takes `/cs/about` too, but the about page's Czech pathname
   is `/cs/o-nas`, so `/cs/about` is not rerouted: it reaches `handle` as it
   is, still Czech, as `delocalize` reads it too (`{ path: '/about', locale:
   'cs' }`), and SvelteKit answers it with a 404 unless a route of its own
@@ -2780,6 +2781,19 @@ its pathnames (`'/about': { en: '/about', de: '/de/ueber-uns', cs: '/o-nas' }`).
   header, cookie or pathname names. A host the map does not list — a dev
   server, a preview deployment, `www.`, the origin SvelteKit prerenders at —
   negotiates among every locale served, as without `domains`.
+- **A host the map lists reads a pathname among its own locales.** `reroute`
+  serves a page there only at a pathname `localizePath` gives it in one of
+  them: `example.com/o-nas`, the Czech pathname, is no page of
+  `example.com`, while `example.cz/o-nas` is. A pathname the host serves in
+  one of its locales alone belongs to that locale, for the negotiation and
+  for `delocalize`, whatever other locale the table gives it, so with
+  `'/about': { de: '/de/ueber-uns', cs: '/about' }`, `example.com/about` is
+  English. One it serves in several of its locales, the one its pattern
+  pins not among them, belongs to none of them: the negotiation goes on to
+  `preferredLocale` and the header among the host's locales, then to its
+  first, and `delocalize` names no `locale`. A pathname the
+  host serves in none of its locales keeps the locale its pattern pins, for
+  the redirect below to send it to its host.
 - **A host is matched by its name.** Its case, one trailing dot, the scheme
   and the port are ignored, so a request behind a proxy that reports `http`,
   and a dev server's `:5173`, still match. An internationalized name is
@@ -2790,7 +2804,9 @@ its pathnames (`'/about': { en: '/about', de: '/de/ueber-uns', cs: '/o-nas' }`).
   search or a hash after it), a host two keys name, a value that is no locale or list of
   locales, a locale two hosts list and a locale the config serves no
   translations for are logged and skipped. A served locale no host lists is
-  logged, and served at every host the map does not list.
+  logged, and served at every host the map does not list, and at none it
+  lists: `localizeHref` gives its pathnames no origin, and on a host the map
+  lists, they are no page.
 
 `localizeHref(path, locale, from?)` is the href of `path` in `locale`:
 `localizePath(path, locale)` with [`basePath`](#basepath), and the origin the
@@ -2874,6 +2890,27 @@ link that leaves the origin, so switch the locale by such a link (or
   }, i18nHandle);
   ```
 
+  With translated pathnames, the same step replaces the redirect of a
+  translated pathname: `localizeHref` carries `basePath`, and a pathname that
+  belongs to no locale belongs to its host's first, so the step takes it to
+  that locale's own pathname as well. On a host the map does not list, such
+  a pathname has no locale to go to, and stays:
+
+  ```javascript
+  if (!event.isRemoteRequest) {
+    const { path, locale, domain } = delocalize(event.url);
+    const target = locale ?? domain;
+
+    if (target !== undefined) {
+      const href = localizeHref(path, target, event.url);
+
+      if (/^https?:/.test(href)) redirect(308, href, { external: true });
+      // SvelteKit settles the trailing slash before `handle` runs.
+      if (href.split(/[?#]/)[0].replace(/\/$/, '') !== event.url.pathname.replace(/\/$/, '')) redirect(308, href);
+    }
+  }
+  ```
+
   `www.` is no host of the map; redirect it to its domain at the proxy or in
   the same `handle`.
 - **Every request keeps its own host.** Set no `paths.origin` in SvelteKit 3:
@@ -2889,9 +2926,15 @@ link that leaves the origin, so switch the locale by such a link (or
   of another host's locale. Prerender only a page whose pathname gives its
   locale, which takes a [translated pathname](#translated-pathnames) of its
   own per locale, and list the pathnames of each domain in
-  `prerender.entries`: the crawler follows no link to another origin.
-- **A shared cache keys on the host.** A page and its `__data.json` depend on
-  the host they were requested at, and a cache in front of the app must keep
+  `prerender.entries`: the crawler follows no link to another origin. A file
+  of another host's locale answers there before the redirect above can, a
+  client navigation's `__data.json` included, so a navigation to its
+  pathname shows that locale's page or, as `reroute` serves no page at the
+  pathname on that host, an app's catch-all route with that page's data.
+  Keep such a file off that host at the proxy where it matters.
+- **A shared cache keys on the host.** A page, its `__data.json` and the
+  route SvelteKit resolves on the server (`router.resolution: 'server'`)
+  depend on the host they were requested at, and a cache in front of the app must keep
   them apart: nginx's default `proxy_cache_key`, for one, names the upstream,
   not the visitor's host.
 - **A cookie belongs to one domain.** What `preferredLocale` reads at

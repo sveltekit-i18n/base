@@ -4,7 +4,7 @@ import type { Kit } from './types.js';
 /** The params of an event the wiring reads: SvelteKit 3 hands a param its matcher parsed as it parsed it. */
 export type Params = Partial<Record<string, Kit.ParamValue>>;
 
-/** The negotiated locale, and whether `preferredLocale` gave it. */
+/** The negotiated locale, and whether the visitor chose it: `Kit.Payload['preferred']`. */
 export type Negotiated = { locale: string | undefined; preferred: boolean };
 
 /** What the server half needs from the factory. */
@@ -14,8 +14,8 @@ export type Shared = {
   /** The locales the config serves. */
   locales: () => string[];
   basePath: string | undefined;
-  /** The canonical pathname of a translated one, `basePath` kept. */
-  canonical: (pathname: string) => string;
+  /** The canonical pathname `reroute` serves for `url`, `basePath` kept. */
+  canonical: (url: Pick<URL, 'pathname'> & Partial<Pick<URL, 'hostname'>>) => string;
   /**
    * Whether the universal branch of a page render may take over the instance
    * the server branch loaded: not while a loader has `cache: false`, which only
@@ -41,7 +41,12 @@ export type ServerHalf = {
 export const TRANSLATION = Symbol.for('@sveltekit-i18n/base/kit/translation@1');
 export const HOSTING = Symbol.for('@sveltekit-i18n/base/kit/domains@1');
 
-/** A canonical pathname, the base path kept, and the locale its localized pattern pins. */
+/**
+ * A canonical pathname, the base path kept, and the locale the pathname
+ * gives: the one its localized pattern pins, if any, unless a host
+ * `domains` lists serves the pathname in other locales of its own alone;
+ * there, the one of them when it is one, and none when it is several.
+ */
 export type Canonical = { pathname: string; locale?: string };
 
 /** What `defineI18n()` hands the binding of `options.pathnames` and of `options.domains`. */
@@ -60,12 +65,13 @@ export type Setup = {
 /**
  * The translated pathnames one `defineI18n()` wires: the canonical pathname
  * of a URL's, which `delocalize` and the negotiation read, the pathname
- * `reroute` serves, and `localizePath`.
+ * `reroute` serves, and `localizePath`. Given the locales of a host
+ * `domains` lists, a pathname is read among them.
  */
 export type Translation = {
-  canonical: (pathname: string) => Canonical;
+  canonical: (pathname: string, locales?: readonly string[]) => Canonical;
   /** The canonical pathname, `basePath` kept, where `localizePath` gives the page the pathname, and the pathname itself otherwise. */
-  served: (pathname: string) => string;
+  served: (pathname: string, locales?: readonly string[]) => string;
   localizePath: Kit.T['localizePath'];
 };
 

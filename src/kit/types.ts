@@ -39,8 +39,9 @@ export namespace Kit {
    */
   export type Payload = Omit<Snapshot.Envelope, 'translations'> & Partial<Pick<Snapshot.Envelope, 'translations'>> & {
     /**
-     * Set on a page render when the URL's translated pathname or
-     * `preferredLocale` gave the locale. A prerendered page's data is that
+     * Set on a page render when the URL's translated pathname (on a host
+     * `domains` lists, only the locale its pattern pins) or `preferredLocale`
+     * gave the locale. A prerendered page's data is that
      * render, so a navigation to one takes its locale only when the build's
      * pathname or `preferredLocale` gave it.
      */
@@ -149,16 +150,19 @@ export namespace Kit {
      * SvelteKit's `reroute` hook, exported from `src/hooks.ts`: the canonical
      * pathname of a translated one, `basePath` kept, or `undefined` for a
      * pathname `pathnames` does not translate. A page is served only at a
-     * pathname `localizePath` gives it, so another pathname a pattern takes
-     * (`/cs/about` beside `/cs/o-nas`) is left as it is, for `handle` to
-     * redirect. A pure function of the URL, as SvelteKit caches it per URL
-     * for the life of the tab.
+     * pathname `localizePath` gives it, on a host `domains` lists in a locale
+     * of that host, so another pathname a pattern takes (`/cs/about` beside
+     * `/cs/o-nas`, or `/o-nas` on a host that does not serve `cs`) is left as
+     * it is, for `handle` to redirect. A pure function of the URL, as
+     * SvelteKit caches it per URL for the life of the tab.
      */
-    reroute: (input: { url: Pick<URL, 'pathname'> }) => string | undefined;
+    reroute: (input: { url: Pick<URL, 'pathname'> & Partial<Pick<URL, 'hostname'>> }) => string | undefined;
     /**
      * The canonical path of a URL, without `basePath` and with its search and
      * hash, the locale its translated pathname belongs to, when it belongs to
-     * one, and the first locale of its host, when `domains` lists the host. A
+     * one, and the first locale of its host, when `domains` lists the host;
+     * there, a pathname the host serves in one of its locales alone belongs
+     * to that locale. A
      * search or a hash SvelteKit hides is left out: the search while
      * prerendering, the hash in a `load`. A trailing slash is kept, except on
      * the root, which comes back as `/`.

@@ -4118,6 +4118,82 @@ describe('/kit', () => {
       expect(switched('https://example.com/o-nas', 'en')).toBe('/about');
     });
 
+    it('reroutes a pathname only where localizePath gives it in a locale of its host', () => {
+      const { reroute } = hosted({ pathnames: translatePathnames({ '/about': { de: '/ueber-uns', cs: '/o-nas' } }) });
+      const served = (href: string) => reroute({ url: new URL(href) });
+
+      expect(served('https://example.cz/o-nas')).toBe('/about');
+      expect(served('https://example.com/o-nas')).toBe(undefined);
+      expect(served('https://example.com/ueber-uns')).toBe('/about');
+      expect(served('https://example.cz/ueber-uns')).toBe(undefined);
+      // A host the map does not list serves every locale's pathname, as without `domains`.
+      expect(served('http://localhost:5173/o-nas')).toBe('/about');
+      expect(served('http://localhost:5173/ueber-uns')).toBe('/about');
+      // And so does a URL without a hostname.
+      expect(reroute({ url: { pathname: '/o-nas' } })).toBe('/about');
+
+      // A pathname only a locale without one of its own reaches is served on that locale's host alone.
+      const fallen = setup({ loaders: loaders('en', 'cs', 'de', 'fr') }, {
+        pathnames: translatePathnames({ '/blog/[...rest]': { cs: '/clanky/[...rest]', de: '/clanky/[...rest]' }, '/news/[...rest]': { en: '/blog/[...rest]' }, '/[...rest]': { cs: '/cs/[...rest]', de: '/de/[...rest]', en: '/en/[...rest]' } }),
+        domains: localeDomains({ 'https://example.com': ['en', 'fr'], 'https://example.cz': 'cs', 'https://example.de': 'de' }),
+      });
+
+      expect(fallen.localizePath('/blog/x', 'fr')).toBe('/clanky/x');
+      expect(fallen.reroute({ url: new URL('https://example.com/clanky/x') })).toBe('/blog/x');
+      expect(fallen.reroute({ url: new URL('https://example.cz/clanky/x') })).toBe(undefined);
+      expect(fallen.reroute({ url: new URL('https://example.de/clanky/x') })).toBe(undefined);
+      expect(fallen.reroute({ url: new URL('https://example.cz/cs/blog/x') })).toBe('/blog/x');
+    });
+
+    it('reads a pathname as the one locale of its host it is served in', () => {
+      const { delocalize, localizeHref } = hosted({ pathnames: translatePathnames({ '/about': { de: '/de/ueber-uns', cs: '/about' } }) });
+      const at = (href: string) => delocalize(new URL(href));
+
+      expect(at('https://example.com/about')).toEqual({ path: '/about', locale: 'en', domain: 'en' });
+      expect(at('https://example.com/de/ueber-uns')).toEqual({ path: '/about', locale: 'de', domain: 'en' });
+      expect(at('https://example.cz/about')).toEqual({ path: '/about', locale: 'cs', domain: 'cs' });
+      expect(at('http://localhost:5173/about')).toEqual({ path: '/about', locale: 'cs' });
+      // So the domain recipe keeps a host's own page where it is.
+      expect(localizeHref(at('https://example.com/about').path, at('https://example.com/about').locale, new URL('https://example.com/about'))).toBe('/about');
+      // A pathname no locale of its host is served at keeps the locale it pins, which the recipe sends to its host.
+      expect(at('https://example.cz/de/ueber-uns')).toEqual({ path: '/about', locale: 'de', domain: 'cs' });
+
+      // A pathname several locales of the host are served at belongs to none of them.
+      const shared = hosted({ pathnames: translatePathnames({ '/blog': { en: '/weblog', de: '/weblog', cs: '/blog' } }) });
+
+      expect(shared.delocalize(new URL('https://example.com/weblog'))).toEqual({ path: '/blog', domain: 'en' });
+      expect(shared.delocalize(new URL('https://example.cz/weblog'))).toEqual({ path: '/blog', domain: 'cs' });
+    });
+
+    it('serves no pathname of a locale no domain lists on a host the map lists', () => {
+      const { reroute, localizeHref, warnings } = setup({ loaders: loaders('en', 'cs', 'de') }, {
+        pathnames: translatePathnames({ '/about': { cs: '/cs/o-nas', de: '/de/ueber-uns' } }),
+        domains: localeDomains({ 'https://example.com': ['en', 'de'] }),
+      });
+
+      expect(localizeHref('/about', 'cs', new URL('https://example.com/'))).toBe('/cs/o-nas');
+      expect(reroute({ url: new URL('https://example.com/cs/o-nas') })).toBe(undefined);
+      expect(reroute({ url: new URL('http://localhost:5173/cs/o-nas') })).toBe('/about');
+      expect(warnings).toEqual(['[i18n]: `domains` leaves out \'cs\', which no domain serves.']);
+    });
+
+    it('loads the route reroute serves on the host of the universal load', async () => {
+      const visit = async (href: string, locale: string) => {
+        const runs: string[] = [];
+        const about = ['cs', 'de'].map((code) => ({ locale: code, namespace: 'about', routes: ['/about'], loader: () => { runs.push(code); return Promise.resolve({}); } }));
+        const { load } = hosted({ pathnames: translatePathnames({ '/about': { de: '/ueber-uns', cs: '/o-nas' } }) }, { loaders: [...loaders('en', 'cs', 'de'), ...about] });
+        const { pathname } = new URL(href);
+
+        await load({ ...universalEvent(pathname, { i18n: { locale, route: pathname } }), url: new URL(href) });
+
+        return runs;
+      };
+
+      expect(await visit('https://example.cz/o-nas', 'cs')).toEqual(['cs']);
+      expect(await visit('https://example.com/o-nas', 'de')).toEqual([]);
+      expect(await visit('http://localhost:5173/o-nas', 'cs')).toEqual(['cs']);
+    });
+
     it('logs what is wrong with the map once, at first use, and serves the rest', () => {
       const { delocalize, localizeHref, warnings } = setup({ loaders: loaders('en', 'cs', 'de', 'sk') }, {
         domains: localeDomains({
@@ -4235,8 +4311,24 @@ describe('/kit', () => {
         expect(await answer('https://example.cz/o-nas', { lang: 'en' })).toEqual({ locale: 'cs', route: '/about', preferred: true });
         expect(await answer('https://example.com/de/ueber-uns', { lang: 'en' })).toEqual({ locale: 'de', route: '/about', preferred: true });
         expect(await answer('https://example.com/about', { lang: 'de' })).toEqual({ locale: 'en', route: '/about', preferred: true });
-        expect(await answer('https://example.com/o-nas', { lang: 'de' })).toEqual({ locale: 'de', route: '/about', preferred: undefined });
+        expect(await answer('https://example.com/o-nas', { lang: 'de' })).toEqual({ locale: 'de', route: '/o-nas', preferred: undefined });
         expect(await answer('http://localhost:5173/de/ueber-uns', { lang: 'cs' })).toEqual({ locale: 'de', route: '/about', preferred: true });
+      });
+
+      it('takes the locale of its host a pathname is served in', async () => {
+        const wiring = hosted({ pathnames: translatePathnames({ '/about': { de: '/de/ueber-uns', cs: '/about' }, '/contact': { de: '/kontakt', cs: '/kontakt' } }) });
+        const answer = async (href: string, options: EventOptions = {}) => {
+          const { locale, route, preferred } = (await wiring.load(at(href, options))).i18n;
+
+          return { locale, route, preferred };
+        };
+
+        // The same prerendered file answers on every host, so a locale the host gives is no visitor's choice.
+        expect(await answer('https://example.com/about', { lang: 'de' })).toEqual({ locale: 'en', route: '/about', preferred: undefined });
+        expect(await answer('https://example.cz/about', { lang: 'en' })).toEqual({ locale: 'cs', route: '/about', preferred: true });
+        expect(await answer('http://localhost:5173/about', { lang: 'en' })).toEqual({ locale: 'cs', route: '/about', preferred: true });
+        expect(await answer('https://example.com/kontakt', { lang: 'en' })).toEqual({ locale: 'de', route: '/contact', preferred: undefined });
+        expect(await answer('https://example.cz/kontakt', { lang: 'en' })).toEqual({ locale: 'cs', route: '/contact', preferred: undefined });
       });
     });
 
