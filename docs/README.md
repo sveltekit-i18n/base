@@ -2662,11 +2662,13 @@ browser stands across the navigations whose pathname keeps that answer.
     const { path, locale } = delocalize(event.url);
 
     if (locale !== undefined && !event.isRemoteRequest) {
-      const href = localizePath(path, locale);
+      // SvelteKit drops a trailing slash before `handle` only from a pathname
+      // a route matches, so the target leaves it out, as the default
+      // `trailingSlash: 'never'` serves it (an app on `'always'` ends it with
+      // one instead), and the pathnames are compared without it.
+      const href = localizePath(path.replace(/^([^?#]+?)\/(?=[?#]|$)/, '$1'), locale);
       const pathname = event.url.pathname.slice(base.length) || '/';
 
-      // SvelteKit settles the trailing slash before `handle` runs, so the
-      // pathnames are compared without it.
       if (href.split(/[?#]/)[0].replace(/\/$/, '') !== pathname.replace(/\/$/, '')) {
         redirect(308, `${base}${href}`);
       }
@@ -2902,10 +2904,10 @@ link that leaves the origin, so switch the locale by such a link (or
     const target = locale ?? domain;
 
     if (target !== undefined) {
-      const href = localizeHref(path, target, event.url);
+      // The target leaves out the trailing slash, as above.
+      const href = localizeHref(path.replace(/^([^?#]+?)\/(?=[?#]|$)/, '$1'), target, event.url);
 
       if (/^https?:/.test(href)) redirect(308, href, { external: true });
-      // SvelteKit settles the trailing slash before `handle` runs.
       if (href.split(/[?#]/)[0].replace(/\/$/, '') !== event.url.pathname.replace(/\/$/, '')) redirect(308, href);
     }
   }
