@@ -33,7 +33,7 @@ import { I18n } from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [/* ... */],
   // ... other options
 };
@@ -56,17 +56,17 @@ import parser from '@sveltekit-i18n/parser-curly';
 
 const config = {
   parser: parser({
-    onReport: null,
+    onReport: console.warn,
     // other parser-specific options
   }),
 };
 ```
 
 What the factory takes is the parser's business, not the core's. Every official
-parser — curly, icu, mf2 and i18next — requires `onReport` to be stated, `null`
-included, so that silence about parser diagnostics is a decision rather than an
-omission; the samples in this document state `null` because they have nowhere
-to route a report.
+parser — curly, icu, mf2 and i18next — requires `onReport` to be stated, so that
+silence about parser diagnostics is a decision rather than an omission. The
+samples in this document send reports to `console.warn`; an app with a logger
+of its own sends them there, and `null` discards them, which suits a test.
 
 **See:** [Parsers documentation](https://github.com/sveltekit-i18n/parsers)
 
@@ -639,7 +639,7 @@ them into the single-valued loaders the instance itself works with.
 
 ```javascript
 const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [
     // Common translations (all pages), one call per locale and namespace
     {
@@ -1434,7 +1434,7 @@ const minimal = (i18n) => ({
 
 Their order matters. `stores` returns no instance, so it goes after the
 others: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and
-with `[html({ onReport: null }), stores]` the component is at `instance.T`, as
+with `[html(…), stores]` the component is at `instance.T`, as
 with `markdown` in `html`'s place. `html` or `markdown` after `typedAccess`
 adds `T` beside the tree, while before it `T` is typed at `instance.T` only.
 Each of the two adds `T`, so an instance takes one of them: the second in a
@@ -2303,7 +2303,7 @@ import { defineI18n } from '@sveltekit-i18n/base/kit';
 import parser from '@sveltekit-i18n/parser-curly';
 
 export const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [/* ... */],
 };
 
@@ -3106,7 +3106,7 @@ export const DEFAULT_LOCALE = 'en';
 
 /** @type {import('@sveltekit-i18n/parser-curly').Config} */
 export const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [/* ... */],
 };
 ```
@@ -3680,7 +3680,7 @@ import parser, { type Parser } from '@sveltekit-i18n/parser-curly';
 type Params = Parser.Params;
 
 const config: Config.T<Params> = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [
     {
       locale: 'en',
@@ -3752,7 +3752,7 @@ loader's `locale`, [`initLocale`](#initlocale),
 
 ```typescript
 const i18n = new I18n({
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   initLocale: 'en',
   fallbackLocale: 'de',
   translations: { cs: { greeting: 'Ahoj' } },
@@ -3794,12 +3794,12 @@ const narrowed: I18n<any, string, never, 'en' | 'de'> = plain;
 type:
 
 ```typescript
-new I18n({ parser: parser({ onReport: null }), initLocale: 'en' });  // inline
+new I18n({ parser: parser({ onReport: console.warn }), initLocale: 'en' });  // inline
 
-const frozen = { parser: parser({ onReport: null }), initLocale: 'en' } as const;
+const frozen = { parser: parser({ onReport: console.warn }), initLocale: 'en' } as const;
 new I18n(frozen);                                  // `as const`
 
-const checked = { parser: parser({ onReport: null }), initLocale: 'en' } as const satisfies Config.T<Params>;
+const checked = { parser: parser({ onReport: console.warn }), initLocale: 'en' } as const satisfies Config.T<Params>;
 new I18n(checked);                                 // `as const satisfies`
 ```
 
@@ -3817,7 +3817,7 @@ literal:
 const locales: string[] = ['cs', 'sk'];
 
 const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   initLocale: 'en',
   loaders: locales.map((locale) => ({ locale, namespace: 'common', loader: async () => ({}) })),
 } as const;
