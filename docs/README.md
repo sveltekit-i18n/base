@@ -2681,7 +2681,9 @@ browser stands across the navigations whose pathname keeps that answer.
 - **`hreflang` alternates** name each locale's pathname of the page. A
   pathname several locales share, or one of another locale, says nothing of
   the locale it is named for, so the root layout keeps only the alternates
-  whose pathname belongs to their locale, and none on an error page:
+  whose pathname belongs to their locale, and none on an error page. An
+  alternate names the page, so it leaves out the search and the hash the
+  visitor came with, which `delocalize` keeps in `path`:
 
   ```svelte
   <!-- src/routes/+layout.svelte -->
@@ -2698,7 +2700,7 @@ browser stands across the navigations whose pathname keeps that answer.
     const alternates = $derived.by(() => {
       if (page.error) return [];
 
-      const { path } = delocalize(page.url);
+      const path = delocalize(page.url).path.split(/[?#]/)[0];
 
       return i18n.locales.flatMap((locale) => {
         const url = new URL(resolve(localizePath(path, locale).slice(1) as Path), page.url.href);
@@ -2847,7 +2849,7 @@ is its own:
 const alternates = $derived.by(() => {
   if (page.error) return [];
 
-  const { path } = delocalize(page.url);
+  const path = delocalize(page.url).path.split(/[?#]/)[0];
 
   return i18n.locales.flatMap((locale) => {
     const url = new URL(localizeHref(path, locale), page.url.href);
