@@ -78,7 +78,7 @@ import { defineI18n } from '@sveltekit-i18n/base/kit';
 import parser from '@sveltekit-i18n/parser-curly';
 
 export const config = {
-  parser: parser({ onReport: null, /* other parser options */ }),
+  parser: parser({ onReport: console.warn, /* other parser options */ }),
   loaders: [
     {
       locale: ['en', 'cs'],
@@ -168,7 +168,7 @@ import i18n from '@sveltekit-i18n/base';
 import parser from '@sveltekit-i18n/parser-icu';
 
 const config = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [/* ... */],
 };
 ```
@@ -380,7 +380,7 @@ An extension may augment the instance in place, or replace the surface entirely 
 - [@sveltekit-i18n/extension-markdown](https://github.com/sveltekit-i18n/extensions/tree/master/extension-markdown) – adds a `T` component that renders the Markdown a message carries (CommonMark's inline syntax) as elements and Svelte components, with no `{@html}`
 - [@sveltekit-i18n/extension-typed-access](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access) – keys as members of `t`: `i18n.t.home.title()` beside `i18n.t('home.title')`, typed from the [`schema`](#schema)
 
-Their order matters. `stores` returns no instance, so it goes after the others: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and with `[html({ onReport: null }), stores]` the component is at `instance.T`, as with `markdown` in `html`'s place. `html` or `markdown` after `typedAccess` adds `T` beside the tree, while before it `T` is typed at `instance.T` only. Each of the two adds `T`, so an instance takes one of them: the second in a pipe throws at construction. Each package's README has the details, and [lib's examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#extensions) run each one.
+Their order matters. `stores` returns no instance, so it goes after the others: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and with `[html(…), stores]` the component is at `instance.T`, as with `markdown` in `html`'s place. `html` or `markdown` after `typedAccess` adds `T` beside the tree, while before it `T` is typed at `instance.T` only. Each of the two adds `T`, so an instance takes one of them: the second in a pipe throws at construction. Each package's README has the details, and [lib's examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#extensions) run each one.
 
 A custom extension is just a function:
 
@@ -488,7 +488,7 @@ import parser, { type Parser } from '@sveltekit-i18n/parser-curly';
 type Params = Parser.Params;
 
 const config: Config.T<Params> = {
-  parser: parser({ onReport: null }),
+  parser: parser({ onReport: console.warn }),
   loaders: [/* ... */],
 };
 ```
@@ -496,7 +496,7 @@ const config: Config.T<Params> = {
 Two more things are inferred from the config itself. [`schema`](#schema) types the keys and payloads of `t`/`l`, and every locale the config names — loader locales, `initLocale`, `fallbackLocale` and the keys of `translations` — completes the locale arguments and reads (`setLocale`, `loadTranslations`, `loadNamespace`, `preload`, `invalidate`, `l`, `locale`, `locales`):
 
 ```typescript
-const i18n = new I18n({ parser: parser({ onReport: null }), initLocale: 'en', fallbackLocale: 'de' });
+const i18n = new I18n({ parser: parser({ onReport: console.warn }), initLocale: 'en', fallbackLocale: 'de' });
 
 i18n.setLocale('en'); // 'en' | 'de' autocomplete here
 i18n.setLocale('sv'); // still accepted — the union is a hint, not a constraint
