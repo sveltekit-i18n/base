@@ -2,7 +2,7 @@ import type { Logger } from './types.js';
 
 const loggerLevels = ['error', 'warn', 'debug'] as const;
 
-export const loggerFactory = ({ logger = console, level = loggerLevels[1], prefix = '[i18n]: ' }: Logger.FactoryProps) => {
+export const loggerFactory = ({ logger = console, level = loggerLevels[1], prefix = '[i18n]: ' }: Logger.FactoryProps = {}): Logger.T => {
   // An unknown level would otherwise yield indexOf === -1 and silence everything.
   const levelIndex = loggerLevels.includes(level) ? loggerLevels.indexOf(level) : loggerLevels.indexOf('warn');
 

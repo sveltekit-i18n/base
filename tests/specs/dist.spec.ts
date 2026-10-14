@@ -86,7 +86,8 @@ describe('published artifact', () => {
     // specifier is a variable so that TypeScript leaves the self-reference to
     // Node instead of demanding a `rootDir`.
     const specifier = '@sveltekit-i18n/base/utils';
-    const { matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } = await import(specifier);
+    const { loggerFactory, matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } = await import(specifier);
+    const messages: string[] = [];
 
     expect(toDotNotation({ user: { name: 'Name' } })).toEqual({ 'user.name': 'Name' });
     expect(sanitizeLocales('en-us', null)).toEqual(['en-US']);
@@ -94,6 +95,13 @@ describe('published artifact', () => {
     expect(resolveLoaders([{ locale: ['en-us', 'cs'], namespace: 'common', loader: async () => ({}) }]).map(({ locale }: { locale: string }) => locale)).toEqual(['en-US', 'cs']);
     expect(textDirection('ar-EG')).toBe('rtl');
     expect(textDirection('en')).toBe('ltr');
+
+    const logger = loggerFactory({ logger: { error: () => {}, warn: (message: string) => messages.push(message), debug: () => {} } });
+
+    logger.warn('shown');
+    logger.debug('dropped');
+
+    expect(messages).toEqual(['[i18n]: shown']);
   });
 
   it('serves the SvelteKit wiring, with the server half on the server only', async ({ task }) => {
