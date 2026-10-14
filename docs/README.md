@@ -2942,16 +2942,17 @@ link that leaves the origin, so switch the locale by such a link (or
   host serves.
 - **In development,** `localhost` is no host of the map, so it serves every
   locale. To try the domains locally, map `*.localhost` hosts, which browsers
-  resolve and Vite serves without `server.allowedHosts`:
+  resolve and Vite serves without `server.allowedHosts`. Each map is a call
+  of its own: TypeScript reads a conditional of two object literals as a
+  union whose members name each other's keys as optional `undefined`, which
+  no map takes:
 
   ```javascript
   const domains = import.meta.env.DEV
-    ? { 'http://com.localhost:5173': ['en', 'de'], 'http://cz.localhost:5173': 'cs' }
-    : { 'https://example.com': ['en', 'de'], 'https://example.cz': 'cs' };
+    ? localeDomains({ 'http://com.localhost:5173': ['en', 'de'], 'http://cz.localhost:5173': 'cs' })
+    : localeDomains({ 'https://example.com': ['en', 'de'], 'https://example.cz': 'cs' });
 
-  export const { handle, load, use, get, delocalize, localizeHref } = defineI18n(config, {
-    domains: localeDomains(domains),
-  });
+  export const { handle, load, use, get, delocalize, localizeHref } = defineI18n(config, { domains });
   ```
 
 ### What `data.i18n` is
