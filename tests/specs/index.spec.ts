@@ -10036,6 +10036,23 @@ describe('i18n destroy', () => {
 });
 
 describe('logger', () => {
+  it('builds the default logger without options', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    try {
+      const output = loggerFactory();
+
+      output.warn('shown');
+      output.debug('hidden');
+
+      expect(warn).toHaveBeenCalledWith('[i18n]: shown');
+      expect(debug).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      debug.mockRestore();
+    }
+  });
   it('skips silently when a custom logger omits a level', () => {
     const logger = { error: vi.fn() } as any;
     const output = loggerFactory({ level: 'debug', logger });
@@ -10584,7 +10601,8 @@ describe('utils', () => {
     expect(publicUtils.matchLocale).toBe(matchLocale);
     expect(publicUtils.resolveLoaders).toBe(resolveLoaders);
     expect(publicUtils.textDirection).toBe(textDirection);
-    expect(Object.keys(publicUtils).sort()).toEqual(['matchLocale', 'resolveLoaders', 'sanitizeLocales', 'textDirection', 'toDotNotation']);
+    expect(publicUtils.loggerFactory).toBe(loggerFactory);
+    expect(Object.keys(publicUtils).sort()).toEqual(['loggerFactory', 'matchLocale', 'resolveLoaders', 'sanitizeLocales', 'textDirection', 'toDotNotation']);
     expectTypeOf(publicUtils.toDotNotation).toEqualTypeOf<DotNotation.T>();
   });
 

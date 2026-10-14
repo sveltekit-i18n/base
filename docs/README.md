@@ -3301,13 +3301,15 @@ owner goes away.
 Five pure helpers are published separately: three the instance uses
 internally, for the cases where consumer code has to match the library's own
 behavior, and two the instance never calls, for deciding which locale to ask it
-for and which direction that locale is written in:
+for and which direction that locale is written in. Beside them,
+`loggerFactory` builds a logger the way the instance builds its own from
+[`log`](#loglevel), for what the app routes through the same channel:
 
 ```javascript
-import { matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } from '@sveltekit-i18n/base/utils';
+import { loggerFactory, matchLocale, resolveLoaders, sanitizeLocales, textDirection, toDotNotation } from '@sveltekit-i18n/base/utils';
 ```
 
-The rest of the internals stays private – the subpath exports these five, plus
+The rest of the internals stays private – the subpath exports these six, plus
 the `DotNotation` type they are described with.
 
 ### `toDotNotation(input, preserveArrays?)`
@@ -3542,6 +3544,35 @@ are `'ltr'` rather than a throw.
 
 With [`/kit`](#sveltekit), `<html dir>` takes none of this: `handle` fills a
 `%dir%` placeholder and `use()` keeps the attribute in sync.
+
+### `loggerFactory(options?)`
+
+**Type:** `(options?: Logger.FactoryProps) => Logger.T`
+
+Builds a logger from what [`log`](#loglevel) takes – `level`, `prefix` and
+`logger` – as the instance builds its own: each method prefixes its message
+and writes nothing above `level`, and neither a level the logger lacks nor a
+logger that throws reaches the caller. Without options it writes to `console`
+at `'warn'`. The logger it builds stands alone: building one installs
+nothing, and the library keeps logging through what `log` configured.
+
+A parser's reports are a channel of their own, which `log` does not reach.
+Built from the same options, a logger takes them where the library's own
+messages go, under the same level and prefix. A level method's second argument
+is reserved for a thrown value, so the key goes into the message:
+
+```javascript
+import { loggerFactory } from '@sveltekit-i18n/base/utils';
+import parser from '@sveltekit-i18n/parser-curly';
+
+const log = { level: 'warn' };
+const logger = loggerFactory(log);
+
+const config = {
+  log,
+  parser: parser({ onReport: ({ id, message }) => logger.warn(`${message} (${id})`) }),
+};
+```
 
 ---
 
@@ -3962,6 +3993,7 @@ options state `pathnames` or `domains`.
 - `Kit.Pathnames`, the type of what `translatePathnames()` returns.
 - [`domains`](#domains) in the options of `defineI18n()`, which takes what the new `localeDomains()` of `/kit` returns, and `localizeHref` among what it returns — a locale served at a domain of its own. `delocalize` gives the first locale of the URL's host as `domain`, and takes a URL's `hostname` for it.
 - A type parameter on `Kit.Options`, the locale its `domains` take, and `Kit.Domains`, the type of what `localeDomains()` returns.
+- [`loggerFactory()`](#loggerfactoryoptions) from `/utils`, which builds a logger as [`log`](#loglevel) configures the instance's, to route a parser's reports where the library's own messages go.
 
 ### Companion releases
 
