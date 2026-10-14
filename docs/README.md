@@ -1424,15 +1424,21 @@ const minimal = (i18n) => ({
 - [`@sveltekit-i18n/extension-html`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-html)
   — adds a `T` component that renders the markup a message carries as
   elements and Svelte components, from an allowlist, with no `{@html}`.
+- [`@sveltekit-i18n/extension-markdown`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-markdown)
+  — adds a `T` component that renders the Markdown a message carries
+  (CommonMark's inline syntax) as elements and Svelte components, with no
+  `{@html}`.
 - [`@sveltekit-i18n/extension-typed-access`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-typed-access)
   — keys as members of `t`: `i18n.t.home.title()` beside
   `i18n.t('home.title')`, typed from the [`schema`](#schema).
 
-Their order matters. `stores` returns no instance, so it goes after the other
-two: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and with
-`[html({ onReport: null }), stores]` the component is at `instance.T`. `html`
-after `typedAccess` adds `T` beside the tree, while before it `T` is typed at
-`instance.T` only. Each package's README has the details, and
+Their order matters. `stores` returns no instance, so it goes after the
+others: `[typedAccess, stores]` hands out the tree as `$t.home.title()`, and
+with `[html({ onReport: null }), stores]` the component is at `instance.T`, as
+with `markdown` in `html`'s place. `html` or `markdown` after `typedAccess`
+adds `T` beside the tree, while before it `T` is typed at `instance.T` only.
+Each of the two adds `T`, so an instance takes one of them: the second in a
+pipe throws at construction. Each package's README has the details, and
 [lib's examples](https://github.com/sveltekit-i18n/lib/tree/master/examples#extensions)
 run each one.
 
@@ -3951,6 +3957,11 @@ options state `pathnames` or `domains`.
 - `Kit.Pathnames`, the type of what `translatePathnames()` returns.
 - [`domains`](#domains) in the options of `defineI18n()`, which takes what the new `localeDomains()` of `/kit` returns, and `localizeHref` among what it returns — a locale served at a domain of its own. `delocalize` gives the first locale of the URL's host as `domain`, and takes a URL's `hostname` for it.
 - A type parameter on `Kit.Options`, the locale its `domains` take, and `Kit.Domains`, the type of what `localeDomains()` returns.
+
+### Companion releases
+
+- [`@sveltekit-i18n/extension-markdown`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-markdown) 3.0 is new: a `T` component that renders the Markdown a message carries as elements and Svelte components.
+- [`@sveltekit-i18n/extension-html`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-html) 3.0.3 throws at construction on an instance that already has a `T` from another extension, `extension-markdown`'s included, rather than replace it.
 
 ---
 
