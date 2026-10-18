@@ -2599,6 +2599,10 @@ pathname requested. `delocalize(url)` gives the canonical path of a URL, with it
 and without `basePath`, and the locale its pathname belongs to; a search or a
 hash SvelteKit hides — the search while prerendering, the hash in a `load` —
 is left out, and a locale's root comes back as `/`, without a trailing slash.
+A pathname whose first segment is empty, such as `//evil.com/x`, belongs to no
+locale and comes back as it is, the slashes it starts with collapsed into one
+(`/evil.com/x`), so the `path` of an `http:` or `https:` URL never reads as
+protocol-relative.
 A link to the page shown, in another locale, goes through both:
 
 ```svelte
@@ -2904,8 +2908,11 @@ link that leaves the origin, so switch the locale by such a link (or
   With translated pathnames, the same step replaces the redirect of a
   translated pathname: `localizeHref` carries `basePath`, and a pathname that
   belongs to no locale belongs to its host's first, so the step takes it to
-  that locale's own pathname as well. On a host the map does not list, such
-  a pathname has no locale to go to, and stays:
+  that locale's own pathname as well. One that starts with several slashes,
+  `//x`, goes where `/x` read as a canonical path leads in that locale, which
+  is another locale's page when `/x` is one of its pathnames: `//de/x` goes to
+  `/de/de/x` where German pages live under `/de`. On a host the map does not
+  list, such a pathname has no locale to go to, and stays:
 
   ```javascript
   if (!event.isRemoteRequest) {

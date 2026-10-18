@@ -165,7 +165,10 @@ export namespace Kit {
      * to that locale. A
      * search or a hash SvelteKit hides is left out: the search while
      * prerendering, the hash in a `load`. A trailing slash is kept, except on
-     * the root, which comes back as `/`.
+     * the root, which comes back as `/`. A pathname whose first segment is
+     * empty belongs to no locale and comes back as it is, the slashes it
+     * starts with collapsed into one, so the `path` of an `http:` or `https:`
+     * URL never reads as protocol-relative: `//evil.com/x` gives `/evil.com/x`.
      *
      * @example
      * delocalize(new URL('https://example.com/de/ueber-uns?q=1')) // { path: '/about?q=1', locale: 'de', domain: 'en' }
