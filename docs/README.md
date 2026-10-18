@@ -2611,7 +2611,7 @@ A link to the page shown, in another locale, goes through both:
 
   const i18n = get();
 
-  const href = (path: string) => resolve(path.slice(1) as Path);
+  const href = (path: string) => resolve(path.replace(/^\/+/, '') as Path);
 </script>
 
 {#each i18n.locales as locale (locale)}
@@ -2622,8 +2622,11 @@ A link to the page shown, in another locale, goes through both:
 ```
 
 Both return a path without `basePath`, so `resolve()` adds it. Given without
-its leading slash, the path is read as a pathname, never as a route ID, so a
-search such as `?sort[by]=name` passes as it is. Its type admits only the
+its leading slashes, the path is read as a pathname, never as a route ID, so a
+search such as `?sort[by]=name` passes as it is, and so does a pathname a
+visitor sent with an empty first segment, such as `//[a]`, which `delocalize`
+hands back as it is: with one slash cut, it would still be a route ID, and its
+`[` would throw. Its type admits only the
 app's own pathnames, which a translated one is not, hence the cast. In
 SvelteKit 2, whose `resolve()` reads every path as a route ID, write
 `` `${base}${path}` `` with `base` from `$app/paths` instead.
@@ -2710,7 +2713,7 @@ browser stands across the navigations whose pathname keeps that answer.
       const path = delocalize(page.url).path.split(/[?#]/)[0];
 
       return i18n.locales.flatMap((locale) => {
-        const url = new URL(resolve(localizePath(path, locale).slice(1) as Path), page.url.href);
+        const url = new URL(resolve(localizePath(path, locale).replace(/^\/+/, '') as Path), page.url.href);
 
         return delocalize(url).locale === locale ? [[locale, url.href]] : [];
       });
