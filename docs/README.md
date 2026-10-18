@@ -4304,5 +4304,6 @@ what it follows in the effect itself.
 - [Parsers](https://github.com/sveltekit-i18n/parsers) – Available parsers
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 - [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) – Generates the [`schema`](#schema) type from your translation files
+- [@sveltekit-i18n/sv](https://github.com/sveltekit-i18n/sv) – The Svelte CLI add-on that sets sveltekit-i18n up in a SvelteKit project (`npx sv add @sveltekit-i18n`)
 - [Examples](https://github.com/sveltekit-i18n/lib/tree/master/examples) – Working code examples
 - [Best Practices](https://github.com/sveltekit-i18n/lib/tree/master/docs/BEST_PRACTICES.md) – Recommended patterns
