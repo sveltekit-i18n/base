@@ -3091,6 +3091,26 @@ describe('/kit', () => {
       expect(localizePath('/cs//evil.com', 'en')).toBe('/cs//evil.com');
     });
 
+    it('collapses the slashes a pathname starts with into one, so no path delocalize returns reads as protocol-relative', () => {
+      const { delocalize, localizePath } = translated();
+      const based = translated({}, { basePath: '/repo' });
+
+      expect(delocalize(url('//evil.com/x'))).toEqual({ path: '/evil.com/x' });
+      expect(delocalize(url('///evil.com'))).toEqual({ path: '/evil.com' });
+      expect(delocalize(url('//evil.com/x?q=1#h'))).toEqual({ path: '/evil.com/x?q=1#h' });
+      expect(delocalize(url('//'))).toEqual({ path: '/' });
+      // A pathname whose first segment is empty belongs to no locale, whatever it reads as collapsed.
+      expect(delocalize(url('//cs/o-nas'))).toEqual({ path: '/cs/o-nas' });
+      expect(based.delocalize(url('/repo//evil.com/x'))).toEqual({ path: '/evil.com/x' });
+      expect(based.delocalize(url('/repo///evil.com'))).toEqual({ path: '/evil.com' });
+      expect(based.delocalize(url('/repo//'))).toEqual({ path: '/' });
+      // `..` takes the pathname out of the base path before the base path is stripped.
+      expect(based.delocalize(url('/repo/..//evil.com'))).toEqual({ path: '/evil.com' });
+      expect(setup().delocalize(url('//evil.com/x'))).toEqual({ path: '/evil.com/x' });
+
+      for (const locale of ['en', 'cs']) expect(localizePath(delocalize(url('//evil.com/x')).path, locale)).toMatch(/^\/(?!\/)/);
+    });
+
     it('keeps a trailing slash, in both directions', () => {
       const { reroute, localizePath } = translated();
 
@@ -4106,6 +4126,22 @@ describe('/kit', () => {
       expect(localizeHref('/about', undefined)).toBe('/repo/about');
       // What is no path of the app.
       for (const path of ['//evil.test/x', 'https://evil.test/x', 'about', '']) expect(localizeHref(path, 'cs')).toBe(path);
+    });
+
+    it('keeps the links off a pathname that starts with several slashes on the hosts of the map', () => {
+      const hosts = new Set(['example.com', 'example.cz']);
+
+      for (const basePath of [undefined, '/repo']) {
+        const { delocalize, localizeHref } = hosted({ pathnames: translatePathnames({ '/about': { en: '/about', cs: '/o-nas', de: '/ueber-uns' } }) }, { basePath });
+
+        for (const [host, pathname] of [['example.com', '//evil.com/x'], ['example.com', '///evil.com'], ['example.cz', '//evil.com/cs/o-nas'], ['example.com', '//']]) {
+          const at = new URL(`https://${host}${basePath ?? ''}${pathname}`);
+
+          for (const locale of ['en', 'cs', 'de']) {
+            for (const href of [localizeHref(delocalize(at).path, locale, at), localizeHref(delocalize(at).path, locale)]) expect(hosts.has(new URL(href, at).hostname)).toBe(true);
+          }
+        }
+      }
     });
 
     it('translates the path of a link to another host', () => {

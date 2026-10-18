@@ -403,6 +403,19 @@ export const withoutBasePath = (route: string, basePath: string | undefined): st
   return rest.startsWith('/') ? rest : route;
 };
 
+/**
+ * `path` with the slashes it starts with collapsed into one, so that the
+ * pathname of an `http:` or `https:` URL, which holds no `\`, tab or newline,
+ * never reads as protocol-relative: `//evil.com/x` is `/evil.com/x`.
+ */
+export const oneLeadingSlash = (path: string): string => {
+  let start = 0;
+
+  while (path[start] === '/' && path[start + 1] === '/') start += 1;
+
+  return path.slice(start);
+};
+
 // A pathname is visitor input and the matcher backtracks over it, so a longer
 // one is not examined at all.
 const MAX_ROUTE_SEGMENTS = 64;

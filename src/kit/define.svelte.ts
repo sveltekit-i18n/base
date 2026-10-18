@@ -6,7 +6,7 @@ import { serverHalf } from '#kit-server';
 import { I18n } from '../I18n.svelte.js';
 import { logError, logger, loggerFactory, setLogger } from '../logger.js';
 import type { Config, Loader, Snapshot } from '../types.js';
-import { configLocales, matchLocale, paramsSignature, quietlySanitized, resolveLoaders, routeParams, sanitizeLocales, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
+import { configLocales, matchLocale, oneLeadingSlash, paramsSignature, quietlySanitized, resolveLoaders, routeParams, sanitizeLocales, sanitizerFactory, textDirection, withoutBasePath } from '../utils.js';
 import { HOSTING, TRANSLATION, type Hosting, type Negotiated, type Params, type Setup, type Shared, type Translation } from './internal.js';
 import type { Kit } from './types.js';
 
@@ -480,7 +480,8 @@ export const defineI18n = <const C extends Config.T<any, any> = Config.T<any, an
   const delocalize: Kit.T['delocalize'] = (url) => {
     const hosted = hostOf(url);
     const { pathname, locale } = translation().canonical(url.pathname, hosted);
-    const path = `${withoutBasePath(pathname, config.basePath)}${visible(url, 'search')}${visible(url, 'hash')}`;
+    // Collapsed once the table read it: a pathname whose first segment is empty belongs to no locale.
+    const path = `${oneLeadingSlash(withoutBasePath(pathname, config.basePath))}${visible(url, 'search')}${visible(url, 'hash')}`;
     const domain = hosted?.[0];
 
     if (domain === undefined) return locale === undefined ? { path } : { path, locale };
