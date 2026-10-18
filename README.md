@@ -517,6 +517,7 @@ Keys as members of `t` — `i18n.t.home.title()` beside `i18n.t('home.title')` �
 - [@sveltekit-i18n/parser-fluent](https://github.com/sveltekit-i18n/parsers/tree/master/parser-fluent) – [Fluent](https://projectfluent.org) parser, Mozilla's localization system
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 - [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) – Generates the [`schema`](#schema) type from your translation files
+- [@sveltekit-i18n/sv](https://github.com/sveltekit-i18n/sv) – The Svelte CLI add-on that sets sveltekit-i18n up in a SvelteKit project (`npx sv add @sveltekit-i18n`)
 
 ## Contributing
 
