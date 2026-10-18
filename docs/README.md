@@ -2676,7 +2676,7 @@ browser stands across the navigations whose pathname keeps that answer.
       const href = localizePath(path.replace(/^([^?#]+?)\/(?=[?#]|$)/, '$1'), locale);
       const pathname = event.url.pathname.slice(base.length) || '/';
 
-      if (href.split(/[?#]/)[0].replace(/\/$/, '') !== pathname.replace(/\/$/, '')) {
+      if (href.replace(/[?#].*/s, '').replace(/\/$/, '') !== pathname.replace(/\/$/, '')) {
         redirect(308, `${base}${href}`);
       }
     }
@@ -2707,7 +2707,7 @@ browser stands across the navigations whose pathname keeps that answer.
     const alternates = $derived.by(() => {
       if (page.error) return [];
 
-      const path = delocalize(page.url).path.split(/[?#]/)[0];
+      const path = delocalize(page.url).path.replace(/[?#].*/s, '');
 
       return i18n.locales.flatMap((locale) => {
         const url = new URL(resolve(localizePath(path, locale).slice(1) as Path), page.url.href);
@@ -2856,7 +2856,7 @@ is its own:
 const alternates = $derived.by(() => {
   if (page.error) return [];
 
-  const path = delocalize(page.url).path.split(/[?#]/)[0];
+  const path = delocalize(page.url).path.replace(/[?#].*/s, '');
 
   return i18n.locales.flatMap((locale) => {
     const url = new URL(localizeHref(path, locale), page.url.href);
@@ -2917,7 +2917,7 @@ link that leaves the origin, so switch the locale by such a link (or
       const href = localizeHref(path.replace(/^([^?#]+?)\/(?=[?#]|$)/, '$1'), target, event.url);
 
       if (/^https?:/.test(href)) redirect(308, href, { external: true });
-      if (href.split(/[?#]/)[0].replace(/\/$/, '') !== event.url.pathname.replace(/\/$/, '')) redirect(308, href);
+      if (href.replace(/[?#].*/s, '').replace(/\/$/, '') !== event.url.pathname.replace(/\/$/, '')) redirect(308, href);
     }
   }
   ```
