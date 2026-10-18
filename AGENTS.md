@@ -24,7 +24,8 @@ repositories:
 - **`lib`** (`sveltekit-i18n`) — `base` pre-wired with `parser-curly`.
 - **`parsers`** — `parser-curly` (the [Curly Message
   Format](https://curlymessage.dev)), `parser-icu` (ICU), `parser-mf2`
-  (Unicode MessageFormat 2), `parser-i18next` (i18next's syntax).
+  (Unicode MessageFormat 2), `parser-i18next` (i18next's syntax),
+  `parser-fluent` ([Fluent](https://projectfluent.org)).
 - **`extensions`** — official extensions for the `config.extensions` pipe
   (e.g. `extension-stores`).
 - **`typegen`** — `@sveltekit-i18n/typegen`, the Vite plugin that generates

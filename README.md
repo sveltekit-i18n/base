@@ -56,6 +56,7 @@ npm install @sveltekit-i18n/parser-curly
 npm install @sveltekit-i18n/parser-icu
 npm install @sveltekit-i18n/parser-mf2
 npm install @sveltekit-i18n/parser-i18next
+npm install @sveltekit-i18n/parser-fluent
 ```
 
 ## Quick Start
@@ -513,6 +514,7 @@ Keys as members of `t` — `i18n.t.home.title()` beside `i18n.t('home.title')` �
 - [@sveltekit-i18n/parser-icu](https://github.com/sveltekit-i18n/parsers/tree/master/parser-icu) – ICU message format parser
 - [@sveltekit-i18n/parser-mf2](https://github.com/sveltekit-i18n/parsers/tree/master/parser-mf2) – [Unicode MessageFormat 2](https://unicode.org/reports/tr35/tr35-messageFormat.html) parser
 - [@sveltekit-i18n/parser-i18next](https://github.com/sveltekit-i18n/parsers/tree/master/parser-i18next) – [i18next](https://www.i18next.com) interpolation and formatting syntax parser
+- [@sveltekit-i18n/parser-fluent](https://github.com/sveltekit-i18n/parsers/tree/master/parser-fluent) – [Fluent](https://projectfluent.org) parser, Mozilla's localization system
 - [Extensions](https://github.com/sveltekit-i18n/extensions) – Official extensions for the `config.extensions` pipe
 - [@sveltekit-i18n/typegen](https://github.com/sveltekit-i18n/typegen) – Generates the [`schema`](#schema) type from your translation files
 

@@ -63,10 +63,11 @@ const config = {
 ```
 
 What the factory takes is the parser's business, not the core's. Every official
-parser — curly, icu, mf2 and i18next — requires `onReport` to be stated, so that
-silence about parser diagnostics is a decision rather than an omission. The
-samples in this document send reports to `console.warn`; an app with a logger
-of its own sends them there, and `null` discards them, which suits a test.
+parser — curly, icu, mf2, i18next and fluent — requires `onReport` to be
+stated, so that silence about parser diagnostics is a decision rather than an
+omission. The samples in this document send reports to `console.warn`; an app
+with a logger of its own sends them there, and `null` discards them, which
+suits a test.
 
 **See:** [Parsers documentation](https://github.com/sveltekit-i18n/parsers)
 
@@ -3892,8 +3893,9 @@ official parser needs it to extract.
   care can ignore it.
 
 Every official parser ships one as a root export: `parser-curly`, `parser-icu`,
-`parser-mf2` and `parser-i18next` each export `extractParamsFactory`, and
-`sveltekit-i18n` re-exports the curly one beside the instance it types.
+`parser-mf2`, `parser-i18next` and `parser-fluent` each export
+`extractParamsFactory`, and `sveltekit-i18n` re-exports the curly one beside
+the instance it types.
 
 ### Extensions and the constructor's type
 
@@ -3997,6 +3999,7 @@ options state `pathnames` or `domains`.
 
 ### Companion releases
 
+- [`@sveltekit-i18n/parser-fluent`](https://github.com/sveltekit-i18n/parsers/tree/master/parser-fluent) 3.0 is new: messages in [Fluent](https://projectfluent.org), Mozilla's localization system, formatted by `@fluent/bundle`.
 - [`@sveltekit-i18n/extension-markdown`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-markdown) 3.0 is new: a `T` component that renders the Markdown a message carries as elements and Svelte components.
 - [`@sveltekit-i18n/extension-html`](https://github.com/sveltekit-i18n/extensions/tree/master/extension-html) 3.0.3 throws at construction on an instance that already has a `T` from another extension, `extension-markdown`'s included, rather than replace it.
 
